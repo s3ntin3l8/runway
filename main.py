@@ -584,38 +584,39 @@ async def get_antigravity_ide():
     quota_path = os.path.expanduser("~/.antigravity/state/quota.json")
     try:
         if not os.path.exists(quota_path):
-            raise FileNotFoundError(f"Quota file not found at {quota_path}")
+            return []
 
         with open(quota_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Extract gemini-3.1-pro node
-        model_data = data.get("models", {}).get("gemini-3.1-pro", {})
-        if not model_data:
-            raise KeyError("Model 'gemini-3.1-pro' not found in quota.json")
+        models = data.get("models", {})
+        results = []
 
-        remaining_pct = model_data.get("remaining_percent", 0.0)
-        resets_at_unix = model_data.get("resets_at")
-        
-        health = "good" if remaining_pct > 30 else "warning" if remaining_pct > 10 else "critical"
-        
-        reset_str = "—"
-        if resets_at_unix:
-            reset_at = datetime.fromtimestamp(resets_at_unix, tz=timezone.utc)
-            reset_str = _human_delta(reset_at)
+        for model_name, model_data in models.items():
+            remaining_pct = model_data.get("remaining_percent", 0.0)
+            resets_at_unix = model_data.get("resets_at")
+            
+            health = "good" if remaining_pct > 30 else "warning" if remaining_pct > 10 else "critical"
+            
+            reset_str = "—"
+            if resets_at_unix:
+                reset_at = datetime.fromtimestamp(resets_at_unix, tz=timezone.utc)
+                reset_str = _human_delta(reset_at)
 
-        return {
-            "service": "Antigravity IDE",
-            "icon": "🛸",
-            "remaining": f"{remaining_pct:.1f}%",
-            "unit": "remaining",
-            "reset": reset_str,
-            "health": health,
-            "detail": "Gemini 3.1 Pro (Local State)",
-        }
+            results.append({
+                "service": f"AG: {model_name}",
+                "icon": "🛸",
+                "remaining": f"{remaining_pct:.1f}%",
+                "unit": "remaining",
+                "reset": reset_str,
+                "health": health,
+                "detail": f"Model: {model_name} (IDE State)",
+            })
+        
+        return results
 
     except Exception as e:
-        return {
+        return [{
             "service": "Antigravity IDE",
             "icon": "🛸",
             "remaining": "ERR",
@@ -623,7 +624,7 @@ async def get_antigravity_ide():
             "reset": "—",
             "health": "unknown",
             "detail": str(e),
-        }
+        }]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -643,7 +644,16 @@ async def fetch_all_limits():
             get_chatgpt(),
             get_antigravity_ide(),
         )
-    return {"limits": list(results)}
+    
+    # Flatten the results list (some collectors return a single dict, others a list of dicts)
+    flattened = []
+    for res in results:
+        if isinstance(res, list):
+            flattened.extend(res)
+        else:
+            flattened.append(res)
+            
+    return {"limits": flattened}
 
 
 @app.get("/", response_class=HTMLResponse)
