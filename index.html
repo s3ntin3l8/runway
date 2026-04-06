@@ -57,6 +57,31 @@
         ::-webkit-scrollbar { width: 6px; } 
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+
+        /* Compact Mode & Inverted */
+        .compact-mode #grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+        .compact-mode .glass-panel { padding: 1rem; }
+        .compact-mode .text-4xl { font-size: 1.875rem; line-height: 2.25rem; }
+        .compact-mode .progress-track { margin-top: 0.5rem; height: 2px; }
+        .compact-mode .pt-3 { padding-top: 0.5rem; }
+        
+        .toggle-btn {
+            background: #18181b;
+            border: 1px solid #3f3f46;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #71717a;
+            letter-spacing: 0.025em;
+        }
+        .toggle-btn.active {
+            border-color: #3b82f6;
+            color: #eff6ff;
+            background: rgba(59, 130, 246, 0.1);
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -76,8 +101,12 @@
                 <p class="text-zinc-500 text-sm uppercase tracking-widest font-medium ml-5">Live AI Subscription Limits</p>
             </div>
 
-            <div class="flex items-center gap-4 ml-5 sm:ml-0">
-                <span id="last-updated" class="text-xs text-zinc-600 mono hidden"></span>
+            <div class="flex flex-col items-end gap-3 ml-5 sm:ml-0">
+                <div class="flex items-center gap-2">
+                    <button id="toggle-compact" class="toggle-btn" onclick="toggleConfig('compact')">COMPACT</button>
+                    <button id="toggle-remaining" class="toggle-btn" onclick="toggleConfig('remaining')">REMAINING %</button>
+                    <span id="last-updated" class="text-[10px] text-zinc-600 mono ml-2 hidden"></span>
+                </div>
                 <button id="refresh-btn" onclick="loadData()" class="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm active:scale-95">
                     <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                     Sync Limits
@@ -119,16 +148,37 @@
             unknown:  { dot: 'dot-unknown',  card: 'health-unknown',  badge: 'text-zinc-500',     bar: '#3f3f46', label: '——' },
         };
 
+        const STATE = {
+            compact: false,
+            remaining: false,
+            data: []
+        };
+
+        function toggleConfig(key) {
+            STATE[key] = !STATE[key];
+            document.getElementById(`toggle-${key}`).classList.toggle('active', STATE[key]);
+            if (key === 'compact') {
+                document.body.classList.toggle('compact-mode', STATE[key]);
+            }
+            renderGrid();
+        }
+
         function parseProgressPct(detail) {
-            // Try to extract "X%" from detail string like "68% used" or "32,000 / 2,000,000 used (2%)"
-            const m = detail.match(/\((\d+)%\)/) || detail.match(/(\d+)%/);
-            return m ? Math.min(100, parseInt(m[1])) : null;
+            // Matches (81%), 81.0%, 0%, etc.
+            const m = detail.match(/(\d+(\.\d+)?)%/);
+            return m ? Math.min(100, parseFloat(m[1])) : null;
         }
 
         function buildCard(item) {
             const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
-            const pct = parseProgressPct(item.detail || '');
-            const barWidth = pct !== null ? pct : null;
+            const usedPct = parseProgressPct(item.detail || '');
+            
+            // Inverted Logic
+            let barWidth = usedPct;
+            if (STATE.remaining && usedPct !== null) {
+                barWidth = 100 - usedPct;
+            }
+
             const isPlaceholder = item.health === 'unknown';
 
             const progressBar = barWidth !== null ? `
@@ -139,13 +189,20 @@
             const detailEl = item.detail ? `
                 <p class="text-xs text-zinc-600 mono mt-1 truncate" title="${item.detail}">${item.detail}</p>` : '';
 
+            const paceBadge = item.pace ? `
+                <span class="text-[10px] font-bold text-zinc-500 bg-zinc-900/80 border border-zinc-800 px-1.5 py-0.5 rounded-full mono">${item.pace}</span>
+            ` : '';
+
             return `
                 <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3">
                     <!-- Header row -->
                     <div class="flex items-start justify-between gap-2">
                         <div class="flex items-center gap-2 min-w-0">
                             <span class="text-xl leading-none">${item.icon}</span>
-                            <span class="text-xs font-semibold text-zinc-400 uppercase tracking-wide truncate">${item.service}</span>
+                            <div class="flex flex-col">
+                                <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${item.service}</span>
+                                ${paceBadge}
+                            </div>
                         </div>
                         <div class="flex items-center gap-1.5 shrink-0">
                             <div class="dot ${h.dot}"></div>
@@ -175,6 +232,24 @@
             `;
         }
 
+        function renderGrid() {
+            const grid = document.getElementById('grid');
+            let html = '';
+            let count = 0;
+            
+            STATE.data.forEach(item => {
+                try {
+                    html += buildCard(item);
+                    count++;
+                } catch (e) {
+                    console.error("Failed to render card for:", item, e);
+                }
+            });
+            
+            grid.innerHTML = html;
+            document.getElementById('footer-count').textContent = count;
+        }
+
         async function loadData() {
             const grid = document.getElementById('grid');
             const loading = document.getElementById('loading');
@@ -196,8 +271,8 @@
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const json = await resp.json();
 
-                grid.innerHTML = json.limits.map(buildCard).join('');
-                document.getElementById('footer-count').textContent = json.limits.length;
+                STATE.data = json.limits;
+                renderGrid();
 
                 const now = new Date();
                 lastUpdated.textContent = `Updated ${now.toLocaleTimeString()}`;

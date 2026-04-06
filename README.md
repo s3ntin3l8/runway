@@ -6,30 +6,32 @@
 
 ## 🚀 Features
 
-- **9+ Services Integrated**: Support for Claude, Gemini, GPT-4, OpenCode, and more.
+- **11+ Services Integrated**: Support for Claude, Gemini, GPT-4, OpenCode, and more.
+- **Resilient Rendering**: Individual API failures or malformed responses won't break the dashboard; failing services gracefully show "Error Cards."
 - **Real-Time Sync**: Pings live APIs and parses local log/state files simultaneously.
 - **Stateless & Secure**: No database required. Keeps your API keys safe in a local `.env` file.
-- **Health Indicators**: Dynamic visual cues (Good/Warning/Critical) based on your remaining quota.
+- **Health Indicators**: Dynamic visual cues (Good/Warning/Critical) based on your remaining quota or prepaid balance.
 - **Humanized Timers**: Countdown clocks for when your limits will reset.
 
 ## 🛠️ Tech Stack
 
 - **Backend**: FastAPI (Python 3.9+) with `httpx` for async concurrency.
-- **Frontend**: Vanilla HTML5, JavaScript, and Tailwind CSS.
+- **Frontend**: Vanilla HTML5, JavaScript, and Tailwind CSS (Glassmorphism UI).
 - **Local Parsing**: Supports SQLite (OpenCode TUI), JSONL (Claude/Codex), and JSON (Gemini/Antigravity).
 
 ## 🔌 Supported Services
 
 Currently monitoring **11 data sources**:
-1.  **Claude Pro**: Parses local `~/.claude` activity for 5h rolling windows.
-2.  **Gemini CLI**: Monitors `~/.gemini` session logs.
-3.  **OpenCode TUI**: Local SQLite metrics from `opencode.db`.
-4.  **OpenCode Go**: Live cloud usage via `api.opencode.ai`.
-5.  **GitHub Copilot**: Live API rate limit tracking.
-6.  **zAI (GLM Coding)**: Verified monitoring via `api.z.ai/api/monitor`.
-7.  **Kimi K2.5**: Prepaid balance tracking via Moonshot API.
-8.  **ChatGPT Codex**: Local `~/.codex` rollout event parsing.
-9.  **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`) from `~/.antigravity/state/quota.json`.
+1.  **Claude (OAuth)**: Primary cloud monitoring for Pro/Personal accounts (supports 5h and 7d windows).
+2.  **Claude (Local Logs)**: Fallback parser for local `~/.claude` activity logs.
+3.  **Gemini CLI**: Monitors `~/.gemini/state/quota.json` for terminal-based usage.
+4.  **OpenCode TUI**: Tracks local line-change metrics from `opencode.db`.
+5.  **OpenCode Go**: Live cloud usage and USD balance via `api.opencode.ai`.
+6.  **GitHub Copilot**: Live API rate limit tracking for Copilot Chat and Indent.
+7.  **zAI (GLM)**: Prepaid balance tracking via BigModel Cloud (BigModel API).
+8.  **Kimi K2.5**: Prepaid balance tracking via Moonshot AI.
+9.  **ChatGPT Codex**: Local `~/.codex` session log parsing.
+10. **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`) from `~/.antigravity` state.
 
 ## 📦 Setup
 
@@ -39,16 +41,20 @@ Currently monitoring **11 data sources**:
     ```
 
 2.  **Configure Environment**:
-    Copy `.env.example` to `.env` and add your API keys:
-    ```bash
-    cp .env.example .env
+    Create a `.env` file in the root directory (see `.env.example` if available):
+    ```env
+    CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...
+    GITHUB_TOKEN=github_pat_...
+    OPENCODE_GO_API_KEY=sk-...
+    ZAI_API_KEY=sk-...
+    KIMI_API_KEY=sk-...
     ```
 
 3.  **Run the App**:
     ```bash
-    python3 -m uvicorn main:app --reload --port 8765
+    python3 main.py
     ```
-    Access the dashboard at `http://localhost:8765`.
+    Access the dashboard at `http://127.0.0.1:8765`.
 
 ---
 *Built for the 2026 Developer Workflow.*
