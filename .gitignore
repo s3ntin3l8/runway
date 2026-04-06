@@ -10,3 +10,5 @@ node_modules/
 .vscode/
 *.swp
 *.bak
+tasks.md
+task.md
