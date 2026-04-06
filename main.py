@@ -282,64 +282,52 @@ async def get_opencode_go(client: httpx.AsyncClient):
 
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    # Try multiple likely endpoints — log raw response so we can adapt
-    for endpoint in ["/usage", "/quota", "/subscription", "/user", "/me"]:
-        try:
-            resp = await client.get(f"{base}{endpoint}", headers=headers, timeout=8)
+    try:
+        # OpenCode Go uses dollar-based limits: $12/5h, $30/wk, $60/mo
+        resp = await client.get(f"{base}/usage", headers=headers, timeout=8)
+        
+        if resp.status_code == 200:
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            
+            # Extract dollar-based metrics
+            limit = data.get("five_hour_limit") or 12.0
+            used = data.get("five_hour_usage") or 0.0
+            
+            remaining = max(0, limit - used)
+            health = "good"
+            if limit > 0:
+                pct = (remaining / limit) * 100
+                health = "good" if pct > 30 else "warning" if pct > 10 else "critical"
 
-            if resp.status_code == 200:
-                # Try to extract common quota patterns
-                remaining = (
-                    data.get("remaining_tokens")
-                    or data.get("remaining")
-                    or data.get("quota_remaining")
-                )
-                limit = (
-                    data.get("monthly_limit_tokens")
-                    or data.get("limit")
-                    or data.get("quota")
-                )
-                if remaining is not None:
-                    health = "good"
-                    if limit:
-                        pct = (remaining / limit) * 100
-                        health = "good" if pct > 20 else "warning" if pct > 5 else "critical"
-                    return {
-                        "service": "OpenCode Go",
-                        "icon": "🚀",
-                        "remaining": f"{remaining:,}" if isinstance(remaining, int) else str(remaining),
-                        "unit": "tokens",
-                        "reset": "End of month",
-                        "health": health,
-                        "detail": f"via {endpoint}",
-                    }
-
-                # Unknown response shape — surface it for debugging
-                return {
-                    "service": "OpenCode Go",
-                    "icon": "🚀",
-                    "remaining": "?",
-                    "unit": "See detail",
-                    "reset": "—",
-                    "health": "unknown",
-                    "detail": f"{endpoint} → {json.dumps(data)[:120]}",
-                }
-
-            if resp.status_code == 401:
-                break  # Key is wrong, don't keep trying
-        except Exception:
-            continue
-
-    return {
-        "service": "OpenCode Go",
-        "icon": "🚀",
-        "remaining": "ERR",
-        "unit": "Auth failed",
-        "reset": "—",
-        "health": "critical",
-        "detail": "Check OPENCODE_GO_API_KEY",
-    }
+            return {
+                "service": "OpenCode Go",
+                "icon": "🚀",
+                "remaining": f"${remaining:.2f}",
+                "unit": "remaining (5h)",
+                "reset": "Rolling 5h",
+                "health": health,
+                "detail": f"${used:.2f} / ${limit:.2f} used",
+            }
+        
+        return {
+            "service": "OpenCode Go",
+            "icon": "🚀",
+            "remaining": "ERR",
+            "unit": f"HTTP {resp.status_code}",
+            "reset": "—",
+            "health": "critical",
+            "detail": f"API request failed: {resp.text[:50]}",
+        }
+    except Exception as e:
+        return {
+            "service": "OpenCode Go",
+            "icon": "🚀",
+            "remaining": "ERR",
+            "unit": "—",
+            "reset": "—",
+            "health": "unknown",
+            "detail": str(e),
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
