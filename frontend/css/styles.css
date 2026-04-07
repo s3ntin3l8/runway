@@ -167,7 +167,35 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
     opacity: 1;
 }
 
-/* Cursor for hover target */
-.cursor-help {
-    cursor: help;
+/* Modal styles */
+#modal-container.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#modal-container.active #modal-content {
+    transform: scale(1);
+    opacity: 1;
+}
+
+.modal-detail-item {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(63, 63, 70, 0.4);
+}
+
+.modal-detail-item:last-child {
+    border-bottom: none;
+}
+
+.modal-header {
+    background: linear-gradient(180deg, rgba(39, 39, 42, 0.4), transparent);
+    margin: -1.5rem -1.5rem 1.5rem -1.5rem;
+    padding: 2rem 1.5rem 1.5rem 1.5rem;
+}
+
+@media (min-width: 768px) {
+    .modal-header {
+        margin: -2rem -2rem 2rem -2rem;
+        padding: 2.5rem 2rem 2rem 2rem;
+    }
 }

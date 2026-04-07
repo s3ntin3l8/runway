@@ -69,6 +69,14 @@
         </footer>
     </div>
 
+    <!-- Modal Backdrop & Content -->
+    <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 opacity-0 pointer-events-none transition-all duration-300">
+        <div id="modal-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+        <div id="modal-content" class="relative w-full max-w-lg glass-panel rounded-3xl p-6 md:p-8 shadow-2xl transform scale-95 opacity-0 transition-all duration-300 overflow-hidden">
+            <!-- Content will be injected here -->
+        </div>
+    </div>
+
     <!-- Application script -->
     <script type="module" src="/static/js/app.js?v=2"></script>
 </body>

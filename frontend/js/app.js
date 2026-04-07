@@ -1,6 +1,6 @@
 import { fetchLimits } from './api.js';
 import { STATE, HEALTH_CONFIG } from './state.js';
-import { buildCard } from './components.js';
+import { buildCard, buildModalContent } from './components.js';
 
 /**
  * Render quota cards to the grid
@@ -117,8 +117,55 @@ function getErrorType(err) {
     return 'unknown';
 }
 
+/**
+ * Open the detail modal for a specific service
+ * @param {string} serviceName - Name of the service to show
+ */
+function openModal(serviceName) {
+    const item = STATE.data.find(d => d.service === serviceName);
+    if (!item) return;
+
+    const container = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+    
+    content.innerHTML = buildModalContent(item);
+    container.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    // Add close listener after injection
+    document.getElementById('close-modal').onclick = closeModal;
+}
+
+/**
+ * Close the detail modal
+ */
+function closeModal() {
+    const container = document.getElementById('modal-container');
+    container.classList.remove('active');
+    document.body.style.overflow = '';
+}
+
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('refresh-btn').addEventListener('click', loadData);
+    const grid = document.getElementById('grid');
+    const refreshBtn = document.getElementById('refresh-btn');
+    const modalBackdrop = document.getElementById('modal-backdrop');
+
+    refreshBtn.addEventListener('click', loadData);
+    
+    // Grid click delegation for cards
+    grid.addEventListener('click', (e) => {
+        const card = e.target.closest('.glass-panel');
+        if (card && card.dataset.service) {
+            openModal(card.dataset.service);
+        }
+    });
+
+    // Modal close listeners
+    modalBackdrop.addEventListener('click', closeModal);
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeModal();
+    });
+
     loadData();
 });

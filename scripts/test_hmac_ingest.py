@@ -6,7 +6,7 @@ import json
 import sys
 
 # Configuration
-API_URL = "http://localhost:8766/api/ingest"
+API_URL = "http://localhost:8767/api/ingest"
 API_KEY = "test-secret-key"  # Must match INGEST_API_KEY in .env or default
 
 def send_ingest(provider, metrics, api_key, timestamp_offset=0, custom_sig=None):

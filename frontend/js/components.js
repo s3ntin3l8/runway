@@ -300,7 +300,7 @@ export function buildCard(item) {
     ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${item.reset}</span>`;
 
     return `
-        <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3">
+        <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${item.service}">
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
@@ -334,5 +334,92 @@ export function buildCard(item) {
                 ${resetElement}
             </div>
         </div>
+    `;
+}
+
+/**
+ * Build HTML for the detail modal content
+ * @param {LimitCard} item - The limit card data
+ * @returns {string} HTML string for modal content
+ */
+export function buildModalContent(item) {
+    const isUnlimited = item.is_unlimited || item.health === 'unlimited';
+    const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+    const usedPct = calculateUsedPct(item);
+    
+    const formatted = formatUsageValues(
+        item.used_value,
+        item.limit_value,
+        item.unit_type || 'generic',
+        item.currency
+    );
+
+    const sourceLabel = SOURCE_LABELS[item.data_source] || item.data_source;
+    const sourceColor = SOURCE_COLORS[item.data_source] || 'text-zinc-400';
+    const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString() : 'Never';
+
+    return `
+        <div class="modal-header border-b border-zinc-800/80">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <span class="text-3xl">${item.icon}</span>
+                    <div>
+                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${item.service}</h2>
+                        <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
+                    </div>
+                </div>
+                <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            
+            <div class="mt-6 flex flex-col gap-2">
+                <div class="flex items-baseline justify-between">
+                    <span class="text-5xl font-black tracking-tighter text-zinc-50">
+                        ${isUnlimited ? '∞' : (usedPct ? usedPct.toFixed(1) + '%' : item.remaining)}
+                    </span>
+                    <span class="text-sm font-bold text-zinc-500 mono uppercase">${isUnlimited ? 'Unlimited Capacity' : 'Used Capacity'}</span>
+                </div>
+                
+                <div class="progress-track h-2 w-full bg-zinc-800/50 rounded-full mt-2">
+                    <div class="progress-fill h-full rounded-full" 
+                         style="width: ${isUnlimited ? 100 : (usedPct || 0)}%; background: ${isUnlimited ? 'linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0)' : h.bar};">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+            <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${formatted.used}</span>
+            </div>
+            <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : formatted.limit} ${formatted.unit}</span>
+            </div>
+            <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${resetTime}</span>
+            </div>
+            <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
+                <span class="text-sm font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+            </div>
+        </div>
+
+        ${item.detail ? `
+        <div class="mt-6 p-4 rounded-2xl bg-black/40 border border-zinc-800/60">
+            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-2">Technical Summary</span>
+            <p class="text-xs text-zinc-400 mono leading-relaxed break-all">${item.detail}</p>
+        </div>
+        ` : ''}
+
+        ${item.pace ? `
+        <div class="mt-4 flex items-center justify-between px-1">
+            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Consumption Rate</span>
+            <span class="text-xs font-bold text-zinc-400 mono">${item.pace}</span>
+        </div>
+        ` : ''}
     `;
 }
