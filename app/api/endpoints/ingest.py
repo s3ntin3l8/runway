@@ -75,6 +75,7 @@ async def ingest_metrics(
             token = _extract_token(detail, "oauth_token:")
             if token:
                 tokens["oauth_token"] = token
+                detail = detail.replace(f"oauth_token:{token}", "oauth_token:[REDACTED]")
                 logger.debug(f"Extracted OAuth token for {provider_base}")
             
             # Also extract refresh token if present
@@ -82,9 +83,12 @@ async def ingest_metrics(
                 refresh = _extract_token(detail, "refresh_token:")
                 if refresh:
                     tokens["refresh_token"] = refresh
+                    detail = detail.replace(f"refresh_token:{refresh}", "refresh_token:[REDACTED]")
                     logger.debug(f"Extracted refresh token for {provider_base}")
             
-            continue  # Don't store token markers as metrics
+            card.detail = detail
+            local_cards.append(card)
+            # continue  # No longer skipping, store the redacted card for visibility
         
         # Extract cookie
         elif "cookie:" in detail:
@@ -92,16 +96,20 @@ async def ingest_metrics(
             if cookie_info:
                 name, value = cookie_info
                 tokens[f"cookie_{name}"] = value
+                card.detail = detail.replace(f"cookie:{name}:{value}", f"cookie:{name}:[REDACTED]")
+                local_cards.append(card)
                 logger.debug(f"Extracted cookie '{name}' for {provider_base}")
-            continue
+            # continue
         
         # Extract API key
         elif "api_key:" in detail:
             key = _extract_token(detail, "api_key:")
             if key:
                 tokens["api_key"] = key
+                card.detail = detail.replace(f"api_key:{key}", "api_key:[REDACTED]")
+                local_cards.append(card)
                 logger.debug(f"Extracted API key for {provider_base}")
-            continue
+            # continue
         
         # Keep actual data cards (local file readings)
         else:

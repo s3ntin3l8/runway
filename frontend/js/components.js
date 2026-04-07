@@ -1,6 +1,23 @@
 import { HEALTH_CONFIG, STATE } from './state.js';
 
 /**
+ * Escapes HTML special characters to prevent XSS
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
+ */
+function escapeHTML(str) {
+    if (!str) return '';
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return str.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+/**
  * @typedef {Object} LimitCard
  * @property {string} service - Service name (e.g., "Claude Pro")
  * @property {string} icon - Emoji icon representing the service
@@ -247,10 +264,11 @@ export function buildCard(item) {
             item.unit_type || 'generic',
             item.currency
         );
-        subtitle = `<span class="text-xs text-zinc-500">${formatted.used} of ${formatted.limit} ${formatted.unit} ${displayLabel}${sourceLabel}</span>`;
+        subtitle = `<span class="text-xs text-zinc-500">${escapeHTML(formatted.used)} of ${escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)} ${displayLabel}${sourceLabel}</span>`;
     } else if (item.detail) {
         // Fallback to detail field
-        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${item.detail}">${item.detail}${sourceLabel}</span>`;
+        const escapedDetail = escapeHTML(item.detail);
+        subtitle = `<span class="text-xs text-zinc-600 mono truncate" title="${escapedDetail}">${escapedDetail}${sourceLabel}</span>`;
     }
 
     const isPlaceholder = item.health === 'unknown';
@@ -304,9 +322,9 @@ export function buildCard(item) {
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
-                    <span class="text-xl leading-none">${item.icon}</span>
+                    <span class="text-xl leading-none">${escapeHTML(item.icon)}</span>
                     <div class="flex flex-col">
-                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${item.service}</span>
+                        <span class="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide truncate">${escapeHTML(item.service)}</span>
                         ${paceBadge}
                     </div>
                 </div>
@@ -362,9 +380,9 @@ export function buildModalContent(item) {
         <div class="modal-header border-b border-zinc-800/80">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
-                    <span class="text-3xl">${item.icon}</span>
+                    <span class="text-3xl">${escapeHTML(item.icon)}</span>
                     <div>
-                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${item.service}</h2>
+                        <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service)}</h2>
                         <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
                     </div>
                 </div>
@@ -411,14 +429,14 @@ export function buildModalContent(item) {
         ${item.detail ? `
         <div class="mt-6 p-4 rounded-2xl bg-black/40 border border-zinc-800/60">
             <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-2">Technical Summary</span>
-            <p class="text-xs text-zinc-400 mono leading-relaxed break-all">${item.detail}</p>
+            <p class="text-xs text-zinc-400 mono leading-relaxed break-all">${escapeHTML(item.detail)}</p>
         </div>
         ` : ''}
 
         ${item.pace ? `
         <div class="mt-4 flex items-center justify-between px-1">
             <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Consumption Rate</span>
-            <span class="text-xs font-bold text-zinc-400 mono">${item.pace}</span>
+            <span class="text-xs font-bold text-zinc-400 mono">${escapeHTML(item.pace)}</span>
         </div>
         ` : ''}
     `;

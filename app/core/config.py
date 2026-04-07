@@ -102,3 +102,10 @@ class Settings:
     APP_PORT: int = int(os.getenv("APP_PORT", "8765"))
 
 settings = Settings()
+
+# Security check: Warn if using default ingest secret
+if settings.INGEST_API_KEY == "sidecar-default-secret":
+    logger.warning("=" * 60)
+    logger.warning("SECURITY WARNING: Using default INGEST_API_KEY ('sidecar-default-secret')")
+    logger.warning("Please set INGEST_API_KEY environment variable to a strong secret.")
+    logger.warning("=" * 60)
