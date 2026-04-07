@@ -347,3 +347,27 @@ OAuth API → CLI /stats (quota %) → Session Logs (token counts)
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "Missing Credentials" error
+**Cause:** No OAuth credentials found
+**Fix:**
+1. Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET`
+2. Or ensure Chrome has active Gemini session (cookie extraction)
+3. Or check `~/.gemini/tmp/sessions/` exists with recent logs
+
+### Issue: "OAuth Token Expired"
+**Cause:** Token refresh failed
+**Fix:**
+1. Re-authenticate at https://console.developers.google.com
+2. Update credentials in `.env`
+3. Or use local logs as fallback (less accurate)
+
+### Issue: "No valid data sources"
+**Cause:** All methods failed
+**Fix:**
+1. Check `~/.gemini/tmp/sessions/` exists
+2. Run Gemini CLI to generate logs: `gcloud gemini ...`
+3. Or configure OAuth for live API
+

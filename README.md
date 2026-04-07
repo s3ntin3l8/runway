@@ -6,7 +6,7 @@
 
 ## 🚀 Key Features
 
-- **13+ Data Points Integrated**: Dedicated collectors for Claude, Gemini, GPT-4, GitHub Copilot, and more.
+- **10 Collectors, 15+ Data Points**: Comprehensive monitoring for Claude, Gemini, GitHub Copilot, zAI, Kimi, and more.
 - **Sidecar Ingestion API**: Push metrics from external scripts or host-side services into the dashboard via `POST /api/ingest`.
 - **Resilient Rendering**: Individual API failures or malformed responses won't break the dashboard; failing services gracefully show "Error Cards."
 - **Real-Time Sync**: Pings live APIs and parses local log/state files simultaneously.
@@ -45,20 +45,50 @@ Runway follows a modular **Service-Collector Pattern** with three deployment mod
 
 1.  **Direct API Collectors**: Use `httpx` to fetch live usage data from official provider endpoints (e.g., Claude OAuth, GitHub API).
 2.  **Local File Parsers**: Extract usage metrics from local CLI logs, SQLite databases (OpenCode), or JSON/JSONL state files.
-3.  **Ingestion Sidecar**: A dedicated service for loading metrics from external sources (e.g., shell scripts monitoring terminal activity).
+3.  **Ingestion Sidecar**: A dedicated service for loading metrics from external sources. See [Sidecar Documentation](docs/sidecar.md) for setup.
+
+👉 **[Full Deployment Guide](docs/deployment-modes.md)** with Docker Compose examples and mode compatibility matrix
 
 ## 🔌 Supported Services
 
-Currently monitoring **13 data sources** across the following providers:
+Runway monitors **10 AI providers** with **15+ data points**:
 
-*   **Claude (Anthropic)**: Primary OAuth monitoring (supports 5h and 7d windows) + Fallback log parsing for `~/.claude`.
-*   **Gemini (Google)**: Multi-model telemetry from terminal-based usage logs.
-*   **GitHub Copilot**: Live rate limit tracking for Copilot Chat and Indent.
-*   **OpenCode**: Local line-change metrics from `opencode.db` and live cloud usage via API. Supports multi-host aggregation via sidecar.
-*   **Chinese AI Ecosystem**: Prepaid balance tracking for **zAI (GLM)** and **Kimi K2.5**.
-*   **ChatGPT Codex**: Session log parsing for local Codex activity.
-*   **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`).
-*   **Custom Sidecars**: Any service can push metrics via the Ingestion API.
+| Provider | Collection Method | Cards | Docs |
+|----------|------------------|-------|------|
+| **Claude** | OAuth API → Web API → Local logs | 2-5 | [📖](docs/collectors/claude.md) |
+| **Gemini** | OAuth API + Local logs | 1-7 | [📖](docs/collectors/gemini.md) |
+| **GitHub Copilot** | REST API | 2 | [📖](docs/collectors/github.md) |
+| **ChatGPT** | Web API + Local logs | 1 | [📖](docs/collectors/chatgpt.md) |
+| **OpenCode** | Web API → Local DB → Sidecar | 3 | [📖](docs/collectors/opencode.md) |
+| **zAI API** | REST API (Balance) | 1 | [📖](docs/collectors/zai_api.md) |
+| **zAI Plan** | REST API (Quotas) | 1-2 | [📖](docs/collectors/zai_plan.md) |
+| **Kimi API** | REST API (Balance) | 1 | [📖](docs/collectors/kimi_api.md) |
+| **Kimi Coding** | Web API (IDE Quotas) | 2 | [📖](docs/collectors/kimi_coding.md) |
+| **Antigravity** | Local JSON file | 1-3 | [📖](docs/collectors/antigravity.md) |
+
+**Collection Methods:**
+- **Direct API** → OAuth/REST endpoints (real-time)
+- **Web API + Cookies** → Chrome session extraction (aggregated)
+- **Local Files** → SQLite/JSON/Logs (offline)
+- **Sidecar** → External push via HTTP API (remote hosts)
+
+👉 **[Sidecar Setup Guide](docs/sidecar.md)** | **[Deployment Modes](docs/deployment-modes.md)**
+
+## ⚙️ Quick Start by Provider
+
+| Provider | Required Setup | Optional Fallback |
+|----------|---------------|-------------------|
+| **GitHub** | `GITHUB_TOKEN` env var | — |
+| **zAI** | `ZAI_API_KEY` env var | — |
+| **Kimi API** | `KIMI_API_KEY` env var | — |
+| **Kimi Coding** | Login to [kimi.com/code](https://www.kimi.com/code) in Chrome | `KIMI_AUTH_TOKEN` env var |
+| **Claude** | — | `CLAUDE_CODE_OAUTH_TOKEN` env var or macOS keychain |
+| **Gemini** | — | `GEMINI_OAUTH_CLIENT_ID/SECRET` or local logs |
+| **ChatGPT** | — | `CHATGPT_OAUTH_TOKEN` or local logs |
+| **OpenCode** | — | Chrome cookie or local DB |
+| **Antigravity** | Antigravity IDE running | — |
+
+See [`.env.example`](.env.example) for all configuration options.
 
 ## 📥 Ingestion API
 
@@ -72,6 +102,7 @@ curl -X POST http://localhost:8765/api/ingest \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "my-custom-service",
+    "api_key": "your-secret-key",
     "metrics": [
       {
         "service": "Usage Limit",
@@ -85,13 +116,38 @@ curl -X POST http://localhost:8765/api/ingest \
   }'
 ```
 
-## 🖥️ Deployment Examples
-
-### Standalone (Single Machine)
-
-Runway runs on the same computer as your coding tools.
+## 🚀 Quick Start
 
 ```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys (see Quick Start by Provider above)
+
+# Run
+python3 -m app.main
+```
+
+Access at `http://localhost:8765`
+
+👉 **[Docker Deployment](docs/deployment-modes.md#docker)** | **[Multi-Host Setup](docs/deployment-modes.md#multi-host)**
+
+## 📦 Setup
+
+### Prerequisites
+
+- Python 3.9+
+- API keys for providers you want to monitor (see [Quick Start by Provider](#%EF%B8%8F-quick-start-by-provider))
+
+### Installation
+
+```bash
+# Clone or download the repository
+git clone <repository-url>
+cd runway
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -103,70 +159,9 @@ cp .env.example .env
 python3 -m app.main
 ```
 
-Access at `http://localhost:8765`. No sidecar needed.
-
-### Multi-Host (Main PC + Laptop)
-
-**Main PC** (runs full Runway app):
-```bash
-python3 -m app.main
-```
-
-**Laptop** (sidecar only):
-```bash
-python3 scripts/sidecar.py \
-  --api-url http://main-pc:8765 \
-  --api-key sidecar-default-secret
-```
-
-The main PC combines its own local data with data from the laptop's sidecar.
-
-### Server/Docker (Containerized)
-
-**Server** (Docker - no local file access):
-```bash
-docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
-  -p 8765:8765 \
-  -e INGEST_API_KEY=your-secret-key \
-  runway
-```
-
-**Each Workstation** (sidecar required):
-```bash
-python3 scripts/sidecar.py \
-  --api-url http://server:8765 \
-  --api-key your-secret-key
-```
-
-The server aggregates data from ALL workstation sidecars. Heavy lifting (API calls, aggregation) happens server-side.
-
-## 📦 Setup
-
-### Quick Start (Standalone)
-
-For running Runway on the same machine as your coding tools:
-
-1.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2.  **Configure Environment**:
-    ```bash
-    cp .env.example .env
-    # Edit .env with your API keys
-    ```
-
-3.  **Run the App**:
-    ```bash
-    python3 -m app.main
-    ```
-
 Access the dashboard at `http://localhost:8765`.
 
-### Docker Deployment
-
-For running Runway on a server or container:
+### Docker (Headless/Server)
 
 ```bash
 docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
@@ -175,7 +170,9 @@ docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
   runway
 ```
 
-**Note**: You MUST run sidecar scripts on each workstation to send data to the container.
+**Note**: Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metrics.
+
+👉 **[Docker Compose Setup](docs/deployment-modes.md#docker-compose)** | **[Full Deployment Guide](docs/deployment-modes.md)**
 
 ---
 *Built for the 2026 Developer Workflow.*

@@ -289,3 +289,24 @@ All models share the same prepaid balance pool.
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "Missing/Invalid Key" error
+**Cause:** `KIMI_API_KEY` not set or too short
+**Fix:**
+1. Get API key from https://platform.moonshot.cn/
+2. Set `KIMI_API_KEY` in `.env`
+3. Key must be at least 10 characters
+
+### Issue: "401 Unauthorized"
+**Cause:** Invalid or expired key
+**Fix:**
+1. Check key at https://platform.moonshot.cn/
+2. Generate new key if needed
+3. Ensure key is for API access (not IDE)
+
+### Issue: Shows $0.00 balance
+**Cause:** No credits remaining
+**Fix:** Add prepaid credits via Moonshot billing portal
+

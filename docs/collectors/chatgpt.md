@@ -361,3 +361,27 @@ OAuth API → Web Scraping (detailed data) → Session Cache (cached %)
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "No Auth" error
+**Cause:** No token or cookie found
+**Fix:**
+1. Set `CHATGPT_OAUTH_TOKEN` env var
+2. Or login to ChatGPT in Chrome (allows cookie extraction)
+3. Or check `~/.codex/auth.json` exists
+
+### Issue: "401 Unauthorized"
+**Cause:** Token expired
+**Fix:**
+1. Re-login to https://chat.openai.com
+2. Extract new token from cookies
+3. Or use `~/.codex/auth.json` refresh
+
+### Issue: Local logs not found
+**Cause:** Codex CLI not used recently
+**Fix:**
+1. Use Codex CLI: `codex ...`
+2. Check `~/.codex/sessions/` exists
+3. Or rely on web API method
+

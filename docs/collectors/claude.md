@@ -591,6 +591,32 @@ OAuth API (/api/oauth/usage) → v1/rate_limits (simpler data) → Web API (cook
 - **Chrome Cookie Decryption:** Based on Chromium source
 - **CodexBar Documentation:** `docs/competitors.md` (Claude provider section)
 
+## Troubleshooting
+
+### Issue: "No Auth" or "Missing Token" error
+**Cause:** No OAuth token found in any source
+**Fix:**
+1. Set `CLAUDE_CODE_OAUTH_TOKEN` environment variable
+2. Or login to https://claude.ai in Chrome (allows cookie extraction)
+3. Or on macOS, ensure Claude Code CLI is configured (uses keychain)
+
+### Issue: "401 Unauthorized" error
+**Cause:** Token expired or invalid
+**Fix:**
+1. Generate new token from https://claude.ai/settings
+2. Update `CLAUDE_CODE_OAUTH_TOKEN` env var
+3. Or logout/login in Chrome to refresh cookies
+
+### Issue: Dashboard shows stale data
+**Cause:** OAuth has 5-minute cache
+**Fix:** Wait 5 minutes for next window, or use web API fallback (slower)
+
+### Issue: No local log fallback
+**Cause:** `~/.claude/` directory doesn't exist
+**Fix:**
+1. Use Claude Code CLI at least once to create logs
+2. Or rely on OAuth/web API methods
+
 ---
 
 *Last updated: 2026-04-07*

@@ -431,3 +431,24 @@ OpenCode previously supported `OPENCODE_GO_API_KEY` for direct API access, but t
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "No Data" or empty results
+**Cause:** All collection methods failed
+**Fix:**
+1. Ensure logged into https://opencode.ai in Chrome
+2. Check `~/.local/share/opencode/opencode.db` exists
+3. Verify `OPENCODE_LOCAL_COLLECTOR_ENABLED=true`
+
+### Issue: "Database not found"
+**Cause:** opencode.db doesn't exist
+**Fix:**
+1. Use OpenCode IDE at least once
+2. Check path: `~/.local/share/opencode/opencode.db` (Linux/macOS)
+3. Windows: `%LOCALAPPDATA%\opencode\opencode.db`
+
+### Issue: "Sidecar" tag on all cards
+**Cause:** Running in Docker mode
+**Fix:** Normal for Docker - sidecar provides file access
+

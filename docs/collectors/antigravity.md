@@ -351,3 +351,21 @@ CodexBar uses an active LSP protocol approach instead of passive file reading. T
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: No Antigravity cards in dashboard
+**Cause:** File not found or empty
+**Fix:**
+1. Check file exists: `ls ~/.antigravity/state/quota.json`
+2. Open Antigravity IDE to trigger quota write
+3. Verify file permissions: `chmod 644 ~/.antigravity/state/quota.json`
+
+### Issue: Shows 0% for all models
+**Cause:** Quota file has zero values
+**Fix:** Use models in IDE to generate usage data
+
+### Issue: "Unknown" reset time
+**Cause:** Some models have no reset timestamp
+**Fix:** Normal for one-time quotas - no action needed
+

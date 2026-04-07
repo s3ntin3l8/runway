@@ -302,3 +302,34 @@ sqlite3 ~/Library/Application\ Support/Google/Chrome/Default/Cookies \
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "No Auth" error
+**Cause:** No token or cookie found
+**Fix:**
+1. Set `KIMI_AUTH_TOKEN` env var (get from browser cookie)
+2. Or login to https://www.kimi.com/code in Chrome
+3. Ensure Chrome cookies accessible
+
+### Issue: "401 Unauthorized"
+**Cause:** Token expired
+**Fix:**
+1. Re-login to https://www.kimi.com/code
+2. Extract fresh `kimi-auth` cookie
+3. Update `KIMI_AUTH_TOKEN` env var
+
+### Issue: Wrong tier detected
+**Cause:** Quota limit doesn't match known tiers
+**Fix:**
+- Tier auto-detected from weekly limit
+- Custom plans may show as "Basic"
+- Check actual quota at https://www.kimi.com/code/console
+
+### Issue: No Chrome cookie found
+**Cause:** Not logged in or different browser
+**Fix:**
+1. Verify login at https://www.kimi.com/code
+2. Check cookie name: `kimi-auth`
+3. Try setting `KIMI_AUTH_TOKEN` manually
+

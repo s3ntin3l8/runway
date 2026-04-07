@@ -427,3 +427,27 @@ while True:
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "Missing Token" error
+**Cause:** `GITHUB_TOKEN` not set
+**Fix:**
+1. Generate token at https://github.com/settings/tokens
+2. Set `GITHUB_TOKEN` in `.env`
+3. Token needs `read:user` scope
+
+### Issue: "401 Unauthorized"
+**Cause:** Token invalid or expired
+**Fix:**
+1. Check token at https://github.com/settings/tokens
+2. Regenerate if expired
+3. Ensure token wasn't revoked
+
+### Issue: "No quotas found"
+**Cause:** Free tier or no Copilot subscription
+**Fix:**
+1. Verify GitHub Copilot subscription active
+2. Free tier has limited quotas
+3. Check https://github.com/settings/billing
+

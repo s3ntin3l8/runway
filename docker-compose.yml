@@ -1,0 +1,107 @@
+version: '3.8'
+
+# Runway AI Usage Tracker - Docker Compose Configuration
+# 
+# This compose file sets up Runway in Docker mode with optional sidecar
+# for file-based collectors (Antigravity, Chrome cookies, etc.)
+#
+# Usage:
+#   1. Copy .env.example to .env and configure your API keys
+#   2. docker-compose up -d
+#   3. Access dashboard at http://localhost:8765
+#
+# For multi-host setups, run sidecar scripts on workstations:
+#   python3 scripts/sidecar.py --api-url http://server:8765 --api-key your-secret-key
+
+services:
+  runway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: runway:latest
+    container_name: runway
+    ports:
+      - "8765:8765"
+    environment:
+      # Required: Sidecar authentication key
+      # Workstations must use this key to push metrics
+      - INGEST_API_KEY=${INGEST_API_KEY:-sidecar-default-secret}
+      
+      # Disable local file collectors (no host access in container)
+      # File-based data must come from sidecars
+      - OPENCODE_LOCAL_COLLECTOR_ENABLED=false
+      
+      # API Keys (optional - can also use sidecar for these)
+      # These allow direct API calls from the container
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      
+      # OAuth credentials (optional)
+      - GEMINI_OAUTH_CLIENT_ID=${GEMINI_OAUTH_CLIENT_ID:-}
+      - GEMINI_OAUTH_CLIENT_SECRET=${GEMINI_OAUTH_CLIENT_SECRET:-}
+      
+    volumes:
+      # Optional: Persist external metrics between restarts
+      - ./data:/app/data
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Sidecar container for host file/cookie access
+  # Uncomment this section if you want file-based collectors 
+  # (Antigravity, Chrome cookies, etc.) within the same Docker host
+  #
+  # sidecar:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: runway:latest
+  #   container_name: runway-sidecar
+  #   command: >
+  #     python3 scripts/sidecar.py
+  #     --provider all
+  #     --api-url http://runway:8765
+  #     --api-key ${INGEST_API_KEY:-sidecar-default-secret}
+  #   environment:
+  #     # Kimi Coding IDE authentication
+  #     # Get from browser cookie 'kimi-auth' at https://www.kimi.com/code
+  #     - KIMI_AUTH_TOKEN=${KIMI_AUTH_TOKEN:-}
+  #     
+  #     # Claude OAuth (optional - can also extract from keychain)
+  #     - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+  #     
+  #     # ChatGPT OAuth (optional)
+  #     - CHATGPT_OAUTH_TOKEN=${CHATGPT_OAUTH_TOKEN:-}
+  #     
+  #   volumes:
+  #     # Mount host directories for file/cookie access
+  #     # Adjust paths based on your OS (see below)
+  #     
+  #     # Antigravity IDE quota file
+  #     - ~/.antigravity:/root/.antigravity:ro
+  #     
+  #     # Chrome cookies (macOS example)
+  #     - ~/Library/Application Support/Google/Chrome:/root/chrome:ro
+  #     
+  #     # Chrome cookies (Linux example - uncomment if needed)
+  #     # - ~/.config/google-chrome:/root/.config/google-chrome:ro
+  #     
+  #   depends_on:
+  #     - runway
+  #   restart: unless-stopped
+
+# Volume for persistent data (optional)
+volumes:
+  runway-data:
+    driver: local
+
+# Network configuration (optional)
+networks:
+  default:
+    name: runway-network

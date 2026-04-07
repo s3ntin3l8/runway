@@ -275,3 +275,24 @@ Set `ZAI_API_KEY` as environment variable in container. API key travels with con
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "Missing/Invalid Key" error
+**Cause:** `ZAI_API_KEY` not set or is placeholder
+**Fix:**
+1. Get API key from https://open.bigmodel.cn/
+2. Set `ZAI_API_KEY` in `.env` (not literally "zai")
+3. Ensure key format: `sk-...`
+
+### Issue: "API Error (401)"
+**Cause:** Invalid or expired key
+**Fix:**
+1. Check key at https://open.bigmodel.cn/
+2. Generate new key if needed
+3. Account may be suspended
+
+### Issue: Shows ¥0.00 balance
+**Cause:** No credits remaining
+**Fix:** Add prepaid credits via Zhipu billing portal
+

@@ -238,3 +238,24 @@ curl -H "Authorization: Bearer $ZAI_API_KEY" \
 ---
 
 *Last updated: 2026-04-07*
+
+## Troubleshooting
+
+### Issue: "API Unavailable" error
+**Cause:** Both endpoints failed
+**Fix:**
+1. Check connectivity: `curl -H "Authorization: Bearer $ZAI_API_KEY" https://api.z.ai/api/monitor/usage/quota/limit`
+2. Try fallback: `curl -H "Authorization: Bearer $ZAI_API_KEY" https://open.bigmodel.cn/api/monitor/usage/quota/limit`
+3. Verify key has quota plan access
+
+### Issue: "No Limits Found"
+**Cause:** Plan has no configured limits
+**Fix:**
+1. Verify your plan includes quotas (some basic plans are balance-only)
+2. Check at https://open.bigmodel.cn/
+3. Upgrade plan if needed
+
+### Issue: Missing time or token limit
+**Cause:** Only one limit type configured
+**Fix:** Normal - some plans have only tokens or only time limits
+
