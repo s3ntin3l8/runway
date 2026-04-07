@@ -504,7 +504,7 @@ class OpenCodeCollector:
         except:
             return []
 
-class ZaiCollector:
+class ZaiApiCollector:
     @staticmethod
     def collect():
         key = os.getenv("ZAI_API_KEY")
@@ -517,19 +517,80 @@ class ZaiCollector:
                 return []
             bal = float(data.get("data", {}).get("available_balance", 0))
             return [{
-                "service": "zAI (GLM)",
+                "service": "zAI API",
                 "icon": "🌐",
                 "remaining": f"¥{bal:.2f}",
                 "unit": "balance",
                 "reset": "Manual",
                 "health": "good" if bal > 10 else "warning",
                 "pace": "Stable",
-                "detail": "Prepaid balance [Sidecar]"
+                "detail": "Prepaid balance (API) [Sidecar]"
             }]
         except:
             return []
 
-class KimiCodeCollector:
+class ZaiPlanCollector:
+    @staticmethod
+    def collect():
+        key = os.getenv("ZAI_API_KEY")
+        if not key or key.lower() == "zai":
+            return []
+        
+        # Try multiple endpoints
+        endpoints = [
+            "https://api.z.ai/api/monitor/usage/quota/limit",
+            "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+        ]
+        
+        for endpoint in endpoints:
+            try:
+                headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+                data, code = http_get(endpoint, headers)
+                if code != 200:
+                    continue
+                
+                plan_data = data.get("data", {})
+                limits = plan_data.get("limits", [])
+                if not limits:
+                    continue
+                
+                results = []
+                for limit in limits:
+                    limit_type = limit.get("type", "")
+                    limit_val = limit.get("limit", 0)
+                    used_val = limit.get("used", 0)
+                    remaining = max(0, limit_val - used_val)
+                    
+                    if limit_type == "TOKENS_LIMIT":
+                        results.append({
+                            "service": "zAI Plan (Tokens)",
+                            "icon": "📊",
+                            "remaining": f"{remaining:,}",
+                            "unit": f"{limit_val:,} limit",
+                            "reset": "Plan cycle",
+                            "health": "good" if used_val / limit_val < 0.5 else "warning",
+                            "pace": "Stable",
+                            "detail": f"{used_val:,} used [Sidecar]"
+                        })
+                    elif limit_type == "TIME_LIMIT":
+                        results.append({
+                            "service": "zAI Plan (Time)",
+                            "icon": "📊",
+                            "remaining": f"{remaining}",
+                            "unit": f"{limit_val} min",
+                            "reset": "Plan cycle",
+                            "health": "good" if used_val / limit_val < 0.5 else "warning",
+                            "pace": "Stable",
+                            "detail": f"{used_val} min used [Sidecar]"
+                        })
+                
+                return results
+            except:
+                continue
+        
+        return []
+
+class KimiApiCollector:
     @staticmethod
     def collect():
         key = os.getenv("KIMI_API_KEY")
@@ -544,17 +605,154 @@ class KimiCodeCollector:
                 return []
             bal = float(data.get("data", {}).get("available_balance", 0))
             return [{
-                "service": "Kimi Code",
+                "service": "Kimi API",
                 "icon": "🌙",
                 "remaining": f"${bal:.2f}",
                 "unit": "balance",
                 "reset": "Manual",
                 "health": "good" if bal > 5 else "warning",
                 "pace": "Stable",
-                "detail": "Prepaid balance [Sidecar]"
+                "detail": "Prepaid balance (API) [Sidecar]"
             }]
         except:
             return []
+
+class KimiCodingCollector:
+    @staticmethod
+    def collect():
+        # Try env var first
+        token = os.getenv("KIMI_AUTH_TOKEN")
+        
+        # Then try Chrome cookie
+        if not token:
+            token = KimiCodingCollector._get_cookie()
+        
+        if not token:
+            return []
+        
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            data, code = http_post(
+                "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages",
+                {},
+                headers
+            )
+            
+            if code != 200:
+                return []
+            
+            usages = data.get("usages", [])
+            if not usages:
+                return []
+            
+            # Find FEATURE_CODING usage
+            usage = None
+            for u in usages:
+                if u.get("scope") == "FEATURE_CODING":
+                    usage = u
+                    break
+            if not usage:
+                usage = usages[0]
+            
+            results = []
+            
+            # Weekly quota
+            weekly = usage.get("detail", {})
+            if weekly:
+                limit = int(weekly.get("limit", 0))
+                used = int(weekly.get("used", 0))
+                remaining = int(weekly.get("remaining", limit - used))
+                
+                if limit > 0:
+                    # Detect tier
+                    tier = "Basic"
+                    if limit >= 7000:
+                        tier = "Allegretto"
+                    elif limit >= 2000:
+                        tier = "Moderato"
+                    elif limit >= 1000:
+                        tier = "Andante"
+                    
+                    results.append({
+                        "service": "Kimi Coding (Weekly)",
+                        "icon": "🌙",
+                        "remaining": f"{remaining}",
+                        "unit": f"{limit} req",
+                        "reset": "Weekly",
+                        "health": "good" if used / limit < 0.5 else "warning" if used / limit < 0.8 else "critical",
+                        "pace": tier,
+                        "detail": f"{used} used · {tier} [Sidecar]"
+                    })
+            
+            # Rate limit
+            limits = usage.get("limits", [])
+            if limits:
+                rate = limits[0].get("detail", {})
+                window = limits[0].get("window", {})
+                limit = int(rate.get("limit", 0))
+                used = int(rate.get("used", 0))
+                remaining = int(rate.get("remaining", limit - used))
+                duration = window.get("duration", 300)
+                window_label = f"{duration // 60}h"
+                
+                if limit > 0:
+                    results.append({
+                        "service": f"Kimi Coding ({window_label})",
+                        "icon": "⏱️",
+                        "remaining": f"{remaining}",
+                        "unit": f"{limit} req",
+                        "reset": f"{window_label} window",
+                        "health": "good" if used / limit < 0.7 else "warning",
+                        "pace": "Stable",
+                        "detail": f"{used} used · Rate limit [Sidecar]"
+                    })
+            
+            return results
+            
+        except:
+            return []
+    
+    @staticmethod
+    def _get_cookie():
+        """Extract kimi-auth from Chrome cookies."""
+        try:
+            # Determine Chrome cookies path based on platform
+            if sys.platform == "darwin":
+                path = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
+            elif sys.platform == "win32":
+                path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
+                if not path.exists():
+                    path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
+            else:
+                path = Path.home() / ".config/google-chrome/Default/Cookies"
+                if not path.exists():
+                    path = Path.home() / ".config/chromium/Default/Cookies"
+            
+            if not path.exists():
+                return None
+            
+            import sqlite3
+            conn = sqlite3.connect(str(path))
+            cursor = conn.cursor()
+            
+            for cookie_name in ["kimi-auth", "kimi_token"]:
+                cursor.execute(
+                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                    (cookie_name,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    conn.close()
+                    return row[0]
+            
+            conn.close()
+            return None
+        except:
+            return None
 
 class AntigravityCollector:
     @staticmethod
@@ -618,7 +816,7 @@ def run_install(api_url, api_key):
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Lightweight Sidecar for Runway")
-    parser.add_argument("--provider", default="all", help="Provider to collect (anthropic, github, gemini, chatgpt, opencode, zai, kimi_code, antigravity, all)")
+    parser.add_argument("--provider", default="all", help="Provider to collect (anthropic, github, gemini, chatgpt, opencode, zai_api, zai_plan, kimi_api, kimi_coding, antigravity, all)")
     parser.add_argument("--api-url", help="Runway API URL")
     parser.add_argument("--api-key", help="Ingestion API Key")
     parser.add_argument("--install", action="store_true", help="Install as a background task")
@@ -633,14 +831,16 @@ def main():
     # Collection
     all_metrics = []
     providers = []
-    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector, ZaiCollector, KimiCodeCollector, AntigravityCollector]
+    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector, ZaiApiCollector, ZaiPlanCollector, KimiApiCollector, KimiCodingCollector, AntigravityCollector]
     elif args.provider == "anthropic": providers = [AnthropicCollector]
     elif args.provider == "github": providers = [GitHubCollector]
     elif args.provider == "gemini": providers = [GeminiCollector]
     elif args.provider == "chatgpt": providers = [ChatGPTCollector]
     elif args.provider == "opencode": providers = [OpenCodeCollector]
-    elif args.provider == "zai": providers = [ZaiCollector]
-    elif args.provider == "kimi_code": providers = [KimiCodeCollector]
+    elif args.provider == "zai_api": providers = [ZaiApiCollector]
+    elif args.provider == "zai_plan": providers = [ZaiPlanCollector]
+    elif args.provider == "kimi_api": providers = [KimiApiCollector]
+    elif args.provider == "kimi_coding": providers = [KimiCodingCollector]
     elif args.provider == "antigravity": providers = [AntigravityCollector]
     
     for p in providers:

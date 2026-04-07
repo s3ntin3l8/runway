@@ -1,8 +1,10 @@
-# zAI Collector
+# zAI API Collector (Balance)
 
-**File:** `app/services/collectors/zai.py`
+**File:** `app/services/collectors/zai_api.py`
 
-Zhipu AI (GLM) quota collector with prepaid balance tracking in Chinese Yuan (¥).
+Zhipu AI (GLM) balance collector with prepaid account tracking in Chinese Yuan (¥).
+
+> **Note:** This collector tracks prepaid balance. For quota limits (tokens/time windows), see [zAI Plan Collector](zai_plan.md).
 
 ---
 

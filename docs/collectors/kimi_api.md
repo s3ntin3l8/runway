@@ -1,8 +1,10 @@
-# Kimi Code Collector
+# Kimi API Collector (Balance)
 
-**File:** `app/services/collectors/kimi_code.py`
+**File:** `app/services/collectors/kimi_api.py`
 
-Moonshot AI (Kimi) quota collector with prepaid balance tracking in USD ($).
+Moonshot AI (Kimi) balance collector with prepaid account tracking in USD ($).
+
+> **Note:** This collector tracks API balance. For IDE coding quotas (weekly + rate limits), see [Kimi Coding Collector](kimi_coding.md).
 
 ---
 

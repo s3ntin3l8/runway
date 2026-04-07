@@ -1,11 +1,14 @@
 """
-zAI (Zhipu AI/GLM) quota collector with prepaid balance tracking.
+zAI API (Balance) collector with prepaid balance tracking.
 
 Collection Strategy:
 - Requires ZAI_API_KEY environment variable (Zhipu API key)
 - Calls https://open.bigmodel.cn/api/paas/v4/users/me/balance
 - Returns prepaid account balance in Chinese Yuan (¥)
 - Prepaid model: no quotas, just account balance
+
+See Also:
+- zai_plan.py for quota limits (TOKENS_LIMIT, TIME_LIMIT)
 
 Error Handling:
 - Missing/invalid keys: Returns error card with key validation message
@@ -23,8 +26,8 @@ from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 
 
-class ZaiCollector(BaseCollector):
-    """Collector for zAI (Zhipu AI/GLM) prepaid balance."""
+class ZaiApiCollector(BaseCollector):
+    """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
     
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -53,14 +56,14 @@ class ZaiCollector(BaseCollector):
             bal = float(data.get("data", {}).get("available_balance", 0))
             
             return [{
-                "service": "zAI (GLM)",
+                "service": "zAI API",
                 "icon": "🌐",
                 "remaining": f"¥{bal:.2f}",
                 "unit": "balance",
                 "reset": "Manual",
                 "health": "good" if bal > 10 else "warning",
                 "pace": "Stable",
-                "detail": "Prepaid balance",
+                "detail": "Prepaid balance (API)",
             }]
         except httpx.RequestError:
             return [error_card("zAI", "🌐", "Connection Failed")]

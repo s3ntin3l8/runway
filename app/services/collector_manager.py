@@ -16,8 +16,10 @@ from app.services.collectors.github import GitHubCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.opencode import OpenCodeCollector
-from app.services.collectors.zai import ZaiCollector
-from app.services.collectors.kimi_code import KimiCodeCollector
+from app.services.collectors.zai_api import ZaiApiCollector
+from app.services.collectors.zai_plan import ZaiPlanCollector
+from app.services.collectors.kimi_api import KimiApiCollector
+from app.services.collectors.kimi_coding import KimiCodingCollector
 from app.services.smart_collector import SmartCollector
 from app.services.external_metrics import external_metric_service
 
@@ -50,8 +52,10 @@ class CollectorManager:
             (ChatGPTCollector(), "ChatGPT", 600),                   # 10 min
             (AntigravityCollector(), "Antigravity", 900),           # 15 min
             (OpenCodeCollector(), "OpenCode", 1800),                # 30 min
-            (ZaiCollector(), "zAI", 900),                           # 15 min
-            (KimiCodeCollector(), "Kimi Code", 900)                 # 15 min
+            (ZaiApiCollector(), "zAI API", 900),                    # 15 min
+            (ZaiPlanCollector(), "zAI Plan", 900),                  # 15 min
+            (KimiApiCollector(), "Kimi API", 900),                  # 15 min
+            (KimiCodingCollector(), "Kimi Coding", 900)             # 15 min
         ]
         
         # Wrap each collector with SmartCollector for differential fetching

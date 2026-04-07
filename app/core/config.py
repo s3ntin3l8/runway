@@ -80,6 +80,7 @@ class Settings:
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
     KIMI_API_KEY: str = os.getenv("KIMI_API_KEY", "")
+    KIMI_AUTH_TOKEN: str = os.getenv("KIMI_AUTH_TOKEN", "")
     INGEST_API_KEY: str = os.getenv("INGEST_API_KEY", "sidecar-default-secret")
     
     # OAuth Credentials (from environment)

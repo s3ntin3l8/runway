@@ -278,6 +278,58 @@ def get_claude_session_cookie() -> Optional[str]:
         return None
 
 
+def get_kimi_auth_cookie() -> Optional[str]:
+    """
+    Extract the kimi-auth cookie for kimi.com from Chrome's cookie store.
+    
+    This JWT token is used to authenticate with Kimi Coding IDE API
+    when KIMI_AUTH_TOKEN environment variable is not set.
+    
+    Returns:
+        The decrypted kimi-auth cookie value (JWT token), or None
+        if not found or decryption failed.
+    """
+    cookies_path = get_chrome_cookies_path()
+    if not cookies_path:
+        return None
+    
+    try:
+        # Connect to Chrome's SQLite cookie database
+        conn = sqlite3.connect(str(cookies_path))
+        cursor = conn.cursor()
+        
+        # Query for kimi.com kimi-auth cookie
+        # Try multiple possible cookie names
+        for cookie_name in ['kimi-auth', 'kimi_token', 'auth_token']:
+            cursor.execute(
+                "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                (cookie_name,)
+            )
+            
+            row = cursor.fetchone()
+            if row:
+                encrypted_value = row[0]
+                
+                # Try to decrypt
+                decrypted = decrypt_cookie(encrypted_value)
+                if decrypted:
+                    conn.close()
+                    return decrypted
+                
+                # If decryption failed, try treating as plaintext (some configs)
+                try:
+                    plaintext = encrypted_value.decode('utf-8')
+                    conn.close()
+                    return plaintext
+                except UnicodeDecodeError:
+                    pass
+        
+        conn.close()
+        return None
+    except Exception:
+        return None
+
+
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
     """
     Extract a token from macOS Keychain.

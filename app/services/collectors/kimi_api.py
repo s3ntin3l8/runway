@@ -1,11 +1,14 @@
 """
-Kimi Code (Moonshot AI) quota collector with prepaid balance tracking.
+Kimi API (Balance) collector with prepaid balance tracking.
 
 Collection Strategy:
 - Requires KIMI_API_KEY environment variable (Moonshot API key)
 - Calls https://api.moonshot.cn/v1/users/me/balance
 - Returns prepaid account balance in USD ($)
 - Prepaid model: no quotas, just account balance
+
+See Also:
+- kimi_coding.py for IDE quota limits (weekly + rate limits)
 
 Error Handling:
 - Missing/invalid keys: Returns error card with key validation message
@@ -23,8 +26,8 @@ from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
 
 
-class KimiCodeCollector(BaseCollector):
-    """Collector for Kimi Code (Moonshot AI) prepaid balance."""
+class KimiApiCollector(BaseCollector):
+    """Collector for Kimi API (Moonshot AI) prepaid balance."""
     
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -39,7 +42,7 @@ class KimiCodeCollector(BaseCollector):
         """
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
-            return [error_card("Kimi Code", "🌙", "Missing/Invalid Key")]
+            return [error_card("Kimi API", "🌙", "Missing/Invalid Key")]
         
         try:
             resp = await client.get(
@@ -56,14 +59,14 @@ class KimiCodeCollector(BaseCollector):
             bal = float(data.get("data", {}).get("available_balance", 0))
             
             return [{
-                "service": "Kimi Code",
+                "service": "Kimi API",
                 "icon": "🌙",
                 "remaining": f"${bal:.2f}",
                 "unit": "balance",
                 "reset": "Manual",
                 "health": "good" if bal > 5 else "warning",
                 "pace": "Stable",
-                "detail": "Prepaid balance",
+                "detail": "Prepaid balance (API)",
             }]
         except httpx.RequestError:
             return [error_card("Kimi Code", "🌙", "Connection Failed")]

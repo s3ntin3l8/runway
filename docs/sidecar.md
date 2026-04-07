@@ -15,7 +15,7 @@ The script will interactively ask for your **Runway API URL** and **Ingestion AP
 ## 🛠 Features
 
 - **Zero Dependencies:** Uses only the Python Standard Library (`urllib`). No `pip install` required.
-- **Multi-Provider Support:** Collects from 8 different AI providers
+- **Multi-Provider Support:** Collects from 10 different AI providers
 - **Cross-Platform:** Works on **macOS, Linux (Crontab)** and **Windows (Task Scheduler)**.
 - **Auto-Installer:** Built-in task registration logic.
 
@@ -28,8 +28,10 @@ The script will interactively ask for your **Runway API URL** and **Ingestion AP
 | **Gemini** | OAuth API + Local logs | `GEMINI_OAUTH_CLIENT_ID/SECRET` or `~/.gemini/oauth_creds.json` |
 | **ChatGPT** | Web API + Local logs | `CHATGPT_OAUTH_TOKEN` or `~/.codex/auth.json` |
 | **OpenCode** | Local SQLite DB | `~/.local/share/opencode/opencode.db` |
-| **zAI (GLM)** | Balance API | `ZAI_API_KEY` |
-| **Kimi Code** | Balance API | `KIMI_API_KEY` |
+| **zAI API** | Balance API | `ZAI_API_KEY` |
+| **zAI Plan** | Quota API | `ZAI_API_KEY` |
+| **Kimi API** | Balance API | `KIMI_API_KEY` |
+| **Kimi Coding** | IDE Quotas | `KIMI_AUTH_TOKEN` or Chrome cookie |
 | **Antigravity** | Local JSON file | `~/.antigravity/state/quota.json` |
 
 ## 📖 Usage Options
@@ -45,8 +47,10 @@ python3 scripts/sidecar.py --dry-run
 Test a specific provider:
 ```bash
 python3 scripts/sidecar.py --provider anthropic --dry-run
-python3 scripts/sidecar.py --provider zai --dry-run
-python3 scripts/sidecar.py --provider kimi_code --dry-run
+python3 scripts/sidecar.py --provider zai_api --dry-run
+python3 scripts/sidecar.py --provider zai_plan --dry-run
+python3 scripts/sidecar.py --provider kimi_api --dry-run
+python3 scripts/sidecar.py --provider kimi_coding --dry-run
 ```
 
 ### Manual Push
@@ -77,11 +81,17 @@ python3 scripts/sidecar.py --provider chatgpt --dry-run
 # OpenCode
 python3 scripts/sidecar.py --provider opencode --dry-run
 
-# zAI (Zhipu AI)
-python3 scripts/sidecar.py --provider zai --dry-run
+# zAI API (Balance)
+python3 scripts/sidecar.py --provider zai_api --dry-run
 
-# Kimi Code (Moonshot)
-python3 scripts/sidecar.py --provider kimi_code --dry-run
+# zAI Plan (Quota)
+python3 scripts/sidecar.py --provider zai_plan --dry-run
+
+# Kimi API (Balance)
+python3 scripts/sidecar.py --provider kimi_api --dry-run
+
+# Kimi Coding (IDE)
+python3 scripts/sidecar.py --provider kimi_coding --dry-run
 
 # Antigravity IDE
 python3 scripts/sidecar.py --provider antigravity --dry-run
@@ -146,11 +156,14 @@ The sidecar reads the following environment variables:
 # GitHub Copilot
 export GITHUB_TOKEN="github_pat_..."
 
-# zAI (GLM)
+# zAI API & Plan (GLM)
 export ZAI_API_KEY="sk-..."
 
-# Kimi Code (Moonshot)
+# Kimi API (Balance)
 export KIMI_API_KEY="sk-proj-..."
+
+# Kimi Coding (IDE)
+export KIMI_AUTH_TOKEN="eyJhbG..."
 
 # Claude (optional, will try keychain/file first)
 export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-..."
