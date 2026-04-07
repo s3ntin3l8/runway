@@ -126,29 +126,49 @@ class OpenCodeCollector(BaseCollector):
         """
         Fetch OpenCode TUI local database statistics.
         
-        Reads SQLite database and sums lines changed from session table.
+        Reads SQLite database and sums tokens and cost from recent messages.
         Returns empty list if database not found (TUI not in use).
         
         Returns:
-            List[Dict[str, Any]]: Single card with total lines changed or error
+            List[Dict[str, Any]]: Single card with token usage or error
         """
         db = settings.OPENCODE_DB_PATH
         if not os.path.exists(db): return []
         try:
             import aiosqlite
+            from datetime import datetime, timezone, timedelta
+            
+            cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+            
             async with aiosqlite.connect(db) as conn:
-                async with conn.execute("SELECT SUM(summary_additions + summary_deletions) FROM session") as cursor:
+                async with conn.execute("""
+                    SELECT 
+                        SUM(json_extract(data, '$.tokens.input')),
+                        SUM(json_extract(data, '$.tokens.output')),
+                        SUM(json_extract(data, '$.cost')),
+                        COUNT(*)
+                    FROM message
+                    WHERE time_created > ?
+                      AND json_valid(data)
+                      AND json_extract(data, '$.role') = 'assistant'
+                """, (cutoff_ms,)) as cursor:
                     row = await cursor.fetchone()
-                    tokens = row[0] or 0
+                    
+            inp = int(row[0] or 0)
+            out = int(row[1] or 0)
+            cost = float(row[2] or 0.0)
+            count = int(row[3] or 0)
+            total = inp + out
+            
             return [{
                 "service": "OpenCode TUI",
                 "icon": "⚡",
-                "remaining": f"{tokens:,}",
-                "unit": "lines changed",
-                "reset": "History",
+                "remaining": f"{total:,}",
+                "unit": "tokens (24h)",
+                "reset": "Rolling 24h",
                 "health": "good",
                 "pace": "Stable",
-                "detail": "Local DB",
+                "detail": f"{count} msgs · ${cost:.4f} · {inp:,} in / {out:,} out",
             }]
         except Exception as e: 
             return [error_card("OpenCode TUI", "⚡", f"DB Error: {str(e)[:15]}")]
