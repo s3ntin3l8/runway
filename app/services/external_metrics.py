@@ -54,10 +54,18 @@ class ExternalMetricService:
         }
         self._save()
 
-    def get_all_metrics(self) -> List[Dict[str, Any]]:
-        all_cards = []
-        opencode_cards = []  # Collect all opencode-* cards for aggregation
-        now = datetime.now(timezone.utc)
+    def _aggregate_opencode_cards(self, opencode_cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Aggregate OpenCode cards from multiple hosts.
+        
+        Args:
+            opencode_cards: List of card dicts from opencode-* providers
+            
+        Returns:
+            List of aggregated cards (5h, week, month)
+        """
+        if not opencode_cards:
+            return []
         
         # Limits for aggregated opencode windows
         limits = {
@@ -65,6 +73,116 @@ class ExternalMetricService:
             "week": 30.0,
             "month": 60.0,
         }
+        
+        # Track aggregated data per window
+        aggregated = {
+            "5h": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
+            "week": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
+            "month": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
+        }
+        
+        # Window name mappings
+        window_map = {
+            "5 Hours": "5h",
+            "7 Days": "week",
+            "30 Days": "month",
+        }
+        
+        for card in opencode_cards:
+            service = card.get("service", "")
+            # Extract window type from service name
+            window_key = None
+            for window_name, key in window_map.items():
+                if window_name in service:
+                    window_key = key
+                    break
+            
+            if window_key:
+                # Parse cost from detail field (format: "$X.XX used · Y msgs · hostname [Sidecar]")
+                detail = card.get("detail", "")
+                try:
+                    cost_part = detail.split("$")[1].split(" used")[0]
+                    used = float(cost_part)
+                except (IndexError, ValueError):
+                    used = 0.0
+                
+                # Parse message count
+                try:
+                    msgs_part = detail.split(" · ")[1].split(" msgs")[0]
+                    msgs = int(msgs_part)
+                except (IndexError, ValueError):
+                    msgs = 0
+                
+                # Extract hostname from detail
+                try:
+                    host_part = detail.split(" · ")[2].split(" [Sidecar]")[0]
+                    aggregated[window_key]["hosts"].add(host_part)
+                except IndexError:
+                    aggregated[window_key]["hosts"].add(card.get("_provider", "unknown"))
+                
+                aggregated[window_key]["used"] += used
+                aggregated[window_key]["msgs"] += msgs
+                aggregated[window_key]["time_str"] = card.get("_time_str", "")
+        
+        # Create aggregated cards for each window
+        window_labels = {
+            "5h": "5h Combined",
+            "week": "7d Combined",
+            "month": "30d Combined",
+        }
+        
+        result = []
+        for window, data in aggregated.items():
+            if data["hosts"]:  # Only create card if we have data
+                used = data["used"]
+                limit = limits[window]
+                remaining = max(0, limit - used)
+                pct = (used / limit * 100) if limit > 0 else 0
+                host_count = len(data["hosts"])
+                time_str = data["time_str"]
+                
+                result.append({
+                    "service": f"OpenCode ({window_labels[window]})",
+                    "icon": "⚡",
+                    "remaining": f"${remaining:.2f}",
+                    "unit": f"${limit:.0f} limit",
+                    "reset": f"Rolling {window}",
+                    "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                    "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                    "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
+                })
+        
+        return result
+
+    def get_opencode_aggregated(self) -> List[Dict[str, Any]]:
+        """
+        Get aggregated OpenCode metrics from sidecar data.
+        
+        Returns:
+            List of aggregated cards for 5h, week, month windows
+        """
+        opencode_cards = []
+        now = datetime.now(timezone.utc)
+        
+        for provider, data in self.metrics.items():
+            if provider.startswith("opencode-"):
+                ts = datetime.fromisoformat(data["timestamp"])
+                diff = now - ts
+                minutes = int(diff.total_seconds() / 60)
+                time_str = f"{minutes}m ago" if minutes > 0 else "just now"
+                
+                for card in data["cards"]:
+                    card_copy = card.copy()
+                    card_copy["_provider"] = provider
+                    card_copy["_time_str"] = time_str
+                    opencode_cards.append(card_copy)
+        
+        return self._aggregate_opencode_cards(opencode_cards)
+
+    def get_all_metrics(self) -> List[Dict[str, Any]]:
+        all_cards = []
+        opencode_cards = []  # Collect all opencode-* cards for aggregation
+        now = datetime.now(timezone.utc)
         
         for provider, data in self.metrics.items():
             ts = datetime.fromisoformat(data["timestamp"])
@@ -88,85 +206,8 @@ class ExternalMetricService:
                     updated_card["service"] += f" ({time_str})"
                     all_cards.append(updated_card)
         
-        # Aggregate opencode cards by window type
-        if opencode_cards:
-            # Track aggregated data per window
-            # window -> {"used": float, "msgs": int, "hosts": set, "time_str": str}
-            aggregated = {
-                "5h": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-                "week": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-                "month": {"used": 0.0, "msgs": 0, "hosts": set(), "time_str": ""},
-            }
-            
-            # Window name mappings
-            window_map = {
-                "5 Hours": "5h",
-                "7 Days": "week",
-                "30 Days": "month",
-            }
-            
-            for card in opencode_cards:
-                service = card.get("service", "")
-                # Extract window type from service name
-                window_key = None
-                for window_name, key in window_map.items():
-                    if window_name in service:
-                        window_key = key
-                        break
-                
-                if window_key:
-                    # Parse cost from detail field (format: "$X.XX used · Y msgs · hostname [Sidecar]")
-                    detail = card.get("detail", "")
-                    try:
-                        cost_part = detail.split("$")[1].split(" used")[0]
-                        used = float(cost_part)
-                    except (IndexError, ValueError):
-                        used = 0.0
-                    
-                    # Parse message count
-                    try:
-                        msgs_part = detail.split(" · ")[1].split(" msgs")[0]
-                        msgs = int(msgs_part)
-                    except (IndexError, ValueError):
-                        msgs = 0
-                    
-                    # Extract hostname from detail
-                    try:
-                        host_part = detail.split(" · ")[2].split(" [Sidecar]")[0]
-                        aggregated[window_key]["hosts"].add(host_part)
-                    except IndexError:
-                        aggregated[window_key]["hosts"].add(card.get("_provider", "unknown"))
-                    
-                    aggregated[window_key]["used"] += used
-                    aggregated[window_key]["msgs"] += msgs
-                    aggregated[window_key]["time_str"] = card.get("_time_str", "")
-            
-            # Create aggregated cards for each window
-            window_labels = {
-                "5h": "5h Combined",
-                "week": "7d Combined",
-                "month": "30d Combined",
-            }
-            
-            for window, data in aggregated.items():
-                if data["hosts"]:  # Only create card if we have data
-                    used = data["used"]
-                    limit = limits[window]
-                    remaining = max(0, limit - used)
-                    pct = (used / limit * 100) if limit > 0 else 0
-                    host_count = len(data["hosts"])
-                    time_str = data["time_str"]
-                    
-                    all_cards.append({
-                        "service": f"OpenCode ({window_labels[window]})",
-                        "icon": "⚡",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": f"${limit:.0f} limit",
-                        "reset": f"Rolling {window}",
-                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                        "detail": f"Combined from {host_count} hosts · ${used:.2f} used ({time_str})",
-                    })
+        # Aggregate opencode cards and add to result
+        all_cards.extend(self._aggregate_opencode_cards(opencode_cards))
         
         return all_cards
 

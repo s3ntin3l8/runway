@@ -1,147 +1,248 @@
 """
-OpenCode quota collector with dual data sources.
+OpenCode quota collector with web API (Chrome cookies) as primary source.
 
 Collection Strategy:
-1. OpenCode Go API
-   - Requires OPENCODE_GO_API_KEY environment variable
-   - Calls https://api.opencode.ai/v1/user/usage with Bearer auth
-   - Returns USD-based spending: total_usage_usd and hard_limit_usd
-   - Rolling 5-hour window for rate limiting
+1. OpenCode Web API (PRIMARY)
+   - Uses Chrome cookies to authenticate with opencode.ai
+   - Calls https://opencode.ai/_server endpoint
+   - Returns aggregated usage from ALL devices (web IDE, TUI, etc.)
+   - Shows rolling 5-hour and weekly windows
    
-2. OpenCode TUI Local Database
-   - Reads SQLite database at OPENCODE_DB_PATH (local development)
-   - Queries session table to sum lines changed (additions + deletions)
-   - Historical data (no reset window)
-   - Used as complementary data source showing local activity
+2. Sidecar Aggregation (FALLBACK)
+   - Aggregates local DB data from multiple hosts via external metrics
+   - Used when web API fails (no Chrome login, cookie decryption fails)
+   - Each host runs sidecar script to push local data
 
-Error Handling:
-- Missing API key: Silently skips API collector
-- API HTTP errors: Returns error card with status code
-- No limit set: Returns error card (API misconfiguration)
-- DB errors: Returns error card with first 15 chars of error
-
-Data Representation:
-- OpenCode Go: USD spending model with hard limit
-- OpenCode TUI: Lines of code changed (development metrics)
+Local DB Collection:
+- Controlled by OPENCODE_LOCAL_COLLECTOR_ENABLED env var
+- Only used as additional data source, not primary
 """
 
 import os
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
-from app.core.utils import error_card
+from app.core.utils import error_card, human_delta
+from app.core.chrome_cookies import get_opencode_session_cookie
 from app.services.collectors.base import BaseCollector
+from app.services.external_metrics import external_metric_service
+
 
 class OpenCodeCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect OpenCode quota from both API and local database.
+        Collect OpenCode quota from web API (primary) or sidecar aggregation (fallback).
         
-        Returns cards for:
-        - OpenCode Go API (USD spending)
-        - OpenCode TUI database (lines changed)
+        Priority:
+        1. Web API with Chrome cookies - shows total account usage across all devices
+        2. Sidecar aggregation - combines local DB data from multiple hosts
         
         Returns:
-            List[Dict[str, Any]]: Cards for available data sources
+            List[Dict[str, Any]]: Cards for 5h and weekly windows
         """
-        results = []
+        # 1. Try web API first (aggregates all devices via opencode.ai account)
+        web_cards = await self._get_opencode_web(client)
+        if web_cards:
+            return web_cards
         
-        # 1. OpenCode Go (API)
-        go_res = await self._get_opencode_go(client)
-        if go_res: results.extend(go_res)
+        # 2. Fall back to sidecar aggregation
+        sidecar_cards = external_metric_service.get_opencode_aggregated()
+        if sidecar_cards:
+            return sidecar_cards
         
-        # 2. OpenCode TUI (Local DB)
-        tui_res = await self._get_opencode_tui()
-        if tui_res: results.extend(tui_res)
+        # 3. Last resort: local DB (if enabled)
+        if os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() != "false":
+            return await self._get_opencode_tui()
         
-        return results
+        return []
 
-    async def _get_opencode_go(self, client: httpx.AsyncClient):
+    async def _get_opencode_web(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Fetch OpenCode Go API quota (USD-based spending).
+        Fetch OpenCode usage from web API using Chrome cookies.
         
-        Requires OPENCODE_GO_API_KEY. Returns error card if key missing or API fails.
+        This queries the opencode.ai servers and returns aggregated usage
+        from ALL devices where the user is logged in (web IDE, TUI, etc.).
         
-        Note: The OpenCode Go API endpoint (api.opencode.ai) appears to be deprecated
-        as of April 2026. The endpoint returns "Not Found" for all usage queries.
-        Users should check usage at https://opencode.ai/auth instead.
+        Process:
+        1. Extract session cookie from Chrome
+        2. Call workspaces endpoint to get workspace ID
+        3. Call subscription endpoint to get usage data
+        4. Parse JavaScript response with regex
         
         Returns:
-            List[Dict[str, Any]]: Single card with remaining budget or error
+            List[Dict[str, Any]]: Cards for 5h and weekly windows, or empty list on failure
         """
-        key = settings.OPENCODE_GO_API_KEY
-        if not key: return []
+        session_cookie = get_opencode_session_cookie()
+        if not session_cookie:
+            return []
+        
         try:
-            resp = await client.get("https://api.opencode.ai/v1/user/usage", headers={"Authorization": f"Bearer {key}"})
-            if resp.status_code != 200: 
-                return [error_card("OpenCode Go", "🚀", f"HTTP {resp.status_code}")]
+            headers = {
+                "Cookie": f"session={session_cookie}",
+                "Content-Type": "application/json",
+            }
             
-            # Check if response is valid JSON
-            content_type = resp.headers.get("content-type", "")
-            if "application/json" not in content_type:
-                # API endpoint deprecated - return informative message
-                return [{
-                    "service": "OpenCode Go",
-                    "icon": "🚀",
-                    "remaining": "N/A",
-                    "unit": "—",
-                    "reset": "Check Console",
-                    "health": "warning",
-                    "pace": "API Unavailable",
-                    "detail": "Visit opencode.ai/auth for usage",
-                }]
+            # 1. Get workspace ID
+            workspace_id = await self._get_workspace_id(client, headers)
+            if not workspace_id:
+                return []
             
-            data = resp.json()
-            used, lim = data.get("total_usage_usd", 0), data.get("hard_limit_usd", 0)
-            if lim == 0: return [error_card("OpenCode Go", "🚀", "No limit set")]
-            rem = max(0, lim - used)
-            pct = (used / lim * 100)
-            return [{
-                "service": "OpenCode Go",
-                "icon": "🚀",
-                "remaining": f"${rem:.2f}",
-                "unit": "USD",
-                "reset": "Rolling 5h",
-                "health": "good" if pct < 70 else "warning",
-                "pace": "Stable",
-                "detail": f"${used:.2f}/${lim:.2f} ({pct:.1f}%) [API]",
-            }]
-        except Exception as e: 
-            # Handle JSON parse errors (API returning HTML instead of JSON)
-            error_msg = str(e)
-            if "Expecting value" in error_msg or "not accessible" in error_msg.lower():
-                return [{
-                    "service": "OpenCode Go",
-                    "icon": "🚀",
-                    "remaining": "N/A",
-                    "unit": "—",
-                    "reset": "Check Console",
-                    "health": "warning",
-                    "pace": "API Unavailable",
-                    "detail": "Visit opencode.ai/auth for usage",
-                }]
-            return [error_card("OpenCode Go", "🚀", f"Fail: {error_msg[:15]}")]
+            # 2. Get subscription data
+            usage_data = await self._get_subscription_data(client, headers, workspace_id)
+            if not usage_data:
+                return []
+            
+            # 3. Parse and return cards
+            return self._parse_usage_data(usage_data)
+            
+        except Exception:
+            return []
 
-    async def _get_opencode_tui(self):
+    async def _get_workspace_id(
+        self, 
+        client: httpx.AsyncClient, 
+        headers: Dict[str, str]
+    ) -> Optional[str]:
+        """Get the first workspace ID from opencode.ai."""
+        try:
+            # Check for env override first
+            env_workspace = os.getenv("OPENCODE_WORKSPACE_ID")
+            if env_workspace:
+                # Handle full URL format
+                if "workspace/" in env_workspace:
+                    return env_workspace.split("workspace/")[-1].split("/")[0]
+                return env_workspace
+            
+            # Call workspaces endpoint
+            resp = await client.post(
+                "https://opencode.ai/_server",
+                headers=headers,
+                json={
+                    "functionId": "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"  # workspaces
+                },
+                timeout=10.0
+            )
+            
+            if resp.status_code != 200:
+                return None
+            
+            # Parse JavaScript response
+            text = resp.text
+            # Look for workspace ID pattern: id:"wrk_..."
+            match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
+            if match:
+                return match.group(1)
+            
+            return None
+        except Exception:
+            return None
+
+    async def _get_subscription_data(
+        self, 
+        client: httpx.AsyncClient, 
+        headers: Dict[str, str],
+        workspace_id: str
+    ) -> Optional[str]:
+        """Get subscription/usage data from opencode.ai."""
+        try:
+            resp = await client.post(
+                "https://opencode.ai/_server",
+                headers=headers,
+                json={
+                    "functionId": "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4",  # subscription.get
+                    "workspaceId": workspace_id
+                },
+                timeout=10.0
+            )
+            
+            if resp.status_code != 200:
+                return None
+            
+            return resp.text
+        except Exception:
+            return None
+
+    def _parse_usage_data(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Parse JavaScript response to extract usage data.
+        
+        Expected format:
+        rollingUsage:{usagePercent:45.5,resetInSec:7200,limit:12.0}
+        weeklyUsage:{usagePercent:23.0,resetInSec:345600,limit:30.0}
+        """
+        cards = []
+        
+        # Parse rolling usage (5-hour window)
+        rolling_match = re.search(
+            r'rollingUsage:\{usagePercent:([\d.]+),resetInSec:(\d+)(?:,limit:([\d.]+))?\}',
+            text
+        )
+        if rolling_match:
+            pct = float(rolling_match.group(1))
+            reset_sec = int(rolling_match.group(2))
+            limit = float(rolling_match.group(3)) if rolling_match.group(3) else 12.0
+            
+            used = (pct / 100) * limit
+            remaining = max(0, limit - used)
+            
+            # Calculate reset time
+            from datetime import datetime, timezone, timedelta
+            reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
+            
+            cards.append({
+                "service": "OpenCode (5h)",
+                "icon": "⚡",
+                "remaining": f"${remaining:.2f}",
+                "unit": f"${limit:.0f} limit",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+            })
+        
+        # Parse weekly usage
+        weekly_match = re.search(
+            r'weeklyUsage:\{usagePercent:([\d.]+),resetInSec:(\d+)(?:,limit:([\d.]+))?\}',
+            text
+        )
+        if weekly_match:
+            pct = float(weekly_match.group(1))
+            reset_sec = int(weekly_match.group(2))
+            limit = float(weekly_match.group(3)) if weekly_match.group(3) else 30.0
+            
+            used = (pct / 100) * limit
+            remaining = max(0, limit - used)
+            
+            from datetime import datetime, timezone, timedelta
+            reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
+            
+            cards.append({
+                "service": "OpenCode (Weekly)",
+                "icon": "⚡",
+                "remaining": f"${remaining:.2f}",
+                "unit": f"${limit:.0f} limit",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+            })
+        
+        return cards
+
+    async def _get_opencode_tui(self) -> List[Dict[str, Any]]:
         """
         Fetch OpenCode TUI local database statistics with multi-window limits.
         
-        Calculates usage across rolling windows based on documented limits:
-        - 5-hour limit: $12 of usage
-        - Weekly limit: $30 of usage  
-        - Monthly limit: $60 of usage
-        
-        Returns empty list if database not found (TUI not in use) or if local
-        collection is disabled via OPENCODE_LOCAL_COLLECTOR_ENABLED env var.
+        This is a fallback when web API and sidecar are unavailable.
         
         Returns:
             List[Dict[str, Any]]: Cards for each time window (5h, week, month)
         """
-        if os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "false":
+        db = settings.OPENCODE_DB_PATH
+        if not os.path.exists(db):
             return []
         
-        db = settings.OPENCODE_DB_PATH
-        if not os.path.exists(db): return []
         try:
             import aiosqlite
             from datetime import datetime, timezone, timedelta
@@ -198,10 +299,10 @@ class OpenCodeCollector(BaseCollector):
                         "reset": f"Rolling {window}",
                         "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                         "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                        "detail": f"${used:.2f} used · {count} msgs · {pct:.1f}%",
+                        "detail": f"${used:.2f} used · {count} msgs · Local DB",
                     })
                 
                 return cards
                 
-        except Exception as e: 
+        except Exception as e:
             return [error_card("OpenCode TUI", "⚡", f"DB Error: {str(e)[:15]}")]

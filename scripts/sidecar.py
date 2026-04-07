@@ -306,9 +306,70 @@ class ChatGPTCollector:
 
 class OpenCodeCollector:
     @staticmethod
+    def get_chrome_cookies_path():
+        """Get Chrome cookies database path based on platform."""
+        system = sys.platform
+        home = Path.home()
+        
+        if system == "darwin":  # macOS
+            path = home / "Library/Application Support/Google/Chrome/Default/Cookies"
+        elif system == "win32":  # Windows
+            path = home / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
+            if not path.exists():
+                path = home / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
+        else:  # Linux
+            path = home / ".config/google-chrome/Default/Cookies"
+            if not path.exists():
+                path = home / ".config/chromium/Default/Cookies"
+        
+        return path if path.exists() else None
+    
+    @staticmethod
+    def get_opencode_session():
+        """Extract opencode.ai session cookie from Chrome (if available)."""
+        cookies_path = OpenCodeCollector.get_chrome_cookies_path()
+        if not cookies_path:
+            return None
+        
+        try:
+            conn = sqlite3.connect(str(cookies_path))
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else None
+        except:
+            return None
+    
+    @staticmethod
     def collect():
+        """
+        Collect OpenCode usage from local database.
+        
+        Note: This sidecar sends local DB data. The main app will:
+        1. Try web API with Chrome cookies first (aggregates all devices)
+        2. Fall back to aggregating sidecar data from multiple hosts
+        """
         db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
-        if not db_path.exists(): return []
+        if not db_path.exists(): 
+            # Try to extract and send cookie instead
+            session = OpenCodeCollector.get_opencode_session()
+            if session:
+                # Return a special marker that tells main app to use web API
+                hostname = socket.gethostname()
+                return [{
+                    "service": "OpenCode (Cookie)",
+                    "icon": "⚡",
+                    "remaining": "Web API",
+                    "unit": "session",
+                    "reset": "—",
+                    "health": "good",
+                    "pace": "Stable",
+                    "detail": f"session:{session} · {hostname} [Sidecar]",
+                }]
+            return []
         
         try:
             conn = sqlite3.connect(str(db_path))
@@ -448,9 +509,18 @@ def main():
         print("ERROR: --api-url and --api-key are required to push metrics. Use --dry-run to test.")
         return
 
+    # Determine provider name based on collection type
+    hostname = socket.gethostname()
+    if args.provider == "opencode":
+        provider_name = f"opencode-{hostname}"
+    elif args.provider == "all":
+        provider_name = f"sidecar-{hostname}"
+    else:
+        provider_name = f"{args.provider}-{hostname}"
+
     # Pushing
     payload = {
-        "provider": "sidecar",
+        "provider": provider_name,
         "api_key": args.api_key,
         "metrics": all_metrics
     }

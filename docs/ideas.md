@@ -14,6 +14,13 @@
     - Support automatic cookie extraction from Safari/Chrome/Firefox on macOS (experimental).
     - *Inspiration: CodexBar's web scraping path.*
 
+## OpenCode Collector
+- [ ] **Multi-Browser Cookie Support**: Currently only Chrome is supported for automatic cookie extraction. Add support for:
+    - Firefox (cookies.sqlite database)
+    - Safari (binary plist format)
+    - Edge (Chromium-based, similar to Chrome)
+    - Priority: Low (Chrome covers 80%+ of users)
+
 ## Sidecar & Ingestion
 - [ ] **Auto-Updating Sidecar**: Enable the sidecar to self-update by checking against the main Runway server's version or a remote Git repository.
 - [ ] **Daemon Mode**: Support a `--daemon` flag to run as a persistent process with a configurable sleep interval, providing more real-time updates than 30m crontab tasks.
