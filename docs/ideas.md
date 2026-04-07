@@ -13,3 +13,9 @@
     - Support manual `Cookie:` header input for headless environments.
     - Support automatic cookie extraction from Safari/Chrome/Firefox on macOS (experimental).
     - *Inspiration: CodexBar's web scraping path.*
+
+## Sidecar & Ingestion
+- [ ] **Auto-Updating Sidecar**: Enable the sidecar to self-update by checking against the main Runway server's version or a remote Git repository.
+- [ ] **Daemon Mode**: Support a `--daemon` flag to run as a persistent process with a configurable sleep interval, providing more real-time updates than 30m crontab tasks.
+- [ ] **Offline Queuing**: If the ingestion API is unreachable, cache collected metrics in a local SQLite/JSON file and retry upon the next successful connection.
+- [ ] **Binary Sidecar**: Distribute the sidecar as a single-binary (using PyInstaller or Go) to avoid Python dependency issues on host machines.
