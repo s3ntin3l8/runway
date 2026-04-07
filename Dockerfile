@@ -31,6 +31,8 @@ USER runway
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONFAULTHANDLER=1
+ENV APP_HOST=0.0.0.0  # Required: containers must accept external connections
+ENV APP_PORT=8765
 
 # Expose port (unprivileged user can bind to 8765)
 EXPOSE 8765
@@ -39,5 +41,5 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/limits')" || exit 1
 
-# Run application (bind to 0.0.0.0 for Docker)
-CMD ["python3", "-c", "import uvicorn; from app.main import app; uvicorn.run(app, host='0.0.0.0', port=8765)"]
+# Run application
+CMD ["python3", "-m", "app.main"]

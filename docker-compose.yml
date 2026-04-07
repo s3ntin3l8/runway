@@ -27,6 +27,10 @@ services:
       # Workstations must use this key to push metrics
       - INGEST_API_KEY=${INGEST_API_KEY:-sidecar-default-secret}
       
+      # Network: Must bind to 0.0.0.0 for external access to container
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8765
+      
       # Disable local file collectors (no host access in container)
       # File-based data must come from sidecars
       - OPENCODE_LOCAL_COLLECTOR_ENABLED=false

@@ -63,6 +63,18 @@ python3 -m app.main
 
 Access at `http://localhost:8765`
 
+### Network Access
+
+By default, standalone mode only accepts local connections (`127.0.0.1`).
+
+To allow other devices on your network to access the dashboard:
+
+1. Set `APP_HOST=0.0.0.0` in your `.env`
+2. Restart Runway
+3. Access via your machine's IP address
+
+⚠️ See [README security warning](../README.md#-network-access) before enabling.
+
 ### When to Use
 
 - ✅ You code on a single machine

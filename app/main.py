@@ -46,4 +46,7 @@ async def dashboard():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    logger.info(f"Starting Runway on http://{settings.APP_HOST}:{settings.APP_PORT}")
+    if settings.APP_HOST == "0.0.0.0":
+        logger.warning("Server bound to 0.0.0.0 - accessible from all network interfaces!")
+    uvicorn.run(app, host=settings.APP_HOST, port=settings.APP_PORT)

@@ -96,5 +96,9 @@ class Settings:
     OPENCODE_DB_PATH: str = os.path.expanduser("~/.local/share/opencode/opencode.db")
     EXTERNAL_METRICS_PATH: str = os.path.expanduser("~/.usage-tracker/external_metrics.json")
     OPENCODE_LOCAL_COLLECTOR_ENABLED: bool = os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
+    
+    # Network settings
+    APP_HOST: str = os.getenv("APP_HOST", "127.0.0.1")  # Default: local-only for security
+    APP_PORT: int = int(os.getenv("APP_PORT", "8765"))
 
 settings = Settings()

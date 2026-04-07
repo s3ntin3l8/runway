@@ -134,6 +134,43 @@ Access at `http://localhost:8765`
 
 👉 **[Docker Deployment](docs/deployment-modes.md#docker)** | **[Multi-Host Setup](docs/deployment-modes.md#multi-host)**
 
+## 🌐 Network Access
+
+By default, Runway only accepts connections from the same machine (`127.0.0.1`).
+
+### Access from Other Devices
+
+To access the dashboard from phones, tablets, or other computers on your network:
+
+1. **Edit `.env`:**
+   ```bash
+   APP_HOST=0.0.0.0
+   ```
+
+2. **Restart Runway:**
+   ```bash
+   python3 -m app.main
+   ```
+
+3. **Find your IP and access:**
+   ```bash
+   # Mac/Linux
+   ifconfig | grep "inet " | head -1
+   
+   # Windows
+   ipconfig | findstr "IPv4"
+   ```
+   Then open: `http://<your-ip>:8765`
+
+⚠️ **Security Warning:** 
+- `0.0.0.0` exposes Runway to your entire local network
+- Anyone on your WiFi can view your AI usage dashboard
+- The ingestion API (`/api/ingest`) becomes network-accessible — ensure `INGEST_API_KEY` is strong
+- **Recommendations:**
+  - Only enable `0.0.0.0` when actively needed
+  - Use firewall rules to restrict access if desired
+  - For production/multi-user setups: use a reverse proxy (nginx/traefik) with HTTPS and authentication
+
 ## 📦 Setup
 
 ### Prerequisites
