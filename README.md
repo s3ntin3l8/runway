@@ -37,22 +37,15 @@ Currently monitoring **11 data sources**:
 
 1.  **Install Dependencies**:
     ```bash
-    pip install fastapi uvicorn httpx python-dotenv aiosqlite
+    pip install -r requirements.txt
     ```
 
 2.  **Configure Environment**:
-    Create a `.env` file in the root directory (see `.env.example` if available):
-    ```env
-    CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...
-    GITHUB_TOKEN=github_pat_...
-    OPENCODE_GO_API_KEY=sk-...
-    ZAI_API_KEY=sk-...
-    KIMI_API_KEY=sk-...
-    ```
+    Create a `.env` file in the root directory (see `.env.example` for details).
 
 3.  **Run the App**:
     ```bash
-    python3 main.py
+    python3 -m app.main
     ```
     Access the dashboard at `http://127.0.0.1:8765`.
 
