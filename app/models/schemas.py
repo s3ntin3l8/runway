@@ -13,3 +13,8 @@ class LimitCard(BaseModel):
 
 class LimitsResponse(BaseModel):
     limits: List[LimitCard]
+
+class IngestRequest(BaseModel):
+    provider: str
+    metrics: List[LimitCard]
+    api_key: str

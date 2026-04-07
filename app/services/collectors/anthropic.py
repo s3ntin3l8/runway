@@ -9,16 +9,58 @@ from app.core.utils import PaceCalculator, human_delta, error_card
 from app.services.collectors.base import BaseCollector
 
 class AnthropicCollector(BaseCollector):
+    def __init__(self):
+        self._cached_results = None
+        self._last_fetch = None
+        self._cache_ttl = 600  # 10 minutes cache to be safe with 429s
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        results = []
+        # 1. Try OAuth if token exists
         if settings.CLAUDE_CODE_OAUTH_TOKEN:
-            oauth_res = await self._get_claude_oauth(client, settings.CLAUDE_CODE_OAUTH_TOKEN)
-            results.extend(oauth_res)
-        else:
-            local_res = await self._get_claude_local()
-            if local_res:
-                results.extend(local_res)
-        return results
+            oauth_res = await self._get_claude_oauth_with_cache(client, settings.CLAUDE_CODE_OAUTH_TOKEN)
+            
+            # Check if it's a valid result (not an error card)
+            is_error = any(r.get("remaining") == "ERR" for r in oauth_res)
+            if not is_error and oauth_res:
+                return oauth_res
+            
+            # If it was a 429 specifically, we might want to log it or just proceed to fallback
+            # The error_card detail will contain "API Error 429"
+
+        # 2. Fallback to Local Logs
+        local_res = await self._get_claude_local()
+        if local_res:
+            # If we fell back due to an error, we could tag it
+            if settings.CLAUDE_CODE_OAUTH_TOKEN:
+                for r in local_res:
+                    r["detail"] += " (API Fallback)"
+            return local_res
+            
+        # 3. Final Fallback: Return the original OAuth error if both failed
+        if settings.CLAUDE_CODE_OAUTH_TOKEN:
+            return await self._get_claude_oauth(client, settings.CLAUDE_CODE_OAUTH_TOKEN)
+            
+        return [error_card("Claude Pro", "🟠", "No data — OAuth missing & Logs empty")]
+
+    async def _get_claude_oauth_with_cache(self, client: httpx.AsyncClient, token: str):
+        now = datetime.now(timezone.utc)
+        if self._cached_results and self._last_fetch:
+            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
+                # Add a tag to show it's cached
+                for r in self._cached_results:
+                    if "[Cached]" not in r["detail"]:
+                        r["detail"] += " [Cached]"
+                return self._cached_results
+
+        res = await self._get_claude_oauth(client, token)
+        
+        # Only cache if not an error
+        is_error = any(r.get("remaining") == "ERR" for r in res)
+        if not is_error and res:
+            self._cached_results = res
+            self._last_fetch = now
+        
+        return res
 
     async def _get_claude_oauth(self, client: httpx.AsyncClient, token: str):
         url = "https://api.anthropic.com/api/oauth/usage"
@@ -26,6 +68,7 @@ class AnthropicCollector(BaseCollector):
         try:
             resp = await client.get(url, headers=headers, timeout=10.0)
             if resp.status_code == 401: return [error_card("Claude Pro", "🟠", "Unauthorized (OAuth)")]
+            if resp.status_code == 429: return [error_card("Claude Pro", "🟠", "API Error 429 (Rate Limited)")]
             if resp.status_code != 200: return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
             
             data = resp.json()

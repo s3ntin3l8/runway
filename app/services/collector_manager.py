@@ -8,6 +8,7 @@ from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.chinese_ai import ChineseAICollector
+from app.services.external_metrics import external_metric_service
 
 class CollectorManager:
     def __init__(self):
@@ -30,4 +31,9 @@ class CollectorManager:
         for res in results:
             if isinstance(res, list):
                 flattened.extend(res)
+        
+        # Merge external metrics
+        external_results = external_metric_service.get_all_metrics()
+        flattened.extend(external_results)
+        
         return flattened
