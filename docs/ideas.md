@@ -747,6 +747,77 @@ class AlertManager:
 
 ---
 
+### 6. Antigravity: Active API Connection (vs File-Based)
+**File**: `app/services/collectors/antigravity.py` (enhancement)  
+**Severity**: Medium  
+**Effort**: 1-2 days  
+**Research**: CodexBar implementation analysis
+
+**Current Implementation**: File-based reading of `~/.antigravity/state/quota.json`
+- **Pros**: Simple, reliable, cross-platform
+- **Cons**: May not be real-time, no account/plan info
+
+**CodexBar's Approach**: Active API connection to running Antigravity process
+
+**How it works**:
+1. **Process Detection**: Find running `language_server_macos` process
+2. **Port Discovery**: Use `lsof` to find listening TCP ports
+3. **Token Extraction**: Parse `--csrf_token` from process command line
+4. **API Calls**: POST to localhost endpoints:
+   - `/exa.language_server_pb.LanguageServerService/GetUserStatus`
+   - `/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs`
+
+**Key Features from CodexBar**:
+- **Real-time data**: Connects to running Antigravity process
+- **Model family classification**: Claude, Gemini Pro, Gemini Flash with smart selection
+- **Model prioritization**: Primary → Secondary → Tertiary quotas
+- **Port testing**: Tries multiple ports, tests connectivity
+- **Account info**: Gets email and plan details
+- **CSRF authentication**: Uses token from process args
+- **HTTPS with insecure delegate**: Accepts self-signed localhost certs
+
+**Smart Model Selection Logic**:
+```python
+# Skip "lite" and "autocomplete" models
+# Prioritize by selectionPriority
+# Fall back to lowest remaining percentage
+def select_representative(family, models):
+    candidates = [m for m in models 
+                  if m.family == family and m.selection_priority is not None]
+    # Return best candidate based on priority and remaining%
+```
+
+**Endpoint Fallback**:
+1. Try `GetUserStatus` (has email + plan info)
+2. Fall back to `GetCommandModelConfigs` (quota only)
+
+**Error Handling** (CodexBar style):
+- `notRunning` - Process not found
+- `missingCSRFToken` - Token extraction failed  
+- `portDetectionFailed` - lsof issues
+- `apiError` - HTTP errors (401 = session expired)
+
+**Implementation Options**:
+
+**Option A: Replace file-based with API**
+- Pros: Real-time, more accurate, account info
+- Cons: Complex, requires process access, platform-specific (macOS focused)
+
+**Option B: Hybrid approach**
+- Try API first when Antigravity is running
+- Fall back to file when not running
+- Best of both worlds
+
+**Option C: Keep file-based, enhance logic**
+- Add model family classification
+- Better model selection logic
+- More robust error handling
+- **Recommended** - simpler, sufficient for most use cases
+
+**Decision**: **Option C for now** - File-based is reliable and cross-platform. Consider Option B if users need real-time accuracy.
+
+---
+
 ## Token Transmission Architecture
 
 ### Encrypted Token Storage (Option B)
