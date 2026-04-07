@@ -4,34 +4,61 @@
 
 ![Runway Dashboard](file:///Users/bjoern/.gemini/antigravity/brain/53ba3247-9958-4671-8ffc-419e940bc0eb/runway_dashboard_final_1775511401280.png)
 
-## 🚀 Features
+## 🚀 Key Features
 
-- **11+ Services Integrated**: Support for Claude, Gemini, GPT-4, OpenCode, and more.
+- **13+ Data Points Integrated**: Dedicated collectors for Claude, Gemini, GPT-4, GitHub Copilot, and more.
+- **Sidecar Ingestion API**: Push metrics from external scripts or host-side services into the dashboard via `POST /api/ingest`.
 - **Resilient Rendering**: Individual API failures or malformed responses won't break the dashboard; failing services gracefully show "Error Cards."
 - **Real-Time Sync**: Pings live APIs and parses local log/state files simultaneously.
 - **Stateless & Secure**: No database required. Keeps your API keys safe in a local `.env` file.
-- **Health Indicators**: Dynamic visual cues (Good/Warning/Critical) based on your remaining quota or prepaid balance.
-- **Humanized Timers**: Countdown clocks for when your limits will reset.
+- **Docker Ready**: Headless-first architecture designed to run in containerized environments without native OS dependencies.
+- **Humanized Timers**: High-precision countdown clocks for quota resets and prepaid balance expiry.
 
-## 🛠️ Tech Stack
+## 🏗️ Architecture
 
-- **Backend**: FastAPI (Python 3.9+) with `httpx` for async concurrency.
-- **Frontend**: Vanilla HTML5, JavaScript, and Tailwind CSS (Glassmorphism UI).
-- **Local Parsing**: Supports SQLite (OpenCode TUI), JSONL (Claude/Codex), and JSON (Gemini/Antigravity).
+Runway follows a modular **Service-Collector Pattern**:
+
+1.  **Direct API Collectors**: Use `httpx` to fetch live usage data from official provider endpoints (e.g., Claude OAuth, GitHub API).
+2.  **Local File Parsers**: Extract usage metrics from local CLI logs, SQLite databases (OpenCode), or JSON/JSONL state files.
+3.  **Ingestion Sidecar**: A dedicated service for loading metrics from external sources (e.g., shell scripts monitoring terminal activity).
 
 ## 🔌 Supported Services
 
-Currently monitoring **11 data sources**:
-1.  **Claude (OAuth)**: Primary cloud monitoring for Pro/Personal accounts (supports 5h and 7d windows).
-2.  **Claude (Local Logs)**: Fallback parser for local `~/.claude` activity logs.
-3.  **Gemini CLI**: Monitors `~/.gemini/state/quota.json` for terminal-based usage.
-4.  **OpenCode TUI**: Tracks local line-change metrics from `opencode.db`.
-5.  **OpenCode Go**: Live cloud usage and USD balance via `api.opencode.ai`.
-6.  **GitHub Copilot**: Live API rate limit tracking for Copilot Chat and Indent.
-7.  **zAI (GLM)**: Prepaid balance tracking via BigModel Cloud (BigModel API).
-8.  **Kimi K2.5**: Prepaid balance tracking via Moonshot AI.
-9.  **ChatGPT Codex**: Local `~/.codex` session log parsing.
-10. **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`) from `~/.antigravity` state.
+Currently monitoring **13 data sources** across the following providers:
+
+*   **Claude (Anthropic)**: Primary OAuth monitoring (supports 5h and 7d windows) + Fallback log parsing for `~/.claude`.
+*   **Gemini (Google)**: Multi-model telemetry from terminal-based usage logs.
+*   **GitHub Copilot**: Live rate limit tracking for Copilot Chat and Indent.
+*   **OpenCode**: Local line-change metrics from `opencode.db` and live cloud usage via API.
+*   **Chinese AI Ecosystem**: Prepaid balance tracking for **zAI (GLM)** and **Kimi K2.5**.
+*   **ChatGPT Codex**: Session log parsing for local Codex activity.
+*   **Antigravity IDE**: Multi-model telemetry (`gemini-3.1-pro`, `claude-3-5-sonnet`, `o3-mini`).
+*   **Custom Sidecars**: Any service can push metrics via the Ingestion API.
+
+## 📥 Ingestion API
+
+For services that cannot be reached directly by the dashboard, Runway provides a lightweight ingestion endpoint:
+
+**Endpoint**: `POST /api/ingest`
+**Content-Type**: `application/json`
+
+```bash
+curl -X POST http://localhost:8765/api/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "my-custom-service",
+    "metrics": [
+      {
+        "service": "Usage Limit",
+        "icon": "⚡",
+        "remaining": "85%",
+        "unit": "capacity",
+        "health": "good",
+        "detail": "850/1000 tokens remaining"
+      }
+    ]
+  }'
+```
 
 ## 📦 Setup
 
@@ -41,13 +68,13 @@ Currently monitoring **11 data sources**:
     ```
 
 2.  **Configure Environment**:
-    Create a `.env` file in the root directory (see `.env.example` for details).
+    Create a `.env` file in the root directory (see `.env.example` for the list of required tokens).
 
 3.  **Run the App**:
     ```bash
     python3 -m app.main
     ```
-    Access the dashboard at `http://127.0.0.1:8765`.
+    Access the dashboard at `http://localhost:8765`.
 
 ---
 *Built for the 2026 Developer Workflow.*
