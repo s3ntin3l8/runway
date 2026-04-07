@@ -38,3 +38,4 @@ Avoid writing code that relies on native desktop UI features if the app is inten
 1. **Be Resilient**: Always consider what happens if an external API is down or a file is missing.
 2. **Prioritize UI**: Frontend changes should be premium, high-performance, and maintain the glassmorphism aesthetic.
 3. **Keep it Stateless**: Avoid adding persistent databases unless strictly required for a new feature (prefer local file parsing/ENV).
+4. **Local Testing**: Create all test scripts (e.g., in `scripts/`) within the project folder to ensure they are portable, reusable, and version-controlled.
