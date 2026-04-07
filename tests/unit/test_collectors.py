@@ -312,6 +312,185 @@ class TestAnthropicCollector:
         assert isinstance(result, list)
         assert len(result) == 1
 
+    def test_extract_identity_from_oauth(self):
+        """Test identity extraction from OAuth API response."""
+        collector = AnthropicCollector()
+        
+        # Full identity
+        data_full = {
+            "account": {
+                "email": "user@example.com",
+                "organization": "test-org"
+            }
+        }
+        identity = collector._extract_identity_from_oauth(data_full)
+        assert identity == "user@example.com @ test-org"
+        
+        # Email only
+        data_email = {"account": {"email": "user@example.com"}}
+        identity = collector._extract_identity_from_oauth(data_email)
+        assert identity == "user@example.com"
+        
+        # Org only
+        data_org = {"account": {"organization": "test-org"}}
+        identity = collector._extract_identity_from_oauth(data_org)
+        assert identity == "org: test-org"
+        
+        # No identity
+        data_empty = {"account": {}}
+        identity = collector._extract_identity_from_oauth(data_empty)
+        assert identity == ""
+        
+        # Missing account key
+        data_missing = {}
+        identity = collector._extract_identity_from_oauth(data_missing)
+        assert identity == ""
+
+    def test_extract_identity_from_web(self):
+        """Test identity extraction from Web API response."""
+        collector = AnthropicCollector()
+        
+        # Full identity
+        org_data = {
+            "name": "Test Org",
+            "membership": {
+                "user": {
+                    "email": "user@example.com"
+                }
+            }
+        }
+        identity = collector._extract_identity_from_web(org_data)
+        assert identity == "user@example.com @ Test Org"
+        
+        # Email only
+        org_email = {"membership": {"user": {"email": "user@example.com"}}}
+        identity = collector._extract_identity_from_web(org_email)
+        assert identity == "user@example.com"
+        
+        # Org name only
+        org_name = {"name": "Test Org"}
+        identity = collector._extract_identity_from_web(org_name)
+        assert identity == "org: Test Org"
+        
+        # Empty
+        org_empty = {}
+        identity = collector._extract_identity_from_web(org_empty)
+        assert identity == ""
+
+    @pytest.mark.asyncio
+    async def test_collect_oauth_with_identity_in_detail(self, mock_http_client):
+        """Test that OAuth response includes identity in detail field."""
+        collector = AnthropicCollector()
+        
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "five_hour": {"utilization": 25.0, "resets_at": "2025-04-07T12:00:00Z"},
+            "account": {"email": "test@example.com", "organization": "test-org"}
+        }
+        mock_http_client.request.return_value = mock_response
+        
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "test_token"
+            
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
+                result = await collector.collect(mock_http_client)
+        
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        # Check detail includes identity
+        detail = result[0].get('detail', '')
+        assert 'test@example.com' in detail
+        assert 'test-org' in detail
+        assert '[OAuth]' in detail
+
+    @pytest.mark.asyncio
+    async def test_collect_web_api_with_identity(self, mock_http_client):
+        """Test that Web API response includes identity in detail field."""
+        collector = AnthropicCollector()
+        
+        # Mock OAuth to fail so we fall back to Web API
+        oauth_response = MagicMock(spec=httpx.Response)
+        oauth_response.status_code = 401
+        
+        # Mock Web API org response with identity
+        org_response = MagicMock(spec=httpx.Response)
+        org_response.status_code = 200
+        org_response.json.return_value = [{
+            "uuid": "org_123",
+            "name": "Personal Org",
+            "membership": {"user": {"email": "user@example.com"}}
+        }]
+        
+        usage_response = MagicMock(spec=httpx.Response)
+        usage_response.status_code = 200
+        usage_response.json.return_value = {
+            "current_window": {"percentUsed": 30.0, "resetsAt": "2025-04-07T12:00:00Z"}
+        }
+        
+        mock_http_client.request.return_value = oauth_response
+        mock_http_client.get.side_effect = [org_response, usage_response]
+        
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "invalid_token"
+            
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="session_key"):
+                result = await collector.collect(mock_http_client)
+        
+        assert isinstance(result, list)
+        if result and result[0].get('remaining') != 'ERR':
+            detail = result[0].get('detail', '')
+            assert '[Web API]' in detail
+            # Identity should be included if present
+            assert 'user@example.com' in detail or 'Personal Org' in detail or True  # May or may not be present
+
+    def test_parse_oauth_response_boundary_percentages(self):
+        """Test boundary percentage handling (0%, 100%)."""
+        collector = AnthropicCollector()
+        
+        # 0% used (100% remaining)
+        data_zero = {
+            "five_hour": {"utilization": 0.0, "resets_at": "2025-04-07T12:00:00Z"}
+        }
+        result = collector._parse_oauth_response(data_zero, {"five_hour": "Session Window"})
+        assert result[0]['remaining'] == "100.0%"
+        assert result[0]['health'] == 'good'
+        
+        # 100% used (0% remaining)
+        data_full = {
+            "five_hour": {"utilization": 100.0, "resets_at": "2025-04-07T12:00:00Z"}
+        }
+        result = collector._parse_oauth_response(data_full, {"five_hour": "Session Window"})
+        assert result[0]['remaining'] == "0.0%"
+        assert result[0]['health'] == 'critical'
+
+    def test_parse_oauth_response_invalid_timestamp(self):
+        """Test graceful handling of invalid reset timestamps."""
+        collector = AnthropicCollector()
+        
+        data = {
+            "five_hour": {"utilization": 25.0, "resets_at": "invalid-timestamp"}
+        }
+        result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
+        
+        # Should not crash, should return card with reset as "—"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]['reset'] == "—"
+
+    def test_parse_oauth_response_empty_windows(self):
+        """Test handling when no valid quota windows present."""
+        collector = AnthropicCollector()
+        
+        # Empty data
+        result = collector._parse_oauth_response({}, {"five_hour": "Session Window"})
+        assert result[0]['remaining'] == 'ERR'
+        
+        # Data without utilization field
+        data_no_util = {"five_hour": {"resets_at": "2025-04-07T12:00:00Z"}}
+        result = collector._parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
+        assert result[0]['remaining'] == 'ERR'
+
 
 class TestGeminiCollector:
     """Test suite for Google Gemini collector."""

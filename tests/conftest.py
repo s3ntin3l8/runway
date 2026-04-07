@@ -201,6 +201,14 @@ def mock_http_response(monkeypatch):
     return create_response
 
 
+@pytest.fixture
+def mock_keyring():
+    """Provide a mock keyring module for testing token retrieval."""
+    with patch('app.core.config.keyring') as mock_keyring:
+        mock_keyring.get_password.return_value = None
+        yield mock_keyring
+
+
 # Pytest asyncio configuration
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""

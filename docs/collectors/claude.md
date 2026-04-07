@@ -522,6 +522,56 @@ See `docs/ideas.md` for tracking.
 
 ---
 
+### Alternative Endpoint: v1/rate_limits
+
+**Endpoint:** `https://api.anthropic.com/v1/rate_limits`
+
+**Difference from /api/oauth/usage:**
+
+| Aspect | /api/oauth/usage | /v1/rate_limits |
+|--------|------------------|-----------------|
+| **Data Structure** | Multiple quota windows (5h, 7d, Sonnet, Opus) | Single window (requests + tokens) |
+| **Fields** | `utilization`, `resets_at` per window | `requests_remaining/limit`, `tokens_remaining/limit` |
+| **Account Info** | Includes `account` object | Includes `account` object |
+| **Granularity** | High (per-window utilization) | Low (aggregate limits) |
+
+**v1/rate_limits Response Format:**
+```json
+{
+  "rate_limit": {
+    "requests_remaining": 70,
+    "requests_limit": 100,
+    "tokens_remaining": 80000,
+    "tokens_limit": 100000,
+    "resets_at": "2026-01-18T12:00:00Z"
+  },
+  "usage": {
+    "input_tokens": 15000,
+    "output_tokens": 5000
+  },
+  "account": {
+    "email": "user@example.com",
+    "organization": "org-name",
+    "plan": "pro"
+  }
+}
+```
+
+**Use Case:**
+- Fallback if `/api/oauth/usage` fails or returns incomplete data
+- Alternative data source for simpler use cases
+- Provides aggregate request + token limits vs per-window breakdown
+
+**Decision:** **Not currently implemented.** The Web API (`claude.ai/api`) provides better data quality as a secondary source (same per-window granularity as OAuth). The v1/rate_limits endpoint could be added as a fallback between OAuth and Web API if needed:
+
+```
+OAuth API (/api/oauth/usage) → v1/rate_limits (simpler data) → Web API (cookies) → Local Logs → Error
+```
+
+**Priority:** Low (current 4-tier strategy is sufficient)
+
+---
+
 ## Related Files
 
 | File | Purpose |

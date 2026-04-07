@@ -197,9 +197,27 @@ class AnthropicCollector(BaseCollector):
             logger.error(f"Claude OAuth collection failed: {e}")
             return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}")]
 
+    def _extract_identity_from_oauth(self, data: Dict[str, Any]) -> str:
+        """Extract account identity from OAuth API response for display in detail field."""
+        account = data.get("account", {})
+        email = account.get("email", "")
+        org = account.get("organization", "")
+        
+        if email and org:
+            return f"{email} @ {org}"
+        elif email:
+            return email
+        elif org:
+            return f"org: {org}"
+        return ""
+
     def _parse_oauth_response(self, data: Dict[str, Any], name_map: Dict[str, str]) -> List[Dict[str, Any]]:
         """Parse OAuth API response into quota cards."""
         results = []
+        
+        # Extract identity once for all cards
+        identity_str = self._extract_identity_from_oauth(data)
+        identity_suffix = f" | {identity_str}" if identity_str else ""
         
         # Sort by name_map order to keep it consistent
         sorted_keys = sorted(data.keys(), key=lambda k: list(name_map.keys()).index(k) if k in name_map else 999)
@@ -229,7 +247,7 @@ class AnthropicCollector(BaseCollector):
                 "reset": human_delta(reset_at),
                 "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [OAuth]",
+                "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
             })
         
         return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
@@ -291,13 +309,13 @@ class AnthropicCollector(BaseCollector):
                 headers=headers,
                 timeout=10.0
             )
-            
+
             if usage_resp.status_code != 200:
                 logger.warning(f"Claude Web API usage call failed: {usage_resp.status_code}")
                 return []
-            
+
             usage_data = usage_resp.json()
-            return self._parse_web_api_response(usage_data)
+            return self._parse_web_api_response(usage_data, org)
             
         except httpx.HTTPError as e:
             logger.warning(f"Claude Web API HTTP error: {e}")
@@ -309,9 +327,29 @@ class AnthropicCollector(BaseCollector):
             logger.error(f"Claude Web API collection failed: {e}")
             return []
 
-    def _parse_web_api_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_identity_from_web(self, org_data: Dict[str, Any]) -> str:
+        """Extract account identity from Web API organization response for display."""
+        # Web API org data has different structure - look for membership info
+        membership = org_data.get("membership", {})
+        user = membership.get("user", {})
+        email = user.get("email", "")
+        org_name = org_data.get("name", "")
+        
+        if email and org_name:
+            return f"{email} @ {org_name}"
+        elif email:
+            return email
+        elif org_name:
+            return f"org: {org_name}"
+        return ""
+
+    def _parse_web_api_response(self, data: Dict[str, Any], org_data: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Parse Web API response into quota cards."""
         results = []
+        
+        # Extract identity once for all cards
+        identity_str = self._extract_identity_from_web(org_data) if org_data else ""
+        identity_suffix = f" | {identity_str}" if identity_str else ""
         
         # Map Web API fields to our standard format
         window_map = {
@@ -347,7 +385,7 @@ class AnthropicCollector(BaseCollector):
                 "reset": human_delta(reset_at),
                 "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [Web API]",
+                "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
             })
         
         # Add extra usage if present
@@ -366,7 +404,7 @@ class AnthropicCollector(BaseCollector):
                     "reset": "Monthly",
                     "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
                     "pace": "Sustainable",
-                    "detail": f"${spend:.2f} / ${limit:.2f} [Web API]",
+                    "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
                 })
         
         return results
@@ -480,7 +518,7 @@ class AnthropicCollector(BaseCollector):
             "reset": human_delta(reset_at),
             "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
             "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-            "detail": f"{total_tokens:,} / {limit:,} [Local Logs]",
+            "detail": f"{total_tokens:,} / {limit:,} [Local Logs] | cli-local",
         }]
 
     def _get_config_dirs(self) -> List[str]:

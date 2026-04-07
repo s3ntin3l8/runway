@@ -63,6 +63,18 @@ class Settings:
             except Exception as e:
                 logger.debug(f"Could not read from macOS Keychain: {e}")
 
+        # Priority 4: Python keyring library (cross-platform)
+        try:
+            import keyring
+            token = keyring.get_password("runway", "claude-oauth-token")
+            if token:
+                logger.debug("Found Claude OAuth token in system keyring")
+                return token
+        except ImportError:
+            logger.debug("keyring library not installed, skipping keyring retrieval")
+        except Exception as e:
+            logger.debug(f"Could not read from keyring: {e}")
+
         return ""
 
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")

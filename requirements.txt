@@ -5,6 +5,7 @@ python-dotenv>=1.0.0
 aiosqlite>=0.20.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
+keyring>=24.0.0
 
 # Testing dependencies
 pytest>=7.4.0
