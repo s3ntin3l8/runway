@@ -13,7 +13,7 @@ async def ingest_metrics(request: IngestRequest):
     
     external_metric_service.metrics[request.provider] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "cards": [card.dict() for card in request.metrics]
+        "cards": [card.model_dump() for card in request.metrics]
     }
     external_metric_service._save()
     return {"status": "ok", "provider": request.provider}

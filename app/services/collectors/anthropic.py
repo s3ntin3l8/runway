@@ -1,12 +1,15 @@
 import os
 import glob
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
-from app.core.utils import PaceCalculator, human_delta, error_card
+from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
 from app.services.collectors.base import BaseCollector
+
+logger = logging.getLogger(__name__)
 
 class AnthropicCollector(BaseCollector):
     def __init__(self):
@@ -76,11 +79,13 @@ class AnthropicCollector(BaseCollector):
         }
         
         try:
-            resp = await client.get(url, headers=headers, timeout=10.0)
+            # Use retry logic for rate limit handling
+            resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
+            
             if resp.status_code == 401: 
                 return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)")]
             if resp.status_code == 429: 
-                return [error_card("Claude Pro", "🟠", "Rate Limited (429)")]
+                return [error_card("Claude Pro", "🟠", "Rate Limited (429) - max retries exceeded")]
             if resp.status_code != 200: 
                 return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
             
@@ -104,8 +109,8 @@ class AnthropicCollector(BaseCollector):
                 if reset_raw:
                     try:
                         reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
-                    except:
-                        pass
+                    except ValueError as e:
+                        logger.warning(f"Failed to parse reset time: {reset_raw}, error: {e}")
                 
                 results.append({
                     "service": f"Claude ({u_type})",
@@ -118,7 +123,8 @@ class AnthropicCollector(BaseCollector):
                     "detail": f"{pct_used:.1f}% used [OAuth]",
                 })
             return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
-        except Exception as e: 
+        except Exception as e:
+            logger.error(f"Claude OAuth collection failed: {e}")
             return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}")]
 
     async def _get_claude_local(self):
@@ -151,6 +157,14 @@ class AnthropicCollector(BaseCollector):
                 "reset": human_delta(reset_at),
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"{total_tokens:,} / {limit:,} [Logs]",
-            }]
-        except: return None
+                 "detail": f"{total_tokens:,} / {limit:,} [Logs]",
+             }]
+        except FileNotFoundError:
+            logger.debug(f"Claude projects directory not found: {projects_dir}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in Claude logs: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to parse Claude logs: {e}")
+            return None

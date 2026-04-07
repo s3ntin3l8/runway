@@ -1,9 +1,12 @@
 import json
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 from app.core.config import settings
 from app.models.schemas import LimitCard
+
+logger = logging.getLogger(__name__)
 
 class ExternalMetricService:
     def __init__(self):
@@ -21,7 +24,14 @@ class ExternalMetricService:
             try:
                 with open(self.path, "r") as f:
                     return json.load(f)
-            except:
+            except FileNotFoundError:
+                logger.debug(f"External metrics file not found: {self.path}")
+                return {}
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON in external metrics file: {self.path}")
+                return {}
+            except Exception as e:
+                logger.error(f"Failed to load external metrics: {e}")
                 return {}
         return {}
 
@@ -33,7 +43,7 @@ class ExternalMetricService:
         now = datetime.now(timezone.utc).isoformat()
         processed_cards = []
         for card in cards:
-            card_dict = card.dict()
+            card_dict = card.model_dump()
             # Append update info to detail
             card_dict["detail"] += f" [Sidecar Updated: {datetime.now(timezone.utc).strftime('%H:%M:%S')}]"
             processed_cards.append(card_dict)

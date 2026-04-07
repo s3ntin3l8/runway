@@ -2,15 +2,15 @@ import glob
 import json
 import os
 import time
+import logging
 from typing import List, Dict, Any
 import httpx
 from app.core.config import settings
 from app.services.collectors.base import BaseCollector
 
-class GeminiCollector(BaseCollector):
-    OAUTH_CLIENT_ID = "YOUR_CLIENT_ID_HERE"
-    OAUTH_CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
+logger = logging.getLogger(__name__)
 
+class GeminiCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         # Try API first
         api_data = await self._collect_via_api(client)
@@ -23,6 +23,7 @@ class GeminiCollector(BaseCollector):
     async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         creds_path = settings.GEMINI_OAUTH_PATH
         if not os.path.exists(creds_path):
+            logger.debug(f"Gemini credentials not found: {creds_path}")
             return []
 
         try:
@@ -83,31 +84,44 @@ class GeminiCollector(BaseCollector):
                 "detail": f"Model: {main_bucket.get('modelId', 'Global')}",
             }]
 
+        except FileNotFoundError as e:
+            logger.debug(f"Gemini credential file not found: {e}")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in Gemini credentials: {e}")
+            return []
         except Exception as e:
-            # Silently fail for API and let fallback handle it
+            logger.error(f"Gemini API collection failed: {e}")
             return []
 
     async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Dict:
         refresh_token = creds.get("refresh_token")
-        if not refresh_token: return None
-
-        resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": self.OAUTH_CLIENT_ID,
-                "client_secret": self.OAUTH_CLIENT_SECRET,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            }
-        )
-        if resp.status_code != 200:
+        if not refresh_token: 
+            logger.warning("No refresh token in Gemini credentials")
             return None
-        
-        new_data = resp.json()
-        creds["access_token"] = new_data["access_token"]
-        # Expiry is in seconds in response, convert to ms
-        creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-        return creds
+
+        try:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": settings.GEMINI_OAUTH_CLIENT_ID,
+                    "client_secret": settings.GEMINI_OAUTH_CLIENT_SECRET,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                }
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Token refresh failed with status {resp.status_code}")
+                return None
+            
+            new_data = resp.json()
+            creds["access_token"] = new_data["access_token"]
+            # Expiry is in seconds in response, convert to ms
+            creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
+            return creds
+        except Exception as e:
+            logger.error(f"Failed to refresh Gemini token: {e}")
+            return None
 
     async def _collect_via_logs(self) -> List[Dict[str, Any]]:
         sessions_dir = settings.GEMINI_SESSIONS_DIR
@@ -130,4 +144,12 @@ class GeminiCollector(BaseCollector):
                 "pace": "Stable",
                 "detail": "Fallback: Local logs",
             }]
-        except: return []
+        except FileNotFoundError:
+            logger.debug(f"Gemini sessions directory not found: {sessions_dir}")
+            return []
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in Gemini logs: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to parse Gemini logs: {e}")
+            return []

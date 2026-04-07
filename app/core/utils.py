@@ -1,5 +1,11 @@
 from datetime import datetime, timezone
 from typing import Optional
+import asyncio
+import random
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PaceCalculator:
     @staticmethod
@@ -38,3 +44,53 @@ def error_card(service: str, icon: str, message: str):
         "pace": "Stopped",
         "detail": message
     }
+
+async def http_request_with_retry(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    **kwargs
+) -> httpx.Response:
+    """
+    Make an HTTP request with exponential backoff retry on 429 (rate limit).
+    
+    Args:
+        client: httpx.AsyncClient instance
+        method: HTTP method (get, post, etc.)
+        url: Request URL
+        max_retries: Maximum number of retries (default: 3)
+        initial_delay: Initial backoff delay in seconds (default: 0.5)
+        **kwargs: Additional arguments to pass to the request
+    
+    Returns:
+        httpx.Response: The successful response or the final failed response
+    """
+    for attempt in range(max_retries):
+        try:
+            response = await client.request(method, url, **kwargs)
+            
+            # If not rate limited, return immediately
+            if response.status_code != 429:
+                return response
+            
+            # If this was the last attempt, return the 429 response
+            if attempt == max_retries - 1:
+                logger.warning(f"Rate limited (429) on {method.upper()} {url} after {max_retries} attempts")
+                return response
+            
+            # Calculate backoff with jitter
+            wait_time = (2 ** attempt) * initial_delay + random.uniform(0, 0.1 * (2 ** attempt))
+            logger.info(f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait_time)
+            
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            # For non-rate-limit errors, log and retry with shorter delay
+            logger.warning(f"Request failed on attempt {attempt + 1}: {e}, retrying...")
+            await asyncio.sleep(initial_delay * (attempt + 1))
+    
+    # This shouldn't be reached but just in case
+    raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")

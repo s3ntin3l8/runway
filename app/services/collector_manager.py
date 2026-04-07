@@ -23,12 +23,18 @@ class CollectorManager:
         ]
 
     async def collect_all(self) -> List[Dict[str, Any]]:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             tasks = [collector.collect(client) for collector in self.collectors]
-            results = await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         
         flattened = []
         for res in results:
+            if isinstance(res, Exception):
+                # Log exception but don't crash
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Collector failed: {res}")
+                continue
             if isinstance(res, list):
                 flattened.extend(res)
         
