@@ -6,6 +6,8 @@ import argparse
 import datetime
 import glob
 import subprocess
+import sqlite3
+import socket
 from pathlib import Path
 from urllib import request, error
 
@@ -302,6 +304,76 @@ class ChatGPTCollector:
             
         return results
 
+class OpenCodeCollector:
+    @staticmethod
+    def collect():
+        db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+        if not db_path.exists(): return []
+        
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+            
+            now = datetime.datetime.now(datetime.timezone.utc)
+            hostname = socket.gethostname()
+            
+            # Calculate cutoff times for each window
+            cutoffs = {
+                "5h": int((now - datetime.timedelta(hours=5)).timestamp() * 1000),
+                "week": int((now - datetime.timedelta(days=7)).timestamp() * 1000),
+                "month": int((now - datetime.timedelta(days=30)).timestamp() * 1000),
+            }
+            
+            # Documented limits for OpenCode Go
+            limits = {
+                "5h": 12.0,
+                "week": 30.0,
+                "month": 60.0,
+            }
+            
+            results = []
+            
+            for window, cutoff_ms in cutoffs.items():
+                cursor.execute("""
+                    SELECT 
+                        SUM(json_extract(data, '$.cost')),
+                        COUNT(*)
+                    FROM message
+                    WHERE time_created > ?
+                      AND json_valid(data)
+                      AND json_extract(data, '$.role') = 'assistant'
+                """, (cutoff_ms,))
+                row = cursor.fetchone()
+                
+                used = float(row[0] or 0.0)
+                count = int(row[1] or 0)
+                limit = limits[window]
+                remaining = max(0, limit - used)
+                pct = (used / limit * 100) if limit > 0 else 0
+                
+                # Format window label
+                window_labels = {
+                    "5h": "5 Hours",
+                    "week": "7 Days",
+                    "month": "30 Days"
+                }
+                
+                results.append({
+                    "service": f"OpenCode ({window_labels[window]})",
+                    "icon": "⚡",
+                    "remaining": f"${remaining:.2f}",
+                    "unit": f"${limit:.0f} limit",
+                    "reset": f"Rolling {window}",
+                    "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                    "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                    "detail": f"${used:.2f} used · {count} msgs · {hostname} [Sidecar]",
+                })
+            
+            conn.close()
+            return results
+        except:
+            return []
+
 # --- Main Script Logic ---
 
 def run_install(api_url, api_key):
@@ -353,11 +425,12 @@ def main():
     # Collection
     all_metrics = []
     providers = []
-    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector]
+    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector, OpenCodeCollector]
     elif args.provider == "anthropic": providers = [AnthropicCollector]
     elif args.provider == "github": providers = [GitHubCollector]
     elif args.provider == "gemini": providers = [GeminiCollector]
     elif args.provider == "chatgpt": providers = [ChatGPTCollector]
+    elif args.provider == "opencode": providers = [OpenCodeCollector]
     
     for p in providers:
         all_metrics.extend(p.collect())

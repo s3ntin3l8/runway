@@ -49,5 +49,6 @@ class Settings:
     ANTIGRAVITY_QUOTA_PATH: str = os.path.expanduser("~/.antigravity/state/quota.json")
     OPENCODE_DB_PATH: str = os.path.expanduser("~/.local/share/opencode/opencode.db")
     EXTERNAL_METRICS_PATH: str = os.path.expanduser("~/.usage-tracker/external_metrics.json")
+    OPENCODE_LOCAL_COLLECTOR_ENABLED: bool = os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
 
 settings = Settings()

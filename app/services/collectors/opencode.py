@@ -131,11 +131,15 @@ class OpenCodeCollector(BaseCollector):
         - Weekly limit: $30 of usage  
         - Monthly limit: $60 of usage
         
-        Returns empty list if database not found (TUI not in use).
+        Returns empty list if database not found (TUI not in use) or if local
+        collection is disabled via OPENCODE_LOCAL_COLLECTOR_ENABLED env var.
         
         Returns:
             List[Dict[str, Any]]: Cards for each time window (5h, week, month)
         """
+        if os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "false":
+            return []
+        
         db = settings.OPENCODE_DB_PATH
         if not os.path.exists(db): return []
         try:
