@@ -12,10 +12,14 @@ class GitHubCollector(BaseCollector):
         if not token: return []
         try:
             # Use Copilot internal endpoints for detailed metrics
+            # Mimicking VS Code headers as suggested by CodexBar for better reliability
             headers = {
                 "Authorization": f"token {token}",
                 "X-GitHub-Api-Version": "2025-04-01",
-                "Accept": "application/json"
+                "Accept": "application/json",
+                "Editor-Version": "vscode/1.96.2",
+                "Editor-Plugin-Version": "copilot-chat/0.26.7",
+                "User-Agent": "GitHubCopilotChat/0.26.7"
             }
             
             # 1. Fetch Copilot Token Info (includes usage for free/limited users)
@@ -47,7 +51,7 @@ class GitHubCollector(BaseCollector):
                                 "reset": human_delta(reset_at),
                                 "health": "good" if val > 10 else "warning",
                                 "pace": "Manual",
-                                "detail": f"{val} requests left [Internal]",
+                                "detail": f"{val} requests left [Free/Limited Tier]",
                             })
 
             if user_resp.status_code == 200:
@@ -57,12 +61,19 @@ class GitHubCollector(BaseCollector):
                 
                 for snap in snapshots:
                     metric_raw = snap.get("metric", "unknown")
-                    metric = metric_raw.replace("_", " ").title()
+                    # Map internal names to user-friendly titles
+                    metric_map = {
+                        "premium_interactions": "Premium Interactions",
+                        "chat": "Chat Usage",
+                        "completions": "Autocomplete"
+                    }
+                    metric = metric_map.get(metric_raw, metric_raw.replace("_", " ").title())
+                    
                     rem = snap.get("remaining")
                     ent = snap.get("entitlement")
                     
                     if rem is not None and ent is not None:
-                        pct = (ent - rem) / ent * 100 if ent > 0 else 0
+                        pct_used = (ent - rem) / ent * 100 if ent > 0 else 0
                         cards.append({
                             "service": f"Copilot ({metric})",
                             "icon": "🐙",
@@ -70,8 +81,8 @@ class GitHubCollector(BaseCollector):
                             "unit": f"/ {ent:,}",
                             "reset": "Rolling",
                             "health": "good" if (rem/ent) > 0.3 else "warning" if (rem/ent) > 0.1 else "critical",
-                            "pace": "Sustainable",
-                            "detail": f"{pct:.1f}% used • {plan} [Snapshot]",
+                            "pace": "Sustainable" if pct_used < 70 else "Fatigue",
+                            "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
                         })
             
             # Fallback to standard rate limit if no specific copilot data found

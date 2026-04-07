@@ -153,6 +153,68 @@ class GeminiCollector:
                 "detail": "Sidecar Scan"
             }]
         except: return []
+class ChatGPTCollector:
+    @staticmethod
+    def collect():
+        token = os.getenv("CHATGPT_OAUTH_TOKEN")
+        if not token:
+            auth_path = Path.home() / ".codex" / "auth.json"
+            if auth_path.exists():
+                try:
+                    with open(auth_path, "r") as f:
+                        data = json.load(f)
+                        token = data.get("tokens", {}).get("access_token")
+                except: pass
+        
+        results = []
+        if token:
+            url = "https://chatgpt.com/backend-api/wham/usage"
+            headers = {"Authorization": f"Bearer {token}"}
+            data, code = http_get(url, headers)
+            if code == 200:
+                primary = data.get("primary", {})
+                pct = primary.get("utilization_percent", 0.0)
+                reset_ts = primary.get("resets_at")
+                reset_at = datetime.datetime.fromtimestamp(reset_ts, datetime.timezone.utc) if reset_ts else None
+                
+                results.append({
+                    "service": "ChatGPT Codex",
+                    "icon": "💬",
+                    "remaining": f"{100-pct:.1f}%",
+                    "unit": "remaining",
+                    "reset": human_delta(reset_at),
+                    "health": "good" if pct < 80 else "warning",
+                    "pace": "Stable" if pct < 50 else "High Burn",
+                    "detail": "API [Sidecar]"
+                })
+        
+        # Log fallback (if API failed or no token)
+        if not results:
+            sessions_dir = Path.home() / ".codex" / "sessions"
+            try:
+                files = list(sessions_dir.glob("**/*.jsonl"))
+                if files:
+                    latest = max(files, key=os.path.getmtime)
+                    with open(latest, "r") as f:
+                        lines = f.readlines()
+                        if lines:
+                            usage = json.loads(lines[-1])
+                            pct = usage.get("used_percent", 0.0)
+                            reset_ts = usage.get("resets_at")
+                            reset_at = datetime.datetime.fromtimestamp(reset_ts, datetime.timezone.utc) if reset_ts else None
+                            results.append({
+                                "service": "ChatGPT Codex",
+                                "icon": "💬",
+                                "remaining": f"{100-pct:.1f}%",
+                                "unit": "remaining",
+                                "reset": human_delta(reset_at),
+                                "health": "good" if pct < 80 else "warning",
+                                "pace": "Stable",
+                                "detail": "Log [Sidecar]"
+                            })
+            except: pass
+            
+        return results
 
 # --- Main Script Logic ---
 
@@ -205,10 +267,11 @@ def main():
     # Collection
     all_metrics = []
     providers = []
-    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector]
+    if args.provider == "all": providers = [AnthropicCollector, GitHubCollector, GeminiCollector, ChatGPTCollector]
     elif args.provider == "anthropic": providers = [AnthropicCollector]
     elif args.provider == "github": providers = [GitHubCollector]
     elif args.provider == "gemini": providers = [GeminiCollector]
+    elif args.provider == "chatgpt": providers = [ChatGPTCollector]
     
     for p in providers:
         all_metrics.extend(p.collect())

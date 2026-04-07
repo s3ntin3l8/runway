@@ -31,6 +31,11 @@ Instead of asking users to find hidden tokens, you can implement a small OAuth c
 > [!TIP]
 > You could add a "Login" button that opens the browser to the provider's OAuth page, captures the redirect on a local port, and saves the token to your `.env` or a local JSON database automatically.
 
+#### 2.1 GitHub Device Flow Integration
+Inspired by `CodexBar`, we can implement the official GitHub Device Flow. This is particularly useful for headless or Docker environments where a browser redirect might be difficult.
+- **Workflow**: The user clicks "Link GitHub", the dashboard displays a short code (e.g., `ABCD-1234`), and the user enters it at `github.com/login/device`.
+- **Benefit**: No manual token generation/copy-pasting; works perfectly in containers; allows for automated token refresh.
+
 #### 3. WebSocket Plugin Sync
 `cockpit-tools` uses a local WebSocket (port `19528`) to talk to a browser extension. When a user logs into a web-based AI (like Claude or ChatGPT), the extension "sniffs" the token and pushes it to the local app. This is the "smartest" way to keep tokens fresh without manual work.
 

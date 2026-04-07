@@ -9,18 +9,74 @@ from app.core.utils import PaceCalculator, human_delta, error_card
 from app.services.collectors.base import BaseCollector
 
 class ChatGPTCollector(BaseCollector):
+    async def _get_auth_data(self) -> Dict[str, Any]:
+        # Priority 1: Env var
+        token = os.getenv("CHATGPT_OAUTH_TOKEN", "")
+        if token: return {"token": token}
+        
+        # Priority 2: ~/.codex/auth.json
+        auth_path = os.path.expanduser("~/.codex/auth.json")
+        if os.path.exists(auth_path):
+            try:
+                with open(auth_path, "r") as f:
+                    data = json.load(f)
+                    token = data.get("tokens", {}).get("access_token")
+                    if token: return {"token": token, "path": auth_path}
+            except: pass
+        return {}
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        auth = await self._get_auth_data()
+        token = auth.get("token")
+        
+        if token:
+            try:
+                # Internal wham/usage endpoint (as used by CodexBar/CLI)
+                # Note: This is an unauthenticated-looking but actually Bearer-auth'd endpoint
+                url = "https://chatgpt.com/backend-api/wham/usage"
+                headers = {"Authorization": f"Bearer {token}"}
+                resp = await client.get(url, headers=headers, timeout=5)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Expecting primary/secondary usage windows
+                    primary = data.get("primary", {})
+                    pct = primary.get("utilization_percent", 0.0)
+                    reset_ts = primary.get("resets_at")
+                    reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+                    
+                    return [{
+                        "service": "ChatGPT Codex",
+                        "icon": "💬",
+                        "remaining": f"{(100-pct):.1f}%",
+                        "unit": "remaining",
+                        "reset": human_delta(reset_at),
+                        "health": "good" if pct < 80 else "warning",
+                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                        "detail": "API: wham/usage"
+                    }]
+            except Exception as e:
+                # Fallback to local logs on API failure
+                pass
+
+        # Local log fallback (original logic)
         path = settings.CHATGPT_SESSIONS_DIR
         try:
             files = glob.glob(f"{path}/**/*.jsonl", recursive=True)
-            if not files: return [error_card("ChatGPT Codex", "💬", "No logs")]
+            if not files: 
+                # If no logs but we have a token that failed, report error
+                if token: return [error_card("ChatGPT Codex", "💬", "API Error")]
+                return [error_card("ChatGPT Codex", "💬", "No logs/auth")]
+                
             latest = max(files, key=os.path.getmtime)
             with open(latest, "r") as f:
                 lines = f.readlines()
                 if not lines: return [error_card("ChatGPT Codex", "💬", "Empty log")]
                 usage = json.loads(lines[-1])
+                
             pct = usage.get("used_percent", 0.0)
             reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None
+            
             return [{
                 "service": "ChatGPT Codex",
                 "icon": "💬",
