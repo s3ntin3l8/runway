@@ -128,9 +128,16 @@ class GitHubCollector:
         }]
 
 class GeminiCollector:
-    # Google Gemini CLI OAuth Credentials
-    CLIENT_ID = "YOUR_CLIENT_ID_HERE"
-    CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
+    # Google Gemini CLI OAuth Credentials (from environment)
+    @classmethod
+    def get_client_id(cls):
+        import os
+        return os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
+    
+    @classmethod
+    def get_client_secret(cls):
+        import os
+        return os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
 
     @staticmethod
     def collect():
@@ -219,7 +226,7 @@ class GeminiCollector:
         refresh_token = creds.get("refresh_token")
         if not refresh_token: return None
         
-        payload = f"client_id={GeminiCollector.CLIENT_ID}&client_secret={GeminiCollector.CLIENT_SECRET}&refresh_token={refresh_token}&grant_type=refresh_token"
+        payload = f"client_id={GeminiCollector.get_client_id()}&client_secret={GeminiCollector.get_client_secret()}&refresh_token={refresh_token}&grant_type=refresh_token"
         req = request.Request("https://oauth2.googleapis.com/token", data=payload.encode("utf-8"), method="POST")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
         

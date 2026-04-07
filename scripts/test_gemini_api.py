@@ -4,12 +4,21 @@ import json
 import os
 import time
 from pathlib import Path
+from dotenv import load_dotenv
 
-CLIENT_ID = "YOUR_CLIENT_ID_HERE"
-CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
+# Load environment variables
+load_dotenv()
+
+CLIENT_ID = os.getenv("GEMINI_OAUTH_CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
 CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 
 async def test_gemini_api():
+    # Check if credentials are set
+    if not CLIENT_ID or not CLIENT_SECRET:
+        print("ERROR: GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET must be set in environment")
+        return
+    
     if not CREDS_PATH.exists():
         print(f"ERROR: Credentials not found at {CREDS_PATH}")
         return
