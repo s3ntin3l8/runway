@@ -15,3 +15,7 @@ task.md
 diagnose.py
 docs/competitors.md
 .gemini/
+
+# NOTE: frontend/css/styles.css is built from frontend/css/input.css
+# It is checked into git so the app works without Node.js installed
+# To rebuild: npm run build:css

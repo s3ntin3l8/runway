@@ -7,6 +7,7 @@ Architecture:
 - Reads local data files (SQLite DBs, JSON logs)
 - Sends tokens and data to Runway server via /api/ingest
 - Server uses tokens to make API calls
+- Supports daemon mode with offline queue and retry
 
 IMPORTANT: This sidecar does NOT make API calls directly.
 All API calls are done by the server using tokens we provide.
@@ -26,16 +27,338 @@ import time
 import platform
 import shutil
 import tempfile
+import logging
+import signal
+import atexit
 from pathlib import Path
 from urllib import request, error
+from typing import Dict, List, Optional, Any, Tuple
+
+# --- Configuration ---
+
+DEFAULT_CONFIG = {
+    "interval_seconds": 1800,
+    "providers": ["all"],
+    "retry_attempts": 3,
+    "retry_backoff_seconds": 5,
+    "queue_max_size_mb": 10,
+    "log_level": "INFO",
+    "log_file_enabled": True,
+}
+
+REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
+
+# Global state for daemon mode
+_daemon_running = False
+_pid_file_path: Optional[Path] = None
+
+
+def get_sidecar_dir() -> Path:
+    """Get the sidecar configuration directory."""
+    if platform.system() == "Windows":
+        app_data = os.getenv("APPDATA")
+        if app_data:
+            return Path(app_data) / "runway" / "sidecar"
+        return Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
+    else:
+        return Path.home() / ".config" / "runway" / "sidecar"
+
+
+def get_queue_dir() -> Path:
+    """Get the queue directory for offline storage."""
+    return get_sidecar_dir() / "queue"
+
+
+def get_log_path() -> Path:
+    """Get the log file path."""
+    return get_sidecar_dir() / "sidecar.log"
+
+
+def get_pid_file_path() -> Path:
+    """Get the PID file path."""
+    return get_sidecar_dir() / "sidecar.pid"
+
+
+def ensure_dirs() -> None:
+    """Ensure all required directories exist."""
+    get_sidecar_dir().mkdir(parents=True, exist_ok=True)
+    get_queue_dir().mkdir(parents=True, exist_ok=True)
+
+
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Load configuration from file or create template if missing."""
+    if config_path:
+        config_file = Path(config_path)
+    else:
+        config_file = get_sidecar_dir() / "config.json"
+    
+    if not config_file.exists():
+        ensure_dirs()
+        template = {
+            "api_url": "http://your-server:8765",
+            "api_key": "your-secret-key",
+            "interval_seconds": 1800,
+            "providers": ["all"],
+            "retry_attempts": 3,
+            "retry_backoff_seconds": 5,
+            "queue_max_size_mb": 10,
+            "log_level": "INFO",
+            "log_file_enabled": True,
+        }
+        config_file.write_text(json.dumps(template, indent=2))
+        print(f"ERROR: Config file created at {config_file}")
+        print("Please edit and add your api_url and api_key")
+        sys.exit(1)
+    
+    try:
+        with open(config_file) as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in config file: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Cannot read config file: {e}")
+        sys.exit(1)
+    
+    # Validate required fields
+    missing = [f for f in REQUIRED_CONFIG_FIELDS if f not in config or not config[f]]
+    if missing:
+        print(f"ERROR: Missing required config fields: {', '.join(missing)}")
+        print(f"Config file: {config_file}")
+        sys.exit(1)
+    
+    # Apply defaults for optional fields
+    for key, value in DEFAULT_CONFIG.items():
+        if key not in config:
+            config[key] = value
+    
+    return config
+
+
+# --- Logging Setup ---
+
+def setup_logging(log_level: str, file_enabled: bool) -> None:
+    """Configure logging with console and optional file output."""
+    handlers: List[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    
+    if file_enabled:
+        ensure_dirs()
+        log_path = get_log_path()
+        file_handler = logging.FileHandler(log_path, mode='a')
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+        handlers.append(file_handler)
+    
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers,
+        force=True
+    )
+
+
+# --- PID File Management ---
+
+def write_pid_file() -> bool:
+    """Write PID file. Returns False if already running."""
+    global _pid_file_path
+    _pid_file_path = get_pid_file_path()
+    
+    # Check if already running
+    if _pid_file_path.exists():
+        try:
+            old_pid = int(_pid_file_path.read_text().strip())
+            # Check if process exists
+            if platform.system() == "Windows":
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(1, False, old_pid)
+                if handle:
+                    kernel32.CloseHandle(handle)
+                    logging.error(f"Sidecar already running (PID: {old_pid})")
+                    return False
+            else:
+                os.kill(old_pid, 0)  # Check if process exists
+                logging.error(f"Sidecar already running (PID: {old_pid})")
+                return False
+        except (OSError, ValueError, ProcessLookupError):
+            # Process not running, stale PID file
+            pass
+    
+    _pid_file_path.write_text(str(os.getpid()))
+    return True
+
+
+def remove_pid_file() -> None:
+    """Remove PID file on exit."""
+    global _pid_file_path
+    if _pid_file_path and _pid_file_path.exists():
+        try:
+            _pid_file_path.unlink()
+        except Exception:
+            pass
+
+
+def cleanup() -> None:
+    """Cleanup on exit."""
+    global _daemon_running
+    _daemon_running = False
+    remove_pid_file()
+    logging.info("Sidecar shutdown complete")
+
+
+# --- Signal Handlers ---
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    global _daemon_running
+    sig_name = signal.Signals(signum).name
+    logging.info(f"Received {sig_name}, shutting down...")
+    _daemon_running = False
+    sys.exit(0)
+
+
+def setup_signal_handlers() -> None:
+    """Setup signal handlers for graceful shutdown."""
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal_handler)
+
+
+# --- Queue Management ---
+
+def queue_push(payload: Dict[str, Any]) -> None:
+    """Add payload to offline queue."""
+    ensure_dirs()
+    queue_dir = get_queue_dir()
+    
+    # Create queue file for today
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    queue_file = queue_dir / f"{today}.jsonl"
+    
+    entry = {
+        "ts": int(time.time()),
+        "payload": payload
+    }
+    
+    with open(queue_file, 'a') as f:
+        f.write(json.dumps(entry, separators=(',', ':')) + '\n')
+    
+    logging.info(f"Queued payload for retry: {queue_file.name}")
+    queue_rotate()
+
+
+def queue_rotate() -> None:
+    """Rotate queue files, removing oldest if total size exceeds limit."""
+    queue_dir = get_queue_dir()
+    if not queue_dir.exists():
+        return
+    
+    max_size_bytes = 10 * 1024 * 1024  # 10MB default
+    config = load_config()
+    if "queue_max_size_mb" in config:
+        max_size_bytes = config["queue_max_size_mb"] * 1024 * 1024
+    
+    # Get all queue files sorted by modification time (oldest first)
+    queue_files = sorted(
+        queue_dir.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime
+    )
+    
+    # Calculate total size
+    total_size = sum(f.stat().st_size for f in queue_files)
+    
+    # Remove oldest files until under limit
+    while total_size > max_size_bytes and queue_files:
+        oldest = queue_files.pop(0)
+        try:
+            size = oldest.stat().st_size
+            oldest.unlink()
+            total_size -= size
+            logging.warning(f"Queue rotation: removed {oldest.name} ({size} bytes)")
+        except Exception as e:
+            logging.error(f"Failed to remove old queue file {oldest}: {e}")
+            break
+
+
+def queue_flush(api_url: str, api_key: str) -> int:
+    """Flush all queued payloads to server. Returns count of successful sends."""
+    queue_dir = get_queue_dir()
+    if not queue_dir.exists():
+        return 0
+    
+    queue_files = sorted(queue_dir.glob("*.jsonl"))
+    if not queue_files:
+        return 0
+    
+    count = 0
+    target_url = f"{api_url.rstrip('/')}/api/ingest"
+    
+    for queue_file in queue_files:
+        try:
+            with open(queue_file) as f:
+                lines = f.readlines()
+            
+            failed_lines = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                try:
+                    entry = json.loads(line)
+                    payload = entry.get("payload", {})
+                    
+                    success, _ = http_post_signed_with_retry(
+                        target_url, payload, api_key
+                    )
+                    
+                    if success:
+                        count += 1
+                    else:
+                        failed_lines.append(line)
+                except json.JSONDecodeError:
+                    logging.error(f"Invalid JSON in queue file: {line[:100]}")
+                except Exception as e:
+                    logging.error(f"Failed to send queued payload: {e}")
+                    failed_lines.append(line)
+            
+            # Remove file if all sent successfully, otherwise rewrite with failures
+            if not failed_lines:
+                queue_file.unlink()
+                logging.info(f"Queue file processed and removed: {queue_file.name}")
+            else:
+                with open(queue_file, 'w') as f:
+                    for line in failed_lines:
+                        f.write(line + '\n')
+                logging.warning(f"Queue file has {len(failed_lines)} failed entries: {queue_file.name}")
+                
+        except Exception as e:
+            logging.error(f"Failed to process queue file {queue_file}: {e}")
+    
+    return count
 
 
 # --- HTTP Utilities ---
 
-def http_post_signed(url, data, api_key):
-    """POST data to URL with HMAC-SHA256 signature."""
+def health_check(api_url: str, timeout: int = 5) -> bool:
+    """Check if server is healthy before pushing."""
+    try:
+        req = request.Request(
+            f"{api_url.rstrip('/')}/api/health",
+            method="GET"
+        )
+        with request.urlopen(req, timeout=timeout) as resp:
+            return resp.getcode() == 200
+    except Exception:
+        return False
+
+
+def http_post_signed(url: str, data: Dict[str, Any], api_key: str) -> Tuple[bool, Any, int]:
+    """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
     timestamp = str(int(time.time()))
-    # Use compact separators to match Pydantic's default serialization
     body = json.dumps(data, separators=(',', ':')).encode("utf-8")
     
     signature = hmac.new(
@@ -53,14 +376,47 @@ def http_post_signed(url, data, api_key):
     req = request.Request(url, data=body, headers=headers, method="POST")
     try:
         with request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8")), resp.getcode()
+            return True, json.loads(resp.read().decode("utf-8")), resp.getcode()
     except error.HTTPError as e:
         try:
-            return json.loads(e.read().decode("utf-8")), e.code
+            return False, json.loads(e.read().decode("utf-8")), e.code
         except:
-            return e.reason, e.code
+            return False, e.reason, e.code
     except Exception as e:
-        return str(e), 500
+        return False, str(e), 500
+
+
+def http_post_signed_with_retry(
+    url: str, 
+    data: Dict[str, Any], 
+    api_key: str,
+    max_attempts: int = 3,
+    backoff_seconds: int = 5
+) -> Tuple[bool, Any, int]:
+    """POST with exponential backoff retry."""
+    last_error = None
+    last_code = 500
+    
+    for attempt in range(max_attempts):
+        success, result, code = http_post_signed(url, data, api_key)
+        
+        if success:
+            return True, result, code
+        
+        last_error = result
+        last_code = code
+        
+        # Don't retry on client errors (4xx) except 429 (rate limit)
+        if 400 <= code < 500 and code != 429:
+            logging.error(f"HTTP {code}: {result} (no retry)")
+            return False, result, code
+        
+        if attempt < max_attempts - 1:
+            wait = backoff_seconds * (2 ** attempt)
+            logging.warning(f"Attempt {attempt + 1} failed, retrying in {wait}s...")
+            time.sleep(wait)
+    
+    return False, last_error, last_code
 
 
 def human_delta(target_dt):
@@ -93,9 +449,9 @@ def get_platform_data_dir(app_name: str) -> Path:
         if local_app_data:
             return Path(local_app_data) / app_name
         return home / "AppData/Local" / app_name
-    elif system == "Darwin":  # macOS
+    elif system == "Darwin":
         return home / "Library/Application Support" / app_name
-    else:  # Linux / Other
+    else:
         xdg_data_home = os.getenv("XDG_DATA_HOME")
         if xdg_data_home:
             return Path(xdg_data_home) / app_name
@@ -112,17 +468,17 @@ def get_platform_config_dir(app_name: str) -> Path:
         if app_data:
             return Path(app_data) / app_name
         return home / "AppData/Roaming" / app_name
-    elif system == "Darwin":  # macOS
+    elif system == "Darwin":
         return home / "Library/Application Support" / app_name
-    else:  # Linux / Other
+    else:
         xdg_config_home = os.getenv("XDG_CONFIG_HOME")
         if xdg_config_home:
             return Path(xdg_config_home) / app_name
         return home / ".config" / app_name
 
 
-def get_all_chrome_cookies_paths() -> list[Path]:
-    """Get all potential paths to Chrome's Cookies databases across different profiles."""
+def get_all_chrome_cookies_paths() -> list:
+    """Get all potential paths to Chrome's Cookies databases."""
     system = platform.system()
     home = Path.home()
     paths = []
@@ -136,7 +492,7 @@ def get_all_chrome_cookies_paths() -> list[Path]:
             base_dirs.append(Path(local_app_data) / "Google/Chrome/User Data")
         else:
             base_dirs.append(home / "AppData/Local/Google/Chrome/User Data")
-    else:  # Linux
+    else:
         base_dirs.append(home / ".config/google-chrome")
         base_dirs.append(home / ".config/chromium")
         base_dirs.append(home / "snap/google-chrome/common/.config/google-chrome")
@@ -145,12 +501,46 @@ def get_all_chrome_cookies_paths() -> list[Path]:
     profiles = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
     
     for base in base_dirs:
-        if not base.exists(): continue
+        if not base.exists():
+            continue
         for profile in profiles:
             for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
                 p = base / rel
-                if p.exists(): paths.append(p)
+                if p.exists():
+                    paths.append(p)
     return paths
+
+
+def get_windows_credential(target: str) -> Optional[str]:
+    """Extract credential from Windows Credential Manager."""
+    if platform.system() != "Windows":
+        return None
+    
+    try:
+        # Try using PowerShell to access Credential Manager
+        cmd = [
+            "powershell",
+            "-Command",
+            f"(New-Object System.Net.NetworkCredential('', (Get-StoredCredential -Target '{target}').Password)).Password"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            password = result.stdout.strip()
+            if password:
+                return password
+    except Exception:
+        pass
+    
+    # Fallback: Try using cmdkey
+    try:
+        cmd = ["cmdkey", "/list"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        # This only lists credentials, doesn't retrieve them
+        # Would need additional parsing if we want to support this path
+    except Exception:
+        pass
+    
+    return None
 
 
 # --- Token Extractors ---
@@ -182,17 +572,17 @@ class AnthropicCollector:
         except:
             pass
         return None, None
-
+    
     @staticmethod
     def collect():
         """Extract OAuth tokens, send to server for API call."""
         access_token = None
         refresh_token = None
         
-        # Priority 1: Env var (access token only)
+        # Priority 1: Env var
         access_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
         
-        # Priority 2: Credentials file (search multiple locations)
+        # Priority 2: Credentials file
         if not access_token:
             potential_paths = [
                 Path.home() / ".claude" / ".credentials.json",
@@ -206,7 +596,8 @@ class AnthropicCollector:
                             oauth_data = data.get("claudeAiOauth", {})
                             access_token = oauth_data.get("accessToken")
                             refresh_token = oauth_data.get("refreshToken")
-                            if access_token: break
+                            if access_token:
+                                break
                     except:
                         pass
         
@@ -217,13 +608,11 @@ class AnthropicCollector:
         if not access_token:
             return []
         
-        # Build token detail string
         detail_parts = [f"oauth_token:{access_token}"]
         if refresh_token:
             detail_parts.append(f"refresh_token:{refresh_token}")
         detail_parts.append("[Sidecar]")
         
-        # Send tokens to server - server will make API call and handle refresh
         return [{
             "service": "Claude Pro",
             "icon": "🟠",
@@ -243,7 +632,6 @@ class GitHubCollector:
     @staticmethod
     def collect():
         """Extract GitHub token, send to server for API call."""
-        # Priority 1: Env var
         token = os.getenv("GITHUB_TOKEN")
         
         # Priority 2: gh CLI config
@@ -260,12 +648,16 @@ class GitHubCollector:
                             data = yaml.safe_load(f)
                             if data and "github.com" in data:
                                 token = data["github.com"].get("oauth_token")
-                                if token: break
+                                if token:
+                                    break
                     except ImportError:
-                        # PyYAML not installed, skip this method
                         break
                     except Exception:
                         pass
+        
+        # Priority 3: Windows Credential Manager
+        if not token and platform.system() == "Windows":
+            token = get_windows_credential("github.com")
         
         if not token:
             return []
@@ -332,10 +724,8 @@ class ChatGPTCollector:
     @staticmethod
     def collect():
         """Extract OAuth token, send to server for API call."""
-        # Priority 1: Env var
         token = os.getenv("CHATGPT_OAUTH_TOKEN")
         
-        # Priority 2: Codex auth file
         if not token:
             potential_paths = [
                 Path.home() / ".codex" / "auth.json",
@@ -347,7 +737,8 @@ class ChatGPTCollector:
                         with open(auth_path) as f:
                             data = json.load(f)
                             token = data.get("tokens", {}).get("access_token")
-                            if token: break
+                            if token:
+                                break
                     except:
                         pass
         
@@ -380,7 +771,6 @@ class KimiCollector:
         for cookies_path in cookies_paths:
             temp_db = None
             try:
-                # Copy to temp file to avoid "database is locked" errors
                 with tempfile.NamedTemporaryFile(delete=False) as tf:
                     temp_db = tf.name
                 shutil.copy2(str(cookies_path), temp_db)
@@ -403,17 +793,17 @@ class KimiCollector:
                 continue
             finally:
                 if temp_db and os.path.exists(temp_db):
-                    try: os.unlink(temp_db)
-                    except: pass
+                    try:
+                        os.unlink(temp_db)
+                    except:
+                        pass
         return None
     
     @staticmethod
     def collect():
         """Extract Kimi cookie, send to server for API call."""
-        # Priority 1: Env var
         token = os.getenv("KIMI_AUTH_TOKEN")
         
-        # Priority 2: Chrome cookie
         if not token:
             token = KimiCollector._get_cookie()
         
@@ -457,20 +847,12 @@ class ZaiCollector:
         }]
 
 
-# --- Local Data Collectors (Keep these as-is, they read local files) ---
-
 class OpenCodeCollector:
     """Read OpenCode local database."""
     
     @staticmethod
-    def get_chrome_cookies_path():
-        """Get the first Chrome cookies database path."""
-        paths = get_all_chrome_cookies_paths()
-        return paths[0] if paths else None
-    
-    @staticmethod
     def get_opencode_session():
-        """Extract opencode.ai session from Chrome (all profiles)."""
+        """Extract opencode.ai session from Chrome."""
         cookies_paths = get_all_chrome_cookies_paths()
         if not cookies_paths:
             return None
@@ -478,7 +860,6 @@ class OpenCodeCollector:
         for cookies_path in cookies_paths:
             temp_db = None
             try:
-                # Copy to temp file to avoid "database is locked" errors
                 with tempfile.NamedTemporaryFile(delete=False) as tf:
                     temp_db = tf.name
                 shutil.copy2(str(cookies_path), temp_db)
@@ -490,13 +871,16 @@ class OpenCodeCollector:
                 )
                 row = cursor.fetchone()
                 conn.close()
-                if row: return row[0]
+                if row:
+                    return row[0]
             except:
                 continue
             finally:
                 if temp_db and os.path.exists(temp_db):
-                    try: os.unlink(temp_db)
-                    except: pass
+                    try:
+                        os.unlink(temp_db)
+                    except:
+                        pass
         return None
     
     @staticmethod
@@ -603,7 +987,7 @@ class AntigravityCollector:
         
         if not path:
             return []
-            
+        
         try:
             with open(path) as f:
                 data = json.load(f)
@@ -631,11 +1015,130 @@ class AntigravityCollector:
             return []
 
 
-# --- Main Script ---
+# --- Collection Runner ---
+
+def collect_metrics(provider: str) -> List[Dict[str, Any]]:
+    """Collect metrics from specified provider(s)."""
+    providers_map = {
+        "anthropic": AnthropicCollector,
+        "github": GitHubCollector,
+        "gemini": GeminiCollector,
+        "chatgpt": ChatGPTCollector,
+        "kimi": KimiCollector,
+        "zai": ZaiCollector,
+        "opencode": OpenCodeCollector,
+        "antigravity": AntigravityCollector,
+    }
+    
+    all_metrics = []
+    
+    if provider == "all":
+        providers_list = list(providers_map.values())
+    else:
+        if provider not in providers_map:
+            logging.error(f"Unknown provider: {provider}")
+            return []
+        providers_list = [providers_map[provider]]
+    
+    for p in providers_list:
+        try:
+            metrics = p.collect()
+            all_metrics.extend(metrics)
+            logging.debug(f"Collected {len(metrics)} metrics from {p.__name__}")
+        except Exception as e:
+            logging.error(f"Error collecting from {p.__name__}: {e}")
+    
+    return all_metrics
+
+
+# --- Daemon Mode ---
+
+def run_daemon(config: Dict[str, Any]) -> None:
+    """Run sidecar in daemon mode with periodic collection."""
+    global _daemon_running
+    
+    # Setup PID file
+    if not write_pid_file():
+        sys.exit(1)
+    
+    atexit.register(cleanup)
+    setup_signal_handlers()
+    
+    _daemon_running = True
+    interval = config.get("interval_seconds", 1800)
+    api_url = config["api_url"]
+    api_key = config["api_key"]
+    providers = config.get("providers", ["all"])
+    
+    logging.info(f"Daemon started (PID: {os.getpid()}), interval: {interval}s")
+    logging.info(f"API URL: {api_url}")
+    logging.info(f"Providers: {providers}")
+    
+    while _daemon_running:
+        start_time = time.time()
+        
+        try:
+            # Flush any queued payloads first
+            flushed = queue_flush(api_url, api_key)
+            if flushed > 0:
+                logging.info(f"Flushed {flushed} queued payloads")
+            
+            # Check server health
+            if not health_check(api_url):
+                logging.warning("Server unreachable, queuing metrics for retry")
+                # Still collect and queue
+                for provider in providers:
+                    metrics = collect_metrics(provider)
+                    if metrics:
+                        payload = {
+                            "provider": f"{provider}-{socket.gethostname()}",
+                            "metrics": metrics
+                        }
+                        queue_push(payload)
+            else:
+                # Collect and push metrics
+                for provider in providers:
+                    metrics = collect_metrics(provider)
+                    if not metrics:
+                        continue
+                    
+                    payload = {
+                        "provider": f"{provider}-{socket.gethostname()}",
+                        "metrics": metrics
+                    }
+                    
+                    target_url = f"{api_url.rstrip('/')}/api/ingest"
+                    success, data, code = http_post_signed_with_retry(
+                        target_url, payload, api_key,
+                        max_attempts=config.get("retry_attempts", 3),
+                        backoff_seconds=config.get("retry_backoff_seconds", 5)
+                    )
+                    
+                    if success:
+                        logging.info(f"Pushed {len(metrics)} metrics for {provider}")
+                    else:
+                        logging.error(f"Failed to push {provider}: HTTP {code}")
+                        queue_push(payload)
+        
+        except Exception as e:
+            logging.error(f"Error in daemon loop: {e}")
+        
+        # Sleep until next interval
+        elapsed = time.time() - start_time
+        sleep_time = max(0, interval - elapsed)
+        
+        if sleep_time > 0 and _daemon_running:
+            logging.debug(f"Sleeping for {sleep_time:.0f}s")
+            time.sleep(sleep_time)
+
+
+# --- Legacy Installer ---
 
 def run_install(api_url, api_key):
-    """Install sidecar as scheduled task."""
+    """Install sidecar as scheduled task (legacy mode)."""
     print("\n--- Sidecar Installer ---")
+    print("Note: Consider using --daemon mode instead for real-time updates")
+    
     if not api_url:
         api_url = input("Enter Runway API URL (e.g. http://localhost:8765): ").strip()
     if not api_key:
@@ -668,96 +1171,109 @@ def run_install(api_url, api_key):
         print("SUCCESS: Crontab entry created (Every 30m).")
 
 
+# --- Main ---
+
 def main():
     parser = argparse.ArgumentParser(description="Runway Sidecar - Token & Data Collector")
-    parser.add_argument("--provider", default="all", help="Provider to collect")
-    parser.add_argument("--api-url", help="Runway API URL")
-    parser.add_argument("--api-key", help="Ingestion API Key")
-    parser.add_argument("--install", action="store_true", help="Install as scheduled task")
+    parser.add_argument("--provider", default="all", help="Provider to collect (default: all)")
+    parser.add_argument("--api-url", help="Runway API URL (legacy, use --config)")
+    parser.add_argument("--api-key", help="Ingestion API Key (legacy, use --config)")
+    parser.add_argument("--config", "-c", help="Path to config file (default: ~/.config/runway/sidecar/config.json)")
+    parser.add_argument("--install", action="store_true", help="Install as scheduled task (legacy)")
+    parser.add_argument("--daemon", "-d", action="store_true", help="Run in daemon mode with periodic collection")
     parser.add_argument("--dry-run", action="store_true", help="Print without pushing")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
     
-    # Priority: Env var > CLI argument
-    api_key = os.getenv("RUNWAY_API_KEY") or args.api_key
+    # Setup basic logging early
+    log_level = "DEBUG" if args.verbose else "INFO"
+    setup_logging(log_level, file_enabled=False)
     
+    # Legacy install mode
     if args.install:
-        run_install(args.api_url, api_key)
+        run_install(args.api_url, args.api_key)
         return
     
-    # Collect from all providers
-    all_metrics = []
-    providers = []
+    # Load configuration
+    try:
+        config = load_config(args.config)
+    except SystemExit:
+        raise
     
-    if args.provider == "all":
-        providers = [
-            AnthropicCollector,
-            GitHubCollector,
-            GeminiCollector,
-            ChatGPTCollector,
-            KimiCollector,
-            ZaiCollector,
-            OpenCodeCollector,
-            AntigravityCollector,
-        ]
-    elif args.provider == "anthropic":
-        providers = [AnthropicCollector]
-    elif args.provider == "github":
-        providers = [GitHubCollector]
-    elif args.provider == "gemini":
-        providers = [GeminiCollector]
-    elif args.provider == "chatgpt":
-        providers = [ChatGPTCollector]
-    elif args.provider == "kimi":
-        providers = [KimiCollector]
-    elif args.provider == "zai":
-        providers = [ZaiCollector]
-    elif args.provider == "opencode":
-        providers = [OpenCodeCollector]
-    elif args.provider == "antigravity":
-        providers = [AntigravityCollector]
+    # Override with CLI args if provided (legacy support)
+    if args.api_url:
+        config["api_url"] = args.api_url
+    if args.api_key:
+        config["api_key"] = args.api_key
     
-    for p in providers:
-        try:
-            all_metrics.extend(p.collect())
-        except Exception as e:
-            print(f"ERROR collecting from {p.__name__}: {e}", file=sys.stderr)
+    # Re-setup logging with config
+    setup_logging(
+        config.get("log_level", "INFO"),
+        file_enabled=config.get("log_file_enabled", True)
+    )
     
-    if not all_metrics:
-        print("No metrics collected.")
+    # Daemon mode
+    if args.daemon:
+        run_daemon(config)
+        return
+    
+    # One-shot mode
+    api_key = config["api_key"]
+    api_url = config["api_url"]
+    provider = args.provider
+    
+    # Collect metrics
+    metrics = collect_metrics(provider)
+    
+    if not metrics:
+        logging.warning("No metrics collected.")
         return
     
     if args.dry_run:
-        print(f"Dry Run: {len(all_metrics)} metrics collected.")
-        print(json.dumps(all_metrics, indent=2))
-        return
-    
-    if not args.api_url or not api_key:
-        print("ERROR: --api-url and --api-key required. Use --dry-run to test.")
+        logging.info(f"Dry Run: {len(metrics)} metrics collected.")
+        print(json.dumps(metrics, indent=2))
         return
     
     # Determine provider name
     hostname = socket.gethostname()
-    if args.provider == "all":
+    if provider == "all":
         provider_name = f"sidecar-{hostname}"
     else:
-        provider_name = f"{args.provider}-{hostname}"
+        provider_name = f"{provider}-{hostname}"
     
-    # Push to server
+    # Build payload
     payload = {
         "provider": provider_name,
-        "metrics": all_metrics
+        "metrics": metrics
     }
     
-    target_url = f"{args.api_url.rstrip('/')}/api/ingest"
-    data, code = http_post_signed(target_url, payload, api_key)
+    # Flush any queued payloads first
+    flushed = queue_flush(api_url, api_key)
+    if flushed > 0:
+        logging.info(f"Flushed {flushed} queued payloads")
     
-    if code == 200:
-        print(f"SUCCESS: Pushed {len(all_metrics)} metrics to {target_url}")
-        resp = data
-        print(f"  Tokens: {resp.get('tokens_received', 0)}, Metrics: {resp.get('metrics_stored', 0)}")
+    # Check server health
+    if not health_check(api_url):
+        logging.warning("Server unreachable, queuing metrics for retry")
+        queue_push(payload)
+        return
+    
+    # Push to server
+    target_url = f"{api_url.rstrip('/')}/api/ingest"
+    success, data, code = http_post_signed_with_retry(
+        target_url, payload, api_key,
+        max_attempts=config.get("retry_attempts", 3),
+        backoff_seconds=config.get("retry_backoff_seconds", 5)
+    )
+    
+    if success:
+        logging.info(f"Pushed {len(metrics)} metrics to {target_url}")
+        if isinstance(data, dict):
+            logging.info(f"  Tokens: {data.get('tokens_received', 0)}, Metrics: {data.get('metrics_stored', 0)}")
     else:
-        print(f"ERROR {code}: {json.dumps(data) if isinstance(data, dict) else data}")
+        logging.error(f"HTTP {code}: {data}")
+        queue_push(payload)
 
 
 if __name__ == "__main__":
