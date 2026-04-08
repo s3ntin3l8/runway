@@ -35,6 +35,11 @@ function renderGrid() {
  */
 window.toggleConfig = function(key) {
     STATE[key] = !STATE[key];
+    
+    // Persist to localStorage
+    const storageKey = `runway_${key === 'showHidden' ? 'show_hidden' : key}`;
+    localStorage.setItem(storageKey, STATE[key]);
+
     const btn = document.getElementById(`toggle-${key}`);
     if (btn) {
         btn.classList.toggle('active', STATE[key]);
@@ -47,6 +52,25 @@ window.toggleConfig = function(key) {
         document.body.classList.toggle('compact-mode', STATE[key]);
     }
     renderGrid();
+}
+
+/**
+ * Initialize UI elements based on initial state
+ */
+function initUI() {
+    ['compact', 'remaining', 'showHidden'].forEach(key => {
+        const btn = document.getElementById(`toggle-${key}`);
+        if (btn) {
+            btn.classList.toggle('active', STATE[key]);
+            if (key === 'remaining') {
+                btn.innerHTML = STATE[key] ? '📈 % Remaining' : '📊 % Used';
+            }
+        }
+    });
+    
+    if (STATE.compact) {
+        document.body.classList.add('compact-mode');
+    }
 }
 
 /**
@@ -197,5 +221,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') closeModal();
     });
 
+    initUI();
     loadData();
 });
