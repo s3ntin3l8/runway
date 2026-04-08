@@ -235,4 +235,4 @@ class GitHubCollector(BaseCollector):
             
             return cards
         except Exception as e:
-            return [error_card("GitHub Copilot", "🐙", f"Fail: {str(e)[:15]}")]
+            return [error_card("GitHub Copilot", "🐙", f"Fail: {str(e)[:15]}", error_type="api_error")]

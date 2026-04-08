@@ -67,7 +67,7 @@ class ZaiPlanCollector(BaseCollector):
         """
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
-            return [error_card("zAI Plan", "📊", "Missing/Invalid Key")]
+            return [error_card("zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config")]
         
         # Try each endpoint in order
         last_error = None
@@ -81,7 +81,7 @@ class ZaiPlanCollector(BaseCollector):
                 continue
         
         # All endpoints failed
-        return [error_card("zAI Plan", "📊", "API Unavailable")]
+        return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
     
     async def _fetch_quota(
         self, 
@@ -117,7 +117,7 @@ class ZaiPlanCollector(BaseCollector):
         limits = plan_data.get("limits", [])
         
         if not limits:
-            return [error_card("zAI Plan", "📊", "No Limits Found")]
+            return [error_card("zAI Plan", "📊", "No Limits Found", error_type="parse_error")]
         
         cards = []
         for limit in limits:

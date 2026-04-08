@@ -339,4 +339,4 @@ class OpenCodeCollector(BaseCollector):
                 return cards
                 
         except Exception as e:
-            return [error_card("OpenCode TUI", "⚡", f"DB Error: {str(e)[:15]}")]
+            return [error_card("OpenCode TUI", "⚡", f"DB Error: {str(e)[:15]}", error_type="api_error")]

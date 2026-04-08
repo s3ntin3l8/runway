@@ -125,8 +125,8 @@ class ChatGPTCollector(BaseCollector):
             files = glob.glob(f"{path}/**/*.jsonl", recursive=True)
             if not files: 
                 # If no logs but we have a token that failed, report error
-                if token: return [error_card("ChatGPT Codex", "💬", "API Error")]
-                return [error_card("ChatGPT Codex", "💬", "No logs/auth")]
+                if token: return [error_card("ChatGPT Codex", "💬", "API Error", error_type="api_error")]
+                return [error_card("ChatGPT Codex", "💬", "No logs/auth", error_type="missing_config")]
                 
             latest = max(files, key=os.path.getmtime)
             last_line = None
@@ -136,7 +136,7 @@ class ChatGPTCollector(BaseCollector):
                         last_line = line
             
             if not last_line:
-                return [error_card("ChatGPT Codex", "💬", "Empty log")]
+                return [error_card("ChatGPT Codex", "💬", "Empty log", error_type="parse_error")]
             
             usage = json.loads(last_line)
                 
@@ -155,4 +155,4 @@ class ChatGPTCollector(BaseCollector):
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "cache",
             }]
-        except: return [error_card("ChatGPT Codex", "💬", "Parse Error")]
+        except: return [error_card("ChatGPT Codex", "💬", "Parse Error", error_type="parse_error")]

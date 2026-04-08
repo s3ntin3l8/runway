@@ -42,7 +42,7 @@ class KimiApiCollector(BaseCollector):
         """
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
-            return [error_card("Kimi API", "🌙", "Missing/Invalid Key")]
+            return [error_card("Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config")]
         
         try:
             resp = await client.get(
@@ -51,9 +51,9 @@ class KimiApiCollector(BaseCollector):
             )
             
             if resp.status_code == 401:
-                return [error_card("Kimi Code", "🌙", "Unauthorized")]
+                return [error_card("Kimi Code", "🌙", "Unauthorized", error_type="auth_failed")]
             if resp.status_code != 200:
-                return [error_card("Kimi Code", "🌙", f"HTTP {resp.status_code}")]
+                return [error_card("Kimi Code", "🌙", f"HTTP {resp.status_code}", error_type="api_error")]
             
             data = resp.json()
             bal = float(data.get("data", {}).get("available_balance", 0))
@@ -69,6 +69,6 @@ class KimiApiCollector(BaseCollector):
                 "detail": "Prepaid balance (API)",
             }]
         except httpx.RequestError:
-            return [error_card("Kimi Code", "🌙", "Connection Failed")]
+            return [error_card("Kimi Code", "🌙", "Connection Failed", error_type="timeout")]
         except (ValueError, KeyError, TypeError):
-            return [error_card("Kimi Code", "🌙", "Invalid Response")]
+            return [error_card("Kimi Code", "🌙", "Invalid Response", error_type="parse_error")]

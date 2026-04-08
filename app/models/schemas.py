@@ -21,6 +21,8 @@ class LimitCard(BaseModel):
     reset_at: Optional[str] = None
     # NEW: Data source indicator for display in UI
     data_source: str = "unknown"  # "oauth", "web_api", "local", "cache", "fallback", "api", "sidecar"
+    # NEW: Error categorization
+    error_type: Optional[str] = None
 
     @field_validator("service", "remaining", "unit", "reset", "pace", "detail")
     @classmethod

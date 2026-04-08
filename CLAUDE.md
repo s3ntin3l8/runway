@@ -3,6 +3,17 @@
 ## 🎯 Project Identity & Context
 **Runway** is a local-first, stateless monitoring tool for tracking AI provider quotas and balances (Claude, Gemini, ChatGPT, GitHub Copilot, etc.). It is designed to be modular and resilient, often running in containerized or headless environments.
 
+## 🚀 CI/CD & Deployment
+Runway uses GitHub Actions for automated testing and deployment:
+- **CI**: Runs on every push and PR to `main`.
+  - Lints with `black`
+  - Scans for secrets with `detect-secrets`
+  - Runs full test suite with `pytest`
+- **CD**: Automatically builds and pushes Docker images to **GHCR** on:
+  - Pushes to `main` (tags as `latest` and `sha`)
+  - Semantic version tags (e.g., `v1.0.0`)
+- **Image**: `ghcr.io/<owner>/ai-usage-tracker:latest`
+
 ## 🏗️ Architecture & Data Fetching
 
 Runway operates in **three deployment modes**, with data collection strategies adapting to each:

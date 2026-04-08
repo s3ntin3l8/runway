@@ -141,12 +141,12 @@ class AnthropicCollector(BaseCollector):
             
         # 4. Final Fallback: Return error with context
         if settings.CLAUDE_CODE_OAUTH_TOKEN:
-            return [error_card("Claude Pro", "🟠", "No data — OAuth failed & Logs empty")]
+            return [error_card("Claude Pro", "🟠", "No data — OAuth failed & Logs empty", error_type="missing_config")]
         
         if await self._has_web_cookie():
-            return [error_card("Claude Pro", "🟠", "No data — Web API failed & Logs empty")]
+            return [error_card("Claude Pro", "🟠", "No data — Web API failed & Logs empty", error_type="missing_config")]
             
-        return [error_card("Claude Pro", "🟠", "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai")]
+        return [error_card("Claude Pro", "🟠", "No data — Set CLAUDE_CODE_OAUTH_TOKEN or login to claude.ai", error_type="missing_config")]
 
     async def _has_web_cookie(self) -> bool:
         """Check if a web cookie is available without making API calls."""
@@ -424,18 +424,18 @@ class AnthropicCollector(BaseCollector):
             resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
             
             if resp.status_code == 401: 
-                return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)")]
+                return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)", error_type="auth_failed")]
             if resp.status_code == 429: 
-                return [error_card("Claude Pro", "🟠", "Rate Limited (429) - max retries exceeded")]
+                return [error_card("Claude Pro", "🟠", "Rate Limited (429) - max retries exceeded", error_type="rate_limited")]
             if resp.status_code != 200: 
-                return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}")]
+                return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error")]
             
             data = resp.json()
             return self._parse_oauth_response(data, name_map)
             
         except Exception as e:
             logger.error(f"Claude OAuth collection failed: {e}")
-            return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}")]
+            return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")]
 
     def _extract_identity_from_oauth(self, data: Dict[str, Any]) -> str:
         """Extract account identity from OAuth API response for display in detail field."""
@@ -524,7 +524,7 @@ class AnthropicCollector(BaseCollector):
                 "data_source": "oauth",
             })
         
-        return results if results else [error_card("Claude Pro", "🟠", "No quota data")]
+        return results if results else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
 
     async def _get_claude_via_web_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """

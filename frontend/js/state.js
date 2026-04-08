@@ -38,3 +38,17 @@ export const HEALTH_CONFIG = {
     unknown:  { dot: 'dot-unknown',  card: 'health-unknown',  badge: 'text-zinc-500',     bar: '#3f3f46', label: '——' },
     unlimited:{ dot: 'dot-unlimited',card: 'health-unlimited',badge: 'text-violet-400',   bar: '#8b5cf6', label: '∞' },
 };
+
+/**
+ * Error type configuration mapping
+ * Maps error types to visual indicators
+ */
+export const ERROR_TYPES = {
+    missing_config: { label: 'CONFIG', icon: '⚙️', color: 'text-zinc-400' },
+    auth_failed: { label: 'AUTH', icon: '🔒', color: 'text-red-400' },
+    rate_limited: { label: '429', icon: '⏱️', color: 'text-orange-400' },
+    timeout: { label: 'T/O', icon: '⏳', color: 'text-amber-400' },
+    parse_error: { label: 'PARSE', icon: '🧩', color: 'text-purple-400' },
+    api_error: { label: 'API', icon: '⚠️', color: 'text-red-500' },
+    unknown: { label: 'ERR', icon: '❌', color: 'text-red-600' }
+};

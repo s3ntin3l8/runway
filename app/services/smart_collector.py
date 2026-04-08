@@ -188,7 +188,8 @@ class SmartCollector:
             return [error_card(
                 self.collector_name,
                 "⏳",
-                f"Retry in {self.error_retry_delay - (time.time() - self.last_fetch_time):.0f}s"
+                f"Retry in {self.error_retry_delay - (time.time() - self.last_fetch_time):.0f}s",
+                error_type="rate_limited"
             )]
         
         # Attempt fresh fetch
@@ -207,7 +208,8 @@ class SmartCollector:
                 return [error_card(
                     self.collector_name,
                     "❌",
-                    "No data available"
+                    "No data available",
+                    error_type="parse_error"
                 )]
         
         except Exception as e:
@@ -225,7 +227,8 @@ class SmartCollector:
             return [error_card(
                 self.collector_name,
                 "❌",
-                f"Collection failed: {str(e)[:40]}"
+                f"Collection failed: {str(e)[:40]}",
+                error_type="api_error"
             )]
     
     def _tag_as_cached(self, result: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

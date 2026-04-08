@@ -41,7 +41,7 @@ class ZaiApiCollector(BaseCollector):
         """
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
-            return [error_card("zAI", "🌐", "Missing/Invalid Key")]
+            return [error_card("zAI", "🌐", "Missing/Invalid Key", error_type="missing_config")]
         
         try:
             resp = await client.get(
@@ -50,7 +50,7 @@ class ZaiApiCollector(BaseCollector):
             )
             
             if resp.status_code != 200:
-                return [error_card("zAI", "🌐", f"API Error ({resp.status_code})")]
+                return [error_card("zAI", "🌐", f"API Error ({resp.status_code})", error_type="api_error")]
             
             data = resp.json()
             bal = float(data.get("data", {}).get("available_balance", 0))
@@ -66,6 +66,6 @@ class ZaiApiCollector(BaseCollector):
                 "detail": "Prepaid balance (API)",
             }]
         except httpx.RequestError:
-            return [error_card("zAI", "🌐", "Connection Failed")]
+            return [error_card("zAI", "🌐", "Connection Failed", error_type="timeout")]
         except (ValueError, KeyError, TypeError):
-            return [error_card("zAI", "🌐", "Invalid Response")]
+            return [error_card("zAI", "🌐", "Invalid Response", error_type="parse_error")]

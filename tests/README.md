@@ -185,15 +185,17 @@ pytest -s tests/
 
 ## CI/CD Integration
 
-Tests should be run in CI/CD pipelines before merging:
+The project uses GitHub Actions for CI/CD, defined in `.github/workflows/ci-cd.yml`:
 
-```yaml
-# Example GitHub Actions workflow
-- name: Run tests
-  run: pytest --cov=app tests/
+- **Linting**: Checks code style with `black` and scans for secrets.
+- **Testing**: Runs the full suite with coverage reporting.
+- **Build & Push**: Automatically builds and pushes Docker images to **GHCR** on push to `main` or version tags.
 
-- name: Upload coverage
-  uses: codecov/codecov-action@v3
+To run tests in a similar environment locally:
+
+```bash
+pip install -r requirements.txt
+pytest --cov=app --cov-report=term-missing tests/
 ```
 
 ## Common Issues and Fixes

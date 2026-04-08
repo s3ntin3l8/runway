@@ -1,4 +1,4 @@
-import { HEALTH_CONFIG, STATE } from './state.js';
+import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 
 /**
  * Escapes HTML special characters to prevent XSS

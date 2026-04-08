@@ -73,7 +73,7 @@ class KimiCodingCollector(BaseCollector):
         # Get auth token
         token = self._get_auth_token()
         if not token:
-            return [error_card("Kimi Coding", "🌙", "No Auth (set KIMI_AUTH_TOKEN or login in Chrome)")]
+            return [error_card("Kimi Coding", "🌙", "No Auth (set KIMI_AUTH_TOKEN or login in Chrome)", error_type="missing_config")]
         
         try:
             resp = await client.post(
@@ -87,17 +87,17 @@ class KimiCodingCollector(BaseCollector):
             )
             
             if resp.status_code == 401:
-                return [error_card("Kimi Coding", "🌙", "Unauthorized (token expired)")]
+                return [error_card("Kimi Coding", "🌙", "Unauthorized (token expired)", error_type="auth_failed")]
             if resp.status_code != 200:
-                return [error_card("Kimi Coding", "🌙", f"HTTP {resp.status_code}")]
+                return [error_card("Kimi Coding", "🌙", f"HTTP {resp.status_code}", error_type="api_error")]
             
             data = resp.json()
             return self._parse_response(data)
             
         except httpx.RequestError:
-            return [error_card("Kimi Coding", "🌙", "Connection Failed")]
+            return [error_card("Kimi Coding", "🌙", "Connection Failed", error_type="timeout")]
         except (ValueError, KeyError, TypeError):
-            return [error_card("Kimi Coding", "🌙", "Invalid Response")]
+            return [error_card("Kimi Coding", "🌙", "Invalid Response", error_type="parse_error")]
     
     def _get_auth_token(self) -> Optional[str]:
         """
@@ -130,7 +130,7 @@ class KimiCodingCollector(BaseCollector):
         """
         usages = data.get("usages", [])
         if not usages:
-            return [error_card("Kimi Coding", "🌙", "No Usage Data")]
+            return [error_card("Kimi Coding", "🌙", "No Usage Data", error_type="parse_error")]
         
         # Get first FEATURE_CODING usage or first available
         usage = None
@@ -160,7 +160,7 @@ class KimiCodingCollector(BaseCollector):
                 if card:
                     cards.append(card)
         
-        return cards if cards else [error_card("Kimi Coding", "🌙", "No Quota Data")]
+        return cards if cards else [error_card("Kimi Coding", "🌙", "No Quota Data", error_type="parse_error")]
     
     def _parse_weekly_quota(self, detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse weekly quota into card."""

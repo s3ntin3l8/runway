@@ -46,7 +46,7 @@ async def api_client():
 
 
 @pytest.fixture
-async def mock_http_client():
+def mock_http_client():
     """Provide a mock httpx.AsyncClient for testing API calls."""
     client = AsyncMock(spec=httpx.AsyncClient)
     return client

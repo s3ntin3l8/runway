@@ -37,7 +37,7 @@ def human_delta(target_dt: Optional[datetime]) -> str:
     hours = (seconds % 86400) // 3600
     return f"{days}d {hours}h"
 
-def error_card(service: str, icon: str, message: str):
+def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
     return {
         "service": service,
         "icon": icon,
@@ -46,7 +46,8 @@ def error_card(service: str, icon: str, message: str):
         "reset": "—",
         "health": "critical",
         "pace": "Stopped",
-        "detail": message
+        "detail": message,
+        "error_type": error_type
     }
 
 async def http_request_with_retry(
