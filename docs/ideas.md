@@ -886,3 +886,25 @@ class EncryptedTokenCache(TokenCache):
 - User feedback indicates 30min delay is problematic
 - Running in environment with frequent server restarts
 - Security requirements demand encrypted storage
+
+---
+
+## Future Implementation Research
+
+### Anthropic Extra Usage (Paid Credits)
+**File**: `app/services/collectors/anthropic.py`
+**Severity**: Low
+**Effort**: 4-6 hours
+
+**Description**:
+The Anthropic OAuth API returns an `extra_usage` object which tracks paid credits used to extend limits beyond the base subscription. 
+
+**Current state**: 
+- We skip this data because it is often disabled (`is_enabled: false`) or has null utilization for most users.
+- Parsing logic currently treats nested nulls as 0.0 but does not render a card for it.
+
+**Future Implementation**:
+- Detect if `is_enabled` is true.
+- Render a separate "Claude (Extra Usage)" card showing the spent vs. limit in dollars.
+- Track `used_credits` and `monthly_limit`.
+

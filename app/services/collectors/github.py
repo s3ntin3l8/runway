@@ -75,15 +75,31 @@ class GitHubCollector(BaseCollector):
                 "User-Agent": "GitHubCopilotChat/0.26.7"
             }
             
-            # 1. Fetch Copilot Token Info (includes usage for free/limited users)
-            token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers)
-            
-            # 2. Fetch User/Quota Info (includes usage snapshots for Pro/Enterprise users)
+            # 1. Fetch User/Quota Info first (Main source for Pro and Enterprise)
             user_resp = await client.get("https://api.github.com/copilot_internal/user", headers=headers)
+            
+            # 2. Determine if we need to call v2/token (primarily for Free/Limited tier reset dates)
+            token_resp = None
+            user_data = {}
+            
+            if user_resp.status_code == 200:
+                user_data = user_resp.json()
+                
+                # If we have snapshots, it's Pro/Enterprise, v2/token is likely 403 Forbidden
+                # If we have limited_user_quotas AND limited_user_reset_date, we already have everything
+                has_snapshots = bool(user_data.get("quota_snapshots"))
+                has_limited_info = "limited_user_quotas" in user_data and "limited_user_reset_date" in user_data
+                
+                if not (has_snapshots or has_limited_info):
+                    token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers)
+            else:
+                # If /user failed (e.g., 404 or 403), try /v2/token as a fallback
+                token_resp = await client.get("https://api.github.com/copilot_internal/v2/token", headers=headers)
             
             cards = []
             
-            if token_resp.status_code == 200:
+            # Process Token Response (Free/Limited Tier specific)
+            if token_resp and token_resp.status_code == 200:
                 token_data = token_resp.json()
                 if "limited_user_quotas" in token_data:
                     quotas = token_data["limited_user_quotas"]
@@ -116,8 +132,9 @@ class GitHubCollector(BaseCollector):
                                 "data_source": "api",
                             })
 
+            # Process User Response (Pro/Enterprise and Free fallback)
             if user_resp.status_code == 200:
-                user_data = user_resp.json()
+                # user_data already parsed above
                 
                 # Check for free/limited tier quotas in user response
                 if "limited_user_quotas" in user_data:

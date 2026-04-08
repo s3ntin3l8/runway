@@ -239,7 +239,8 @@ class AnthropicCollector(BaseCollector):
                 data = resp.json()
                 new_access_token = data.get("access_token")
                 new_refresh_token = data.get("refresh_token", refresh_token)
-                expires_in = data.get("expires_in", 28800)
+                raw_expires_in = data.get("expires_in")
+                expires_in = int(raw_expires_in) if raw_expires_in is not None else 28800
                 
                 # Persist new tokens to credentials file
                 self._persist_refreshed_tokens(
@@ -308,7 +309,9 @@ class AnthropicCollector(BaseCollector):
             if "claudeAiOauth" not in data:
                 data["claudeAiOauth"] = {}
             
-            expires_at_ms = int((time.time() + expires_in) * 1000)
+            # Ensure expires_in is a valid number
+            expires_in_val = float(expires_in) if expires_in is not None else 28800.0
+            expires_at_ms = int((time.time() + expires_in_val) * 1000)
             
             data["claudeAiOauth"]["accessToken"] = access_token
             data["claudeAiOauth"]["refreshToken"] = refresh_token
@@ -441,23 +444,51 @@ class AnthropicCollector(BaseCollector):
         return ""
 
     def _parse_oauth_response(self, data: Dict[str, Any], name_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Parse OAuth API response into quota cards."""
+        """Parse OAuth API response into quota cards with null-safety."""
         results = []
         
         # Extract identity once for all cards
         identity_str = self._extract_identity_from_oauth(data)
         identity_suffix = f" | {identity_str}" if identity_str else ""
         
-        # Sort by name_map order to keep it consistent
-        sorted_keys = sorted(data.keys(), key=lambda k: list(name_map.keys()).index(k) if k in name_map else 999)
+        # Guaranteed keys to process even if null from API
+        core_keys = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"]
+        
+        # Combine API keys with our core keys to ensure we show everything
+        all_keys = list(data.keys())
+        for ck in core_keys:
+            if ck not in all_keys:
+                all_keys.append(ck)
+        
+        # Sort using name_map order
+        def sort_key(k):
+            try:
+                return list(name_map.keys()).index(k)
+            except ValueError:
+                return 999
+                
+        sorted_keys = sorted(all_keys, key=sort_key)
         
         for key in sorted_keys:
-            usage = data[key]
-            if not isinstance(usage, dict) or "utilization" not in usage:
+            # Skip non-quota metadata like 'account'
+            if key == "account":
                 continue
+                
+            usage = data.get(key)
             
+            # If the API returned null (or hasn't returned it yet), treat as 0 utilization
+            if usage is None:
+                usage = {"utilization": 0.0, "resets_at": None}
+            
+            # If it's a dict but missing utilization (like extra_usage when disabled), treat it as null
+            if not isinstance(usage, dict):
+                continue
+                
             u_type = name_map.get(key, key.replace("_", " ").title())
-            pct_used = usage.get("utilization", 0.0)
+            
+            # IMPORTANT: Handle null utilization value explicitly (null -> 0.0)
+            raw_utilization = usage.get("utilization")
+            pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
             remaining_pct = 100.0 - pct_used
             
             reset_raw = usage.get("resets_at") or usage.get("resetsAt")
@@ -465,8 +496,8 @@ class AnthropicCollector(BaseCollector):
             if reset_raw:
                 try:
                     reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
-                except ValueError as e:
-                    logger.warning(f"Failed to parse reset time: {reset_raw}, error: {e}")
+                except (ValueError, TypeError):
+                    pass
             
             results.append({
                 "service": f"Claude ({u_type})",
@@ -599,8 +630,9 @@ class AnthropicCollector(BaseCollector):
             if not window_data:
                 continue
             
-            # Get usage percentage
-            pct_used = window_data.get("percentUsed", 0.0)
+            # Get usage percentage - null safety added
+            raw_pct = window_data.get("percentUsed")
+            pct_used = float(raw_pct) if raw_pct is not None else 0.0
             remaining_pct = 100.0 - pct_used
             
             # Parse reset time
@@ -609,7 +641,7 @@ class AnthropicCollector(BaseCollector):
             if reset_raw:
                 try:
                     reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
             
             results.append({
@@ -632,8 +664,11 @@ class AnthropicCollector(BaseCollector):
         # Add extra usage if present
         extra_data = data.get("extra_usage") or data.get("overage")
         if extra_data and isinstance(extra_data, dict):
-            spend = extra_data.get("spend", 0)
-            limit = extra_data.get("limit", 0)
+            raw_spend = extra_data.get("spend")
+            raw_limit = extra_data.get("limit")
+            spend = float(raw_spend) if raw_spend is not None else 0.0
+            limit = float(raw_limit) if raw_limit is not None else 0.0
+            
             if limit > 0:
                 pct_used = (spend / limit) * 100
                 remaining_pct = 100.0 - pct_used

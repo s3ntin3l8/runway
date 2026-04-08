@@ -1,5 +1,6 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+import html
 
 class LimitCard(BaseModel):
     service: str
@@ -20,6 +21,13 @@ class LimitCard(BaseModel):
     reset_at: Optional[str] = None
     # NEW: Data source indicator for display in UI
     data_source: str = "unknown"  # "oauth", "web_api", "local", "cache", "fallback", "api", "sidecar"
+
+    @field_validator("service", "remaining", "unit", "reset", "pace", "detail")
+    @classmethod
+    def escape_html_fields(cls, v: str) -> str:
+        if v:
+            return html.escape(v)
+        return v
 
 class LimitsResponse(BaseModel):
     limits: List[LimitCard]

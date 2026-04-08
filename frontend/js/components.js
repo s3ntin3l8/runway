@@ -288,7 +288,7 @@ export function buildCard(item) {
 
     // Pace badge
     const paceBadge = item.pace ? `
-        <span class="text-[10px] font-bold text-zinc-500 bg-zinc-900/80 border border-zinc-800 px-1.5 py-0.5 rounded-full mono">${item.pace}</span>
+        <span class="text-[10px] font-bold text-zinc-500 bg-zinc-900/80 border border-zinc-800 px-1.5 py-0.5 rounded-full mono">${escapeHTML(item.pace)}</span>
     ` : '';
 
     // Main display value
@@ -299,26 +299,26 @@ export function buildCard(item) {
         mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${displayPct.toFixed(1)}%</span>`;
     } else {
         // Fallback to remaining value
-        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${item.remaining}</span>
-                <span class="text-sm font-medium text-zinc-500">${item.unit}</span>`;
+        mainDisplay = `<span class="text-4xl font-black tracking-tighter ${isPlaceholder ? 'text-zinc-600' : 'text-zinc-50'}">${escapeHTML(item.remaining)}</span>
+                <span class="text-sm font-medium text-zinc-500">${escapeHTML(item.unit)}</span>`;
     }
 
             // For unlimited plans, add unit label next to infinity
-    const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${item.unit || 'Unlimited'}</span>` : '';
+    const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${escapeHTML(item.unit || 'Unlimited')}</span>` : '';
 
     // Build reset element with tooltip
     const resetTooltip = formatResetTooltip(item.reset_at);
     const resetElement = resetTooltip ? `
         <div class="tooltip-container">
             <span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono cursor-help">
-                ${item.reset}
+                ${escapeHTML(item.reset)}
             </span>
             <div class="tooltip">${resetTooltip}</div>
         </div>
-    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${item.reset}</span>`;
+    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(item.reset)}</span>`;
 
     return `
-        <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${item.service}">
+        <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
@@ -394,7 +394,7 @@ export function buildModalContent(item) {
             <div class="mt-6 flex flex-col gap-2">
                 <div class="flex items-baseline justify-between">
                     <span class="text-5xl font-black tracking-tighter text-zinc-50">
-                        ${isUnlimited ? '∞' : (usedPct ? usedPct.toFixed(1) + '%' : item.remaining)}
+                        ${isUnlimited ? '∞' : (usedPct ? usedPct.toFixed(1) + '%' : escapeHTML(item.remaining))}
                     </span>
                     <span class="text-sm font-bold text-zinc-500 mono uppercase">${isUnlimited ? 'Unlimited Capacity' : 'Used Capacity'}</span>
                 </div>
@@ -410,11 +410,11 @@ export function buildModalContent(item) {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${formatted.used}</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
-                <span class="text-sm font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : formatted.limit} ${formatted.unit}</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
