@@ -22,11 +22,16 @@ async def ingest_metrics(
 ):
     """
     Ingest metrics from sidecar with HMAC-SHA256 signature verification.
-    
+
     Headers required:
     - X-Signature: HMAC-SHA256(secret, timestamp + body)
     - X-Timestamp: Unix timestamp (within 5 minutes)
     """
+    # 0. Guard against misconfigured empty API key
+    if not settings.INGEST_API_KEY:
+        logger.error("INGEST_API_KEY is empty — ingest endpoint is disabled")
+        raise HTTPException(status_code=503, detail="Ingest endpoint not configured: INGEST_API_KEY is empty")
+
     # 1. Check headers
     if not x_signature or not x_timestamp:
         logger.warning("Ingest attempt with missing HMAC headers")

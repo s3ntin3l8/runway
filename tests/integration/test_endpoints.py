@@ -260,25 +260,48 @@ class TestIngestEndpoint:
     async def test_ingest_invalid_payload(self):
         """Test that invalid payloads are rejected with correct HMAC."""
         from fastapi.testclient import TestClient
-        
+
         test_client = TestClient(app)
-        
+
         invalid_payload = {
             "provider": "claude"
             # Missing required 'metrics' field
         }
-        
+
         body = json.dumps(invalid_payload)
         headers = self._get_hmac_headers(body)
-        
+
         response = test_client.post(
             "/api/ingest",
             content=body,
             headers=headers
         )
-        
+
         # Should reject invalid payload with 400 (per current implementation), NOT 401
         assert response.status_code == 400
+
+    async def test_ingest_rejects_when_api_key_empty(self):
+        """C1: ingest endpoint must return 503 when INGEST_API_KEY is empty."""
+        from fastapi.testclient import TestClient
+
+        test_client = TestClient(app)
+
+        payload = {"provider": "claude", "metrics": []}
+        body = json.dumps(payload)
+        timestamp = str(int(time.time()))
+        sig = hmac.new(b"", (timestamp + body).encode(), hashlib.sha256).hexdigest()
+        headers = {
+            "X-Signature": sig,
+            "X-Timestamp": timestamp,
+            "Content-Type": "application/json",
+        }
+
+        with patch('app.api.endpoints.ingest.settings') as mock_settings:
+            mock_settings.INGEST_API_KEY = ""
+            response = test_client.post("/api/ingest", content=body, headers=headers)
+
+        assert response.status_code == 503
+        assert "not configured" in response.json().get("detail", "").lower()
 
 
 class TestCollectorOrchestration:
