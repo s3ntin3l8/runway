@@ -14,8 +14,11 @@ function renderGrid() {
     
     STATE.data.forEach(item => {
         try {
-            html += buildCard(item);
-            count++;
+            const cardHtml = buildCard(item);
+            if (cardHtml) {
+                html += cardHtml;
+                count++;
+            }
         } catch (e) {
             console.error("Failed to render card for:", item, e);
         }
@@ -44,6 +47,33 @@ window.toggleConfig = function(key) {
         document.body.classList.toggle('compact-mode', STATE[key]);
     }
     renderGrid();
+}
+
+/**
+ * Toggle a service's disabled state
+ * @param {string} serviceName - Name of the service to toggle
+ */
+window.toggleService = function(serviceName) {
+    const index = STATE.disabledServices.indexOf(serviceName);
+    if (index === -1) {
+        STATE.disabledServices.push(serviceName);
+    } else {
+        STATE.disabledServices.splice(index, 1);
+    }
+    
+    // Persist to localStorage
+    localStorage.setItem('runway_disabled_services', JSON.stringify(STATE.disabledServices));
+    
+    // Refresh UI
+    renderGrid();
+    
+    // Update modal content if it's open
+    const item = STATE.data.find(d => d.service === serviceName);
+    if (item) {
+        document.getElementById('modal-content').innerHTML = buildModalContent(item);
+        // Re-attach close listener
+        document.getElementById('close-modal').onclick = closeModal;
+    }
 }
 
 /**

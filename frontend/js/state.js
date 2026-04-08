@@ -12,6 +12,8 @@
 export const STATE = {
     compact: false,
     remaining: false,
+    showHidden: false,
+    disabledServices: JSON.parse(localStorage.getItem('runway_disabled_services') || '[]'),
     data: []
 };
 

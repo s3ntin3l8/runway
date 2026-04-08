@@ -47,6 +47,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
 from app.services.collectors.base import BaseCollector
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class GeminiCollector(BaseCollector):
         Fetch Gemini quota from Google Cloud Code API.
         
         Steps:
-        1. Load OAuth credentials from GEMINI_OAUTH_PATH
+        1. Check sidecar token cache, or load OAuth credentials from GEMINI_OAUTH_PATH
         2. Refresh token if expired (saves updated credentials back to file)
         3. Call loadCodeAssist to discover project and get tier info
         4. Call retrieveUserQuota with discovered project to get all model quotas (including gemini-3)
@@ -95,22 +96,32 @@ class GeminiCollector(BaseCollector):
             List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
         creds_path = settings.GEMINI_OAUTH_PATH
-        if not os.path.exists(creds_path):
-            logger.debug(f"Gemini credentials not found: {creds_path}")
-            return []
+        
+        # Priority: Check token cache from sidecar first
+        cached_token = token_cache.get_token("gemini", "oauth_token")
+        if cached_token:
+            creds = {"access_token": cached_token, "expiry_date": float('inf')}
+        else:
+            if not os.path.exists(creds_path):
+                logger.debug(f"Gemini credentials not found: {creds_path}")
+                return []
+            try:
+                with open(creds_path, "r") as f:
+                    creds = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to read Gemini credentials: {e}")
+                return []
 
         try:
-            with open(creds_path, "r") as f:
-                creds = json.load(f)
-
             # Check expiry (expiry_date is in ms)
             if creds.get("expiry_date", 0) < (time.time() * 1000):
                 creds = await self._refresh_token(client, creds)
                 if not creds: 
                     return []
-                # Save refreshed creds back
-                with open(creds_path, "w") as f:
-                    json.dump(creds, f, indent=2)
+                # Save refreshed creds back (only if we have a path)
+                if not cached_token:
+                    with open(creds_path, "w") as f:
+                        json.dump(creds, f, indent=2)
 
             token = creds.get("access_token")
             headers = {"Authorization": f"Bearer {token}"}

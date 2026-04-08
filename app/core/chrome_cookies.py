@@ -7,6 +7,8 @@ import os
 import sys
 import sqlite3
 import platform
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional, List
 
@@ -234,9 +236,15 @@ def get_opencode_session_cookie() -> Optional[str]:
         return None
     
     for cookies_path in cookies_paths:
+        temp_path = None
         try:
-            # Connect to Chrome's SQLite cookie database
-            conn = sqlite3.connect(str(cookies_path))
+            # Create a temporary file copy to avoid "database is locked" errors
+            fd, temp_path = tempfile.mkstemp()
+            os.close(fd)
+            shutil.copy2(str(cookies_path), temp_path)
+            
+            # Connect to the temporary copy
+            conn = sqlite3.connect(temp_path)
             cursor = conn.cursor()
             
             # Query for opencode.ai session cookie
@@ -262,6 +270,12 @@ def get_opencode_session_cookie() -> Optional[str]:
                     pass
         except Exception:
             continue
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
             
     return None
 
@@ -280,9 +294,15 @@ def get_claude_session_cookie() -> Optional[str]:
         return None
     
     for cookies_path in cookies_paths:
+        temp_path = None
         try:
-            # Connect to Chrome's SQLite cookie database
-            conn = sqlite3.connect(str(cookies_path))
+            # Create a temporary file copy to avoid "database is locked" errors
+            fd, temp_path = tempfile.mkstemp()
+            os.close(fd)
+            shutil.copy2(str(cookies_path), temp_path)
+            
+            # Connect to the temporary copy
+            conn = sqlite3.connect(temp_path)
             cursor = conn.cursor()
             
             # Query for claude.ai sessionKey cookie
@@ -308,6 +328,12 @@ def get_claude_session_cookie() -> Optional[str]:
                     pass
         except Exception:
             continue
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
             
     return None
 
@@ -326,9 +352,15 @@ def get_kimi_auth_cookie() -> Optional[str]:
         return None
     
     for cookies_path in cookies_paths:
+        temp_path = None
         try:
-            # Connect to Chrome's SQLite cookie database
-            conn = sqlite3.connect(str(cookies_path))
+            # Create a temporary file copy to avoid "database is locked" errors
+            fd, temp_path = tempfile.mkstemp()
+            os.close(fd)
+            shutil.copy2(str(cookies_path), temp_path)
+            
+            # Connect to the temporary copy
+            conn = sqlite3.connect(temp_path)
             cursor = conn.cursor()
             
             # Query for kimi.com kimi-auth cookie
@@ -360,6 +392,12 @@ def get_kimi_auth_cookie() -> Optional[str]:
             conn.close()
         except Exception:
             continue
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
             
     return None
 

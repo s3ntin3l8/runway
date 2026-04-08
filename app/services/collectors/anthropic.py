@@ -254,6 +254,9 @@ class AnthropicCollector(BaseCollector):
                     expires_in
                 )
                 
+                # Update sidecar token cache so other sessions have the new token
+                token_cache.store("anthropic", {"oauth_token": new_access_token, "refresh_token": new_refresh_token})
+                
                 # Reset failure tracking
                 self._last_refresh_failure = None
                 self._refresh_backoff_seconds = 30

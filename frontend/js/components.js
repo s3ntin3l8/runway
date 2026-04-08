@@ -317,8 +317,11 @@ export function buildCard(item) {
         </div>
     ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(item.reset)}</span>`;
 
+    const isDisabled = STATE.disabledServices.includes(item.service);
+    if (isDisabled && !STATE.showHidden) return '';
+
     return `
-        <div class="glass-panel ${h.card} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
+        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">
             <!-- Header row -->
             <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
@@ -439,5 +442,18 @@ export function buildModalContent(item) {
             <span class="text-xs font-bold text-zinc-400 mono">${escapeHTML(item.pace)}</span>
         </div>
         ` : ''}
+
+        <div class="mt-8 pt-6 border-t border-zinc-800/80 flex items-center justify-between">
+            <div class="flex flex-col gap-1">
+                <span class="text-sm font-bold text-zinc-200">Show in Dashboard</span>
+                <span class="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Hide if not in use</span>
+            </div>
+            <button 
+                onclick="event.stopPropagation(); window.toggleService('${escapeHTML(item.service)}')"
+                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${!isDisabled ? 'bg-blue-600' : 'bg-zinc-700'}"
+            >
+                <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${!isDisabled ? 'translate-x-5' : 'translate-x-0'}"></span>
+            </button>
+        </div>
     `;
 }

@@ -29,6 +29,7 @@ Headers:
 """
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 import httpx
@@ -36,6 +37,8 @@ from app.core.config import settings
 from app.core.utils import human_delta, error_card
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
+
+logger = logging.getLogger(__name__)
 
 class GitHubCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:

@@ -36,6 +36,7 @@ import httpx
 from app.core.config import settings
 from app.core.utils import PaceCalculator, human_delta, error_card
 from app.services.collectors.base import BaseCollector
+from app.services.token_cache import token_cache
 
 class ChatGPTCollector(BaseCollector):
     async def _get_auth_data(self) -> Dict[str, Any]:
@@ -45,6 +46,7 @@ class ChatGPTCollector(BaseCollector):
         Tries in priority order:
         1. CHATGPT_OAUTH_TOKEN environment variable
         2. ~/.codex/auth.json (Codex CLI auth cache)
+        3. Token cache from sidecar
         
         Returns:
             Dict with "token" and optionally "path" keys, or empty dict if not found
@@ -62,6 +64,12 @@ class ChatGPTCollector(BaseCollector):
                     token = data.get("tokens", {}).get("access_token")
                     if token: return {"token": token, "path": auth_path}
             except: pass
+            
+        # Priority 3: Token cache from sidecar
+        token = token_cache.get_token("chatgpt", "oauth_token")
+        if token:
+            return {"token": token, "path": "cache"}
+            
         return {}
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
@@ -121,10 +129,16 @@ class ChatGPTCollector(BaseCollector):
                 return [error_card("ChatGPT Codex", "💬", "No logs/auth")]
                 
             latest = max(files, key=os.path.getmtime)
+            last_line = None
             with open(latest, "r") as f:
-                lines = f.readlines()
-                if not lines: return [error_card("ChatGPT Codex", "💬", "Empty log")]
-                usage = json.loads(lines[-1])
+                for line in f:
+                    if line.strip():
+                        last_line = line
+            
+            if not last_line:
+                return [error_card("ChatGPT Codex", "💬", "Empty log")]
+            
+            usage = json.loads(last_line)
                 
             pct = usage.get("used_percent", 0.0)
             reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None

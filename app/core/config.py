@@ -140,6 +140,7 @@ class Settings:
     # Network settings
     APP_HOST: str = os.getenv("APP_HOST", "127.0.0.1")  # Default: local-only for security
     APP_PORT: int = int(os.getenv("APP_PORT", "8765"))
+    CORS_ORIGINS: list = ["http://localhost:8765", "http://127.0.0.1:8765"]
 
 settings = Settings()
 

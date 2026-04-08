@@ -24,6 +24,8 @@ import hmac
 import hashlib
 import time
 import platform
+import shutil
+import tempfile
 from pathlib import Path
 from urllib import request, error
 
@@ -373,8 +375,14 @@ class KimiCollector:
             return None
         
         for cookies_path in cookies_paths:
+            temp_db = None
             try:
-                conn = sqlite3.connect(str(cookies_path))
+                # Copy to temp file to avoid "database is locked" errors
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    temp_db = tf.name
+                shutil.copy2(str(cookies_path), temp_db)
+                
+                conn = sqlite3.connect(temp_db)
                 cursor = conn.cursor()
                 
                 for cookie_name in ["kimi-auth", "kimi_token"]:
@@ -390,6 +398,10 @@ class KimiCollector:
                 conn.close()
             except:
                 continue
+            finally:
+                if temp_db and os.path.exists(temp_db):
+                    try: os.unlink(temp_db)
+                    except: pass
         return None
     
     @staticmethod
@@ -461,8 +473,14 @@ class OpenCodeCollector:
             return None
         
         for cookies_path in cookies_paths:
+            temp_db = None
             try:
-                conn = sqlite3.connect(str(cookies_path))
+                # Copy to temp file to avoid "database is locked" errors
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    temp_db = tf.name
+                shutil.copy2(str(cookies_path), temp_db)
+                
+                conn = sqlite3.connect(temp_db)
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
@@ -472,6 +490,10 @@ class OpenCodeCollector:
                 if row: return row[0]
             except:
                 continue
+            finally:
+                if temp_db and os.path.exists(temp_db):
+                    try: os.unlink(temp_db)
+                    except: pass
         return None
     
     @staticmethod
@@ -653,8 +675,11 @@ def main():
     
     args = parser.parse_args()
     
+    # Priority: Env var > CLI argument
+    api_key = os.getenv("RUNWAY_API_KEY") or args.api_key
+    
     if args.install:
-        run_install(args.api_url, args.api_key)
+        run_install(args.api_url, api_key)
         return
     
     # Collect from all providers
@@ -704,7 +729,7 @@ def main():
         print(json.dumps(all_metrics, indent=2))
         return
     
-    if not args.api_url or not args.api_key:
+    if not args.api_url or not api_key:
         print("ERROR: --api-url and --api-key required. Use --dry-run to test.")
         return
     
@@ -722,7 +747,7 @@ def main():
     }
     
     target_url = f"{args.api_url.rstrip('/')}/api/ingest"
-    data, code = http_post_signed(target_url, payload, args.api_key)
+    data, code = http_post_signed(target_url, payload, api_key)
     
     if code == 200:
         print(f"SUCCESS: Pushed {len(all_metrics)} metrics to {target_url}")

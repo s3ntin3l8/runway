@@ -21,6 +21,14 @@ code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .health-critical { border-color: rgba(239,68,68,0.5); }
 .health-critical:hover { border-color: rgba(239,68,68,0.8); box-shadow: 0 12px 40px rgba(239,68,68,0.12); }
 .health-unknown { border-color: rgba(63,63,70,0.6); }
+.disabled-card {
+    filter: grayscale(1) opacity(0.5);
+    border-style: dashed;
+    pointer-events: auto; /* Allow clicking to open modal and re-enable */
+}
+.disabled-card:hover {
+    filter: grayscale(0.5) opacity(0.8);
+}
 
 /* Unlimited health state with rainbow border */
 .health-unlimited {
