@@ -15,21 +15,34 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 import httpx
+from app.main import app
+from tests.fixtures.mock_data import (
+    ANTHROPIC_OAUTH_RESPONSE,
+    CLAUDE_WEB_API_ORGS_RESPONSE,
+    CLAUDE_WEB_API_USAGE_RESPONSE,
+    GEMINI_QUOTA_RESPONSE,
+    GITHUB_COPILOT_RESPONSE,
+    CHATGPT_USAGE_RESPONSE,
+    OPENCODE_GO_RESPONSE,
+    BIGMODEL_ZAI_RESPONSE,
+    KIMI_RESPONSE
+)
 
 
 @pytest.fixture
-def env_vars():
-    """Provide a context manager for temporary environment variables during tests."""
-    original = os.environ.copy()
-    
+def env_vars(monkeypatch):
+    """Provide a helper to set environment variables during tests using monkeypatch."""
     def set_vars(**kwargs):
         for key, value in kwargs.items():
-            os.environ[key] = value
-        return lambda: os.environ.update(original)
-    
-    yield set_vars
-    os.environ.clear()
-    os.environ.update(original)
+            monkeypatch.setenv(key, value)
+    return set_vars
+
+
+@pytest.fixture
+async def api_client():
+    """Provide an asynchronous httpx client for testing the FastAPI application."""
+    async with httpx.AsyncClient(app=app, base_url="http://testserver") as client:
+        yield client
 
 
 @pytest.fixture
@@ -57,135 +70,67 @@ def temp_env_file():
 @pytest.fixture
 def mock_anthropic_oauth_response():
     """Mock response from Anthropic OAuth API."""
-    return {
-        "five_hour": {
-            "utilization": 45.5,
-            "resets_at": "2025-04-07T12:00:00Z"
-        },
-        "seven_day": {
-            "utilization": 62.3,
-            "resets_at": "2025-04-14T00:00:00Z"
-        },
-        "seven_day_sonnet": {
-            "utilization": 30.1,
-            "resets_at": "2025-04-14T00:00:00Z"
-        }
-    }
+    return ANTHROPIC_OAUTH_RESPONSE
 
 
 @pytest.fixture
 def mock_claude_web_api_orgs_response():
     """Mock response from Claude Web API organizations endpoint."""
-    return [
-        {
-            "uuid": "org_test_123",
-            "id": "org_test_123",
-            "name": "Test Org"
-        }
-    ]
+    return CLAUDE_WEB_API_ORGS_RESPONSE
 
 
 @pytest.fixture
 def mock_claude_web_api_usage_response():
     """Mock response from Claude Web API usage endpoint."""
-    return {
-        "current_window": {
-            "percentUsed": 45.5,
-            "resetsAt": "2025-04-07T12:00:00Z"
-        },
-        "current_week": {
-            "percentUsed": 62.3,
-            "resetsAt": "2025-04-14T00:00:00Z"
-        },
-        "current_week_sonnet": {
-            "percentUsed": 30.1,
-            "resetsAt": "2025-04-14T00:00:00Z"
-        }
-    }
+    return CLAUDE_WEB_API_USAGE_RESPONSE
 
 
 @pytest.fixture
 def mock_gemini_quota_response():
     """Mock response from Gemini quota API."""
-    return {
-        "buckets": [
-            {
-                "modelId": "gemini-2.0-flash",
-                "remainingFraction": 0.75,
-                "resetTime": "2025-04-08T00:00:00Z"
-            },
-            {
-                "modelId": "gemini-1.5-pro",
-                "remainingFraction": 0.82,
-                "resetTime": "2025-04-08T00:00:00Z"
-            }
-        ]
-    }
+    return GEMINI_QUOTA_RESPONSE
 
 
 @pytest.fixture
 def mock_github_copilot_response():
     """Mock response from GitHub Copilot API."""
-    return {
-        "limited_user_quotas": {
-            "completions": 45,
-            "chat": 120
-        },
-        "limited_user_reset_date": "2025-04-08T00:00:00Z",
-        "quota_snapshots": [
-            {
-                "metric": "premium_interactions",
-                "remaining": 450,
-                "entitlement": 500
-            },
-            {
-                "metric": "chat",
-                "remaining": 890,
-                "entitlement": 1000
-            }
-        ],
-        "copilot_plan": "Pro"
-    }
+    return GITHUB_COPILOT_RESPONSE
 
 
 @pytest.fixture
 def mock_chatgpt_usage_response():
     """Mock response from ChatGPT wham/usage API."""
-    return {
-        "primary": {
-            "utilization_percent": 55.3,
-            "resets_at": 1744876800  # Unix timestamp
-        }
-    }
+    return CHATGPT_USAGE_RESPONSE
 
 
 @pytest.fixture
 def mock_opencode_go_response():
     """Mock response from OpenCode Go API."""
-    return {
-        "total_usage_usd": 12.50,
-        "hard_limit_usd": 50.00
-    }
+    return OPENCODE_GO_RESPONSE
 
 
 @pytest.fixture
 def mock_zai_response():
     """Mock response from zAI (Zhipu) API."""
-    return {
-        "data": {
-            "available_balance": 125.45
-        }
-    }
+    return BIGMODEL_ZAI_RESPONSE
 
 
 @pytest.fixture
 def mock_kimi_response():
     """Mock response from Kimi (Moonshot) API."""
-    return {
-        "data": {
-            "available_balance": 8.75
-        }
-    }
+    return KIMI_RESPONSE
+
+
+@pytest.fixture
+def error_response():
+    """Provide common error response mocks."""
+    def _create(status_code=500, detail="Internal Server Error"):
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = status_code
+        response.json.return_value = {"detail": detail}
+        response.text = json.dumps({"detail": detail})
+        return response
+    return _create
 
 
 @pytest.fixture

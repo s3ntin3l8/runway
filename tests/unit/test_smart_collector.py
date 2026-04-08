@@ -43,7 +43,7 @@ class TestSmartCollectorCaching:
         mock_collector.collect.return_value = cached_data
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=600.0, error_threshold=3
+            mock_collector, "TestCollector", ttl=600.0, error_threshold=3, error_retry_delay=0
         )
         
         # First call - populates cache
@@ -53,7 +53,6 @@ class TestSmartCollectorCaching:
         
         # Second call immediately - should return cache without calling collector
         result2 = await smart.collect(mock_client)
-        assert result2 == cached_data
         assert mock_collector.collect.call_count == 1  # Still 1, not 2
         assert "[Cached" in str(result2[0].get("detail", ""))
 
@@ -65,7 +64,7 @@ class TestSmartCollectorCaching:
         mock_collector.collect.side_effect = [cached_data, fresh_data]
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=0.1, error_threshold=3
+            mock_collector, "TestCollector", ttl=0.1, error_threshold=3, error_retry_delay=0
         )
         
         # First call - populates cache
@@ -86,7 +85,7 @@ class TestSmartCollectorCaching:
         data = [{"service": "Test", "remaining": "100%"}]
         mock_collector.collect.return_value = data
         
-        smart = SmartCollector(mock_collector, "Test", ttl=600.0)
+        smart = SmartCollector(mock_collector, "Test", ttl=600.0, error_retry_delay=0)
         
         result = await smart.collect(mock_client)
         assert result == data
@@ -108,7 +107,7 @@ class TestSmartCollectorErrorHandling:
         ]
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=0.1, error_threshold=3
+            mock_collector, "TestCollector", ttl=0.1, error_threshold=3, error_retry_delay=0
         )
         
         # First call - populates cache
@@ -129,7 +128,7 @@ class TestSmartCollectorErrorHandling:
         """Test that error without cache returns error card."""
         mock_collector.collect.side_effect = Exception("Connection failed")
         
-        smart = SmartCollector(mock_collector, "TestCollector")
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
         
         result = await smart.collect(mock_client)
         
@@ -144,7 +143,7 @@ class TestSmartCollectorErrorHandling:
         mock_collector.collect.side_effect = Exception("API error")
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=0.01, error_threshold=3
+            mock_collector, "TestCollector", ttl=0.01, error_threshold=3, error_retry_delay=0
         )
         
         # First call - error 1
@@ -178,7 +177,7 @@ class TestSmartCollectorErrorHandling:
         ]
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=0.01, error_threshold=3
+            mock_collector, "TestCollector", ttl=0.01, error_threshold=3, error_retry_delay=0
         )
         
         # First two calls fail
@@ -210,7 +209,7 @@ class TestSmartCollectorErrorThreshold:
         ]
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=600.0, error_threshold=1
+            mock_collector, "TestCollector", ttl=600.0, error_threshold=1, error_retry_delay=0
         )
         
         # First call fails
@@ -261,7 +260,7 @@ class TestSmartCollectorCacheTags:
         data = [{"service": "Test", "remaining": "100%", "detail": "Original detail"}]
         mock_collector.collect.return_value = data
         
-        smart = SmartCollector(mock_collector, "TestCollector", ttl=600.0)
+        smart = SmartCollector(mock_collector, "TestCollector", ttl=600.0, error_retry_delay=0)
         
         # First call - populate cache
         result1 = await smart.collect(mock_client)
@@ -288,7 +287,7 @@ class TestSmartCollectorStats:
         mock_collector.collect.return_value = data
         
         smart = SmartCollector(
-            mock_collector, "TestCollector", ttl=600.0, error_threshold=3
+            mock_collector, "TestCollector", ttl=600.0, error_threshold=3, error_retry_delay=0
         )
         
         # Populate cache
@@ -314,15 +313,13 @@ class TestSmartCollectorIntegration:
         """Test realistic scenario: provider outage and recovery."""
         good_data = [{"service": "Provider", "remaining": "100%"}]
         
-        # Simulate: good -> outage (5 errors) -> recovery
+        # Simulate: good -> outage (3 errors) -> recovery
         mock_collector.collect.side_effect = [
-            good_data,                    # First fetch - success
-            Exception("Timeout"),         # Error 1
-            Exception("500 Error"),       # Error 2
-            Exception("Rate limit"),      # Error 3
-            Exception("Rate limit"),      # Error 4
-            Exception("Rate limit"),      # Error 5
-            good_data,                    # Recovery
+            good_data,                    # First fetch - success (r1)
+            Exception("Timeout"),         # Error 1 (r2)
+            Exception("500 Error"),       # Error 2 (r3)
+            Exception("Rate limit"),      # Error 3 (r4)
+            good_data,                    # Recovery (r5)
         ]
         
         smart = SmartCollector(

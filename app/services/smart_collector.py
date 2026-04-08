@@ -124,7 +124,7 @@ class SmartCollector:
         Returns False if we're still in the error retry delay window.
         This prevents hammering the API during outages.
         """
-        if self.last_fetch_time is None:
+        if self.last_fetch_time is None or self.consecutive_errors == 0:
             return True
         
         time_since_last_fetch = time.time() - self.last_fetch_time
@@ -175,7 +175,7 @@ class SmartCollector:
         """
         # Fast path: Return cached data if fresh
         if self._should_use_cache():
-            return self.last_result
+            return self._tag_as_cached(self.last_result)
         
         # Don't hammer the API during outages
         if not self._should_retry_after_error():

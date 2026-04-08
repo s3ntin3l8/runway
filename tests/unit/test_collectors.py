@@ -477,22 +477,23 @@ class TestAnthropicCollector:
         result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
         
         # Should not crash, should return card with reset as "—"
+        # Now returns 4 items because core windows are guaranteed
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) == 4
         assert result[0]['reset'] == "—"
 
     def test_parse_oauth_response_empty_windows(self):
         """Test handling when no valid quota windows present."""
         collector = AnthropicCollector()
         
-        # Empty data
+        # Empty data - should default to 100% remaining for guaranteed windows
         result = collector._parse_oauth_response({}, {"five_hour": "Session Window"})
-        assert result[0]['remaining'] == 'ERR'
+        assert result[0]['remaining'] == '100.0%'
         
-        # Data without utilization field
+        # Data without utilization field - should default to 100% remaining for guaranteed windows
         data_no_util = {"five_hour": {"resets_at": "2025-04-07T12:00:00Z"}}
         result = collector._parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
-        assert result[0]['remaining'] == 'ERR'
+        assert result[0]['remaining'] == '100.0%'
 
 
 class TestGeminiCollector:

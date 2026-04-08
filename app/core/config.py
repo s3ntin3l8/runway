@@ -88,13 +88,13 @@ class Settings:
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
     
     # Path settings
-    CLAUDE_PROJECTS_DIR: str = os.path.expanduser("~/.claude/projects")
-    GEMINI_SESSIONS_DIR: str = os.path.expanduser("~/.gemini/tmp/sessions")
-    GEMINI_OAUTH_PATH: str = os.path.expanduser("~/.gemini/oauth_creds.json")
-    CHATGPT_SESSIONS_DIR: str = os.path.expanduser("~/.codex/sessions")
-    ANTIGRAVITY_QUOTA_PATH: str = os.path.expanduser("~/.antigravity/state/quota.json")
-    OPENCODE_DB_PATH: str = os.path.expanduser("~/.local/share/opencode/opencode.db")
-    EXTERNAL_METRICS_PATH: str = os.path.expanduser("~/.usage-tracker/external_metrics.json")
+    CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.expanduser("~/.claude/projects"))
+    GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.expanduser("~/.gemini/tmp/sessions"))
+    GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.expanduser("~/.gemini/oauth_creds.json"))
+    CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.expanduser("~/.codex/sessions"))
+    ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.expanduser("~/.antigravity/state/quota.json"))
+    OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.expanduser("~/.local/share/opencode/opencode.db"))
+    EXTERNAL_METRICS_PATH: str = os.getenv("EXTERNAL_METRICS_PATH", os.path.expanduser("~/.usage-tracker/external_metrics.json"))
     OPENCODE_LOCAL_COLLECTOR_ENABLED: bool = os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
     
     # Network settings
