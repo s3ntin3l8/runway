@@ -78,9 +78,12 @@ GITHUB_COPILOT_RESPONSE = {
 }
 
 CHATGPT_USAGE_RESPONSE = {
-    "primary": {
-        "utilization_percent": 55.3,
-        "resets_at": 1744876800  # Unix timestamp
+    "plan_type": "free",
+    "rate_limit": {
+        "primary_window": {
+            "used_percent": 55.3,
+            "reset_at": 1744876800  # Unix timestamp
+        }
     }
 }
 

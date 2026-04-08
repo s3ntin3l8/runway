@@ -44,8 +44,10 @@ import os
 import time
 import logging
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 import httpx
 from app.core.config import settings
+from app.core.utils import error_card, PaceCalculator
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
@@ -64,20 +66,60 @@ MODEL_DISPLAY_NAMES = {
 
 
 class GeminiCollector(BaseCollector):
+    def __init__(self):
+        """Initialize caching for API results."""
+        self._cached_results = None
+        self._last_fetch = None
+        self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+
+    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+        """Check if results contain an error card."""
+        if not results:
+            return True
+        return any(r.get("remaining") == "ERR" for r in results)
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect Gemini quota using API first, fallback to local logs.
-        
+        Collect Gemini quota using API with caching, fallback to local logs.
+
         Returns:
-            List[Dict[str, Any]]: List of quota cards (one per model) or empty list if unavailable
+            List[Dict[str, Any]]: List of quota cards (one per model) or fallback data
         """
-        # Try API first
-        api_data = await self._collect_via_api(client)
-        if api_data:
+        # Try API first (with caching)
+        api_data = await self._collect_via_api_with_cache(client)
+        if api_data and not self._is_error_result(api_data):
             return api_data
-        
-        # Fallback to logs
-        return await self._collect_via_logs()
+
+        # Fallback to logs if API failed or returned errors
+        log_data = await self._collect_via_logs()
+        if log_data:
+            return log_data
+
+        # Return API error if no logs available
+        return api_data if api_data else []
+
+    async def _collect_via_api_with_cache(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """
+        Fetch Gemini quota with caching (cache both success and errors).
+
+        Returns cached result if within TTL to avoid hammering API.
+        """
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+
+        # Check cache - works for both success AND error results (check is not None for empty lists)
+        if self._cached_results is not None and self._last_fetch:
+            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
+                return self._cached_results
+
+        # Fetch fresh data
+        results = await self._collect_via_api(client)
+
+        # Cache ALL results (success or error, including empty list)
+        self._cached_results = results
+        self._last_fetch = now
+
+        return results
 
     async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -95,31 +137,46 @@ class GeminiCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
-        creds_path = settings.GEMINI_OAUTH_PATH
-        
-        # Priority: Check token cache from sidecar first
+        # Priority 1: Check token cache from sidecar first
         cached_token = token_cache.get_token("gemini", "oauth_token")
         if cached_token:
             creds = {"access_token": cached_token, "expiry_date": float('inf')}
+            creds_path = None  # No file path for cached tokens
         else:
-            if not os.path.exists(creds_path):
-                logger.debug(f"Gemini credentials not found: {creds_path}")
-                return []
-            try:
-                with open(creds_path, "r") as f:
-                    creds = json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read Gemini credentials: {e}")
-                return []
+            # Priority 2: Try multiple credential file locations
+            # (same logic as sidecar for consistency)
+            potential_paths = [
+                settings.GEMINI_OAUTH_PATH,  # From env var or platform config dir
+                os.path.expanduser("~/.gemini/oauth_creds.json"),  # Legacy location
+            ]
+            
+            creds_path = None
+            creds = None
+            
+            for path in potential_paths:
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r") as f:
+                            creds = json.load(f)
+                        creds_path = path
+                        logger.debug(f"Loaded Gemini credentials from {path}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to read {path}: {e}")
+                        continue
+            
+            if not creds:
+                logger.debug(f"Gemini credentials not found in any location: {potential_paths}")
+                return []  # Allow fallback to logs
 
         try:
             # Check expiry (expiry_date is in ms)
             if creds.get("expiry_date", 0) < (time.time() * 1000):
                 creds = await self._refresh_token(client, creds)
-                if not creds: 
-                    return []
-                # Save refreshed creds back (only if we have a path)
-                if not cached_token:
+                if not creds:
+                    return [error_card("Gemini", "🔵", "Token refresh failed", error_type="auth_failed")]
+                # Save refreshed creds back (only if we have a file path)
+                if not cached_token and creds_path:
                     with open(creds_path, "w") as f:
                         json.dump(creds, f, indent=2)
 
@@ -136,11 +193,25 @@ class GeminiCollector(BaseCollector):
             
             # Extract project and tier
             project_id = tier_info.get("cloudaicompanionProject", "")
+            
+            # Check for paid tier first (user has Pro subscription)
+            paid_tier = tier_info.get("paidTier", {})
             current_tier = tier_info.get("currentTier", {})
-            tier_name = current_tier.get("name", "Unknown Tier")
-            tier_id_raw = current_tier.get("id", "unknown")
-            # Only show badge if we have actual tier info (not "unknown")
-            tier = tier_id_raw if tier_id_raw != "unknown" else None
+            
+            if paid_tier:
+                # User has Pro access
+                tier_id_raw = paid_tier.get("id", "unknown")
+            else:
+                # Free tier only
+                tier_id_raw = current_tier.get("id", "unknown")
+            
+            # Map tier IDs to short display names
+            tier_mapping = {
+                "g1-pro-tier": "pro",
+                "g1-ultra-tier": "ultra",
+                "standard-tier": "free",
+            }
+            tier = tier_mapping.get(tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None)
             
             # 2. Retrieve Quota with discovered project (required for gemini-3 models)
             quota_resp = await client.post(
@@ -152,8 +223,8 @@ class GeminiCollector(BaseCollector):
 
             # Process quota buckets - return one card per model family
             buckets = quota_data.get("buckets", [])
-            if not buckets: 
-                return []
+            if not buckets:
+                return [error_card("Gemini", "🔵", "No quota buckets returned", error_type="api_error")]
 
             results = []
             seen_classes = set()
@@ -193,7 +264,6 @@ class GeminiCollector(BaseCollector):
                         # Parse ISO-8601 and show time only
                         reset_str = f"Resets at {reset_time.split('T')[-1][:5]}"
                         # Parse for reset_at timestamp
-                        from datetime import datetime
                         reset_dt = datetime.fromisoformat(reset_time.replace('Z', '+00:00'))
                         reset_at = reset_dt.isoformat()
                     except:
@@ -207,6 +277,9 @@ class GeminiCollector(BaseCollector):
                 else:
                     health = "critical"
 
+                # Calculate pace based on usage rate
+                pace = PaceCalculator.estimate_longevity(percent_used, reset_dt if reset_at else None)
+
                 results.append({
                     "service": display_name,
                     "icon": "🔵",
@@ -214,7 +287,7 @@ class GeminiCollector(BaseCollector):
                     "unit": "used",
                     "reset": reset_str,
                     "health": health,
-                    "pace": tier_name,
+                    "pace": pace,
                     "detail": f"{percent_remaining}% remaining | Model: {model_id}",
                     "used_value": float(percent_used),
                     "limit_value": 100.0,
@@ -232,13 +305,13 @@ class GeminiCollector(BaseCollector):
 
         except FileNotFoundError as e:
             logger.debug(f"Gemini credential file not found: {e}")
-            return []
+            return [error_card("Gemini", "🔵", "No credentials file found", error_type="missing_config")]
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON in Gemini credentials: {e}")
-            return []
+            return [error_card("Gemini", "🔵", "Invalid credentials format", error_type="parse_error")]
         except Exception as e:
             logger.error(f"Gemini API collection failed: {e}")
-            return []
+            return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
 
     async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Optional[Dict]:
         """

@@ -337,20 +337,26 @@ class AnthropicCollector(BaseCollector):
     async def _get_claude_oauth_with_cache(self, client: httpx.AsyncClient, token: str):
         """
         Fetch Claude OAuth usage with caching and automatic token refresh.
-        
+
         Checks token expiration before use and attempts automatic refresh if expired.
-        Caches results for 10 minutes. If cache is fresh, returns cached results
-        tagged with "[Cached]" in the detail field.
-        
+        Caches ALL results (success AND errors like 429) for 10 minutes to avoid
+        hammering the API when rate limited. Falls back to Web API/logs when cached
+        error is returned.
+
         Args:
             client: httpx.AsyncClient for making requests
             token: OAuth token for Anthropic API
-            
+
         Returns:
             List[Dict[str, Any]]: Quota cards or error card if fetch fails
         """
         now = datetime.now(timezone.utc)
-        
+
+        # Check cache - works for both success AND error results (check is not None for empty lists)
+        if self._cached_results is not None and self._last_fetch:
+            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
+                return self._cached_results
+
         # Check if token is expired and attempt refresh
         if self._is_token_expired(token):
             logger.info("OAuth token expired, attempting refresh")
@@ -359,18 +365,9 @@ class AnthropicCollector(BaseCollector):
                 token = new_token
             else:
                 logger.warning("Token refresh failed or unavailable, will try with current token")
-        
-        # Check cache
-        if self._cached_results and self._last_fetch:
-            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
-                # Add a tag to show it's cached
-                for r in self._cached_results:
-                    if "[Cached]" not in r.get("detail", ""):
-                        r["detail"] += " [Cached]"
-                return self._cached_results
 
         res = await self._get_claude_oauth(client, token)
-        
+
         # Check if 401 (unauthorized) - try refreshing token once
         is_401 = any("Expired/Invalid Token" in r.get("detail", "") for r in res)
         if is_401 and not self._terminal_failure:
@@ -379,13 +376,11 @@ class AnthropicCollector(BaseCollector):
             if new_token:
                 # Retry with new token
                 res = await self._get_claude_oauth(client, new_token)
-        
-        # Only cache if not an error
-        is_error = any(r.get("remaining") == "ERR" for r in res)
-        if not is_error and res:
-            self._cached_results = res
-            self._last_fetch = now
-        
+
+        # Cache ALL results (success AND errors) to avoid hammering API
+        self._cached_results = res
+        self._last_fetch = now
+
         return res
 
     async def _get_claude_oauth(self, client: httpx.AsyncClient, token: str):

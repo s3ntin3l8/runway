@@ -34,26 +34,38 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any
 import httpx
 from app.core.config import settings
-from app.core.utils import human_delta, error_card
+from app.core.utils import human_delta, error_card, PaceCalculator
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
 class GitHubCollector(BaseCollector):
+    def __init__(self):
+        """Initialize caching for API results."""
+        self._cached_results = None
+        self._last_fetch = None
+        self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+
+    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+        """Check if results contain an error card."""
+        if not results:
+            return True
+        return any(r.get("remaining") == "ERR" for r in results)
+
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect GitHub Copilot quota for free, pro, and enterprise tiers.
-        
+        Collect GitHub Copilot quota with caching for free, pro, and enterprise tiers.
+
         Queries:
         1. copilot_internal/v2/token - Limited user quotas (free tier)
         2. copilot_internal/user - Pro tier quota snapshots
         3. /rate_limit - Fallback to GitHub API rate limits if above unavailable
-        
+
         Token priority:
         1. GITHUB_TOKEN env var
         2. Token cache from sidecar
-        
+
         Returns:
             List[Dict[str, Any]]: Cards for each quota type or error card
         """
@@ -63,9 +75,19 @@ class GitHubCollector(BaseCollector):
             token = token_cache.get_token("github", "api_key")
             if token:
                 logger.info("Using GitHub token from sidecar cache")
-        
+
         if not token:
             return []
+
+        # Use cached result if available and fresh (check is not None for empty lists)
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+
+        if self._cached_results is not None and self._last_fetch:
+            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
+                return self._cached_results
+
+        # Fetch fresh data
         try:
             # Use Copilot internal endpoints for detailed metrics
             # Mimicking VS Code headers as suggested by CodexBar for better reliability
@@ -118,6 +140,8 @@ class GitHubCollector(BaseCollector):
                             # Free tier typically has limits around 50-100 requests
                             estimated_limit = 100
                             used = max(0, estimated_limit - val)
+                            pct_used = (used / estimated_limit * 100) if estimated_limit > 0 else 0
+                            pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                             cards.append({
                                 "service": f"Copilot ({key.title()})",
                                 "icon": "🐙",
@@ -125,7 +149,7 @@ class GitHubCollector(BaseCollector):
                                 "unit": "remaining",
                                 "reset": human_delta(reset_at),
                                 "health": "good" if val > 10 else "warning",
-                                "pace": "Manual",
+                                "pace": pace,
                                 "detail": f"{val} requests left [Free/Limited Tier]",
                                 "used_value": float(used),
                                 "limit_value": float(estimated_limit),
@@ -154,6 +178,8 @@ class GitHubCollector(BaseCollector):
                             val = quotas[key]
                             monthly_val = monthly.get(key, 100)
                             used_val = monthly_val - val if isinstance(monthly_val, int) else 0
+                            pct_used = (used_val / monthly_val * 100) if isinstance(monthly_val, (int, float)) and monthly_val > 0 else 0
+                            pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
                             cards.append({
                                 "service": f"Copilot ({key.title()})",
                                 "icon": "🐙",
@@ -161,12 +187,12 @@ class GitHubCollector(BaseCollector):
                                 "unit": f"/ {monthly_val:,}",
                                 "reset": human_delta(reset_at),
                                 "health": "good" if val > (monthly_val * 0.3 if isinstance(monthly_val, int) else 10) else "warning" if val > (monthly_val * 0.1 if isinstance(monthly_val, int) else 5) else "critical",
-                                "pace": "Manual",
+                                "pace": pace,
                                 "detail": f"{val}/{monthly_val} requests left • Free Tier",
                                 "used_value": float(used_val),
                                 "limit_value": float(monthly_val) if isinstance(monthly_val, (int, float)) else 100.0,
                                 "is_unlimited": False,
-                                "tier": "Free",
+                                "tier": "free",
                                 "unit_type": "requests",
                                 "reset_at": reset_at.isoformat() if reset_at else None,
                                 "data_source": "api",
@@ -192,6 +218,15 @@ class GitHubCollector(BaseCollector):
                     if rem is not None and ent is not None:
                         used_val = ent - rem
                         pct_used = (used_val / ent * 100) if ent > 0 else 0
+                        # Rolling quotas have no fixed reset time, so pass None to PaceCalculator
+                        pace = PaceCalculator.estimate_longevity(pct_used, None)
+                        # Map plan to short tier name
+                        tier_map = {
+                            "individual": "pro",
+                            "business": "team",
+                            "enterprise": "enterprise"
+                        }
+                        tier_name = tier_map.get(plan.lower(), plan.lower()) if plan else None
                         cards.append({
                             "service": f"Copilot ({metric})",
                             "icon": "🐙",
@@ -199,12 +234,12 @@ class GitHubCollector(BaseCollector):
                             "unit": f"/ {ent:,}",
                             "reset": "Rolling",
                             "health": "good" if (ent > 0 and (rem/ent) > 0.3) else "warning" if (ent > 0 and (rem/ent) > 0.1) else "critical",
-                            "pace": "Sustainable" if pct_used < 70 else "Fatigue",
+                            "pace": pace,
                             "detail": f"{pct_used:.1f}% used • {plan} [Pro Tier]",
                             "used_value": float(used_val),
                             "limit_value": float(ent),
                             "is_unlimited": False,
-                            "tier": plan,
+                            "tier": tier_name,
                             "unit_type": "requests",
                             "reset_at": None,  # Rolling quotas have no fixed reset time
                             "data_source": "api",
@@ -235,6 +270,16 @@ class GitHubCollector(BaseCollector):
                         "data_source": "fallback",
                     })
             
+            # Cache ALL results (success or partial/fallback)
+            self._cached_results = cards
+            self._last_fetch = now
+
             return cards
         except Exception as e:
-            return [error_card("GitHub Copilot", "🐙", f"Fail: {str(e)[:15]}", error_type="api_error")]
+            error_result = [error_card("GitHub Copilot", "🐙", f"Fail: {str(e)[:15]}", error_type="api_error")]
+
+            # Cache error result to avoid hammering API
+            self._cached_results = error_result
+            self._last_fetch = now
+
+            return error_result

@@ -88,13 +88,25 @@ async def ingest_metrics(
             detail = detail.replace(f"oauth_token:{oauth_token}", "oauth_token:[REDACTED]")
         if refresh_token:
             detail = detail.replace(f"refresh_token:{refresh_token}", "refresh_token:[REDACTED]")
-            
             card.detail = detail
-            local_cards.append(card)
-            # continue  # No longer skipping, store the redacted card for visibility
+        
+        # Check if this is a token-only card (should NOT be displayed)
+        # Token-only cards have indicators like:
+        # - remaining="Token" and unit="oauth"/"api_key"
+        # - data_source="token_extracted"
+        # - detail contains only redacted tokens
+        is_token_only = (
+            card.remaining == "Token" and card.unit in ("oauth", "api_key") and
+            card.data_source == "token_extracted"
+        )
+        
+        if is_token_only:
+            # Skip token-only cards - they're just for token extraction, not display
+            logger.debug(f"Skipping token-only card for {card.service}")
+            continue
         
         # Extract cookie
-        elif "cookie:" in detail:
+        if "cookie:" in detail and not is_token_only:
             cookie_info = _extract_cookie(detail)
             if cookie_info:
                 name, value = cookie_info
@@ -102,17 +114,15 @@ async def ingest_metrics(
                 card.detail = detail.replace(f"cookie:{name}:{value}", f"cookie:{name}:[REDACTED]")
                 local_cards.append(card)
                 logger.debug(f"Extracted cookie '{name}' for {provider_base}")
-            # continue
         
         # Extract API key
-        elif "api_key:" in detail:
+        elif "api_key:" in detail and not is_token_only:
             key = _extract_token(detail, "api_key:")
             if key:
                 tokens["api_key"] = key
                 card.detail = detail.replace(f"api_key:{key}", "api_key:[REDACTED]")
                 local_cards.append(card)
                 logger.debug(f"Extracted API key for {provider_base}")
-            # continue
         
         # Keep actual data cards (local file readings)
         else:

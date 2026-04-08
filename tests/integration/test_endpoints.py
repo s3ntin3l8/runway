@@ -153,9 +153,10 @@ class TestIngestEndpoint:
     async def test_ingest_success(self):
         """Test successful metric ingestion."""
         from fastapi.testclient import TestClient
-        
+        from unittest.mock import patch, MagicMock
+
         test_client = TestClient(app)
-        
+
         payload = {
             "provider": "claude",
             "metrics": [
@@ -171,18 +172,28 @@ class TestIngestEndpoint:
                 }
             ]
         }
-        
+
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body)
-        
-        response = test_client.post(
-            "/api/ingest",
-            content=body,
-            headers=headers
-        )
-        
-        # Should accept valid ingest
-        assert response.status_code in [200, 202]
+
+        # Mock external_metric_service to avoid writing to real file
+        # The endpoint accesses .metrics dict directly and calls ._save()
+        mock_metrics = {}
+        with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
+            mock_service.metrics = mock_metrics
+            mock_service._save = MagicMock()
+
+            response = test_client.post(
+                "/api/ingest",
+                content=body,
+                headers=headers
+            )
+
+            # Should accept valid ingest
+            assert response.status_code in [200, 202]
+            # Verify metrics were stored and save was called
+            assert "claude" in mock_metrics
+            assert mock_service._save.called
 
     async def test_ingest_invalid_signature(self):
         """Test that invalid signatures are rejected."""

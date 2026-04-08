@@ -82,26 +82,68 @@ class TestAnthropicCollector:
     async def test_collect_caching(self, mock_http_client, mock_anthropic_oauth_response):
         """Test that OAuth results are cached for 10 minutes."""
         collector = AnthropicCollector()
-        
+
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = mock_anthropic_oauth_response
         mock_http_client.request.return_value = mock_response
-        
+
         with patch('app.services.collectors.anthropic.settings') as mock_settings:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "test_token"
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-            
+
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
                 # First call - should hit API
                 result1 = await collector.collect(mock_http_client)
-                
+
                 # Second call immediately - should use cache
                 result2 = await collector.collect(mock_http_client)
-                
+
                 # API should only be called once (cached on second call)
                 assert mock_http_client.request.call_count == 1
-                assert "[Cached]" in str(result2)
+                # Results should be identical (same cached data)
+                assert result1 == result2
+
+    @pytest.mark.asyncio
+    async def test_collect_oauth_429_error_caching(self, mock_http_client):
+        """Test that 429 rate limit errors are cached to avoid hammering the API."""
+        collector = AnthropicCollector()
+
+        # Mock 429 rate limit response (http_request_with_retry makes 3 attempts)
+        mock_429_response = MagicMock(spec=httpx.Response)
+        mock_429_response.status_code = 429
+        mock_http_client.request.return_value = mock_429_response
+
+        with patch('app.services.collectors.anthropic.settings') as mock_settings:
+            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "test_token"
+            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
+
+            with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="fake_session"):
+                with patch.object(collector, '_get_claude_via_web_api', return_value=[{
+                    "service": "Claude (Session Window)",
+                    "icon": "🟠",
+                    "remaining": "50.0%",
+                    "unit": "capacity",
+                    "reset": "in 4h",
+                    "health": "good",
+                    "pace": "Sustainable",
+                    "detail": "50.0% used [Web API]",
+                    "used_value": 50.0,
+                    "limit_value": 100.0,
+                    "unit_type": "percent",
+                    "data_source": "web_api"
+                }]):
+                    # First call - OAuth gets 429 (3 retries), falls back to Web API
+                    result1 = await collector.collect(mock_http_client)
+
+                    # Second call - should use cached 429 error, skip OAuth entirely
+                    result2 = await collector.collect(mock_http_client)
+
+                    # OAuth API should be called 3 times on first call (retries), 0 times on second (cached)
+                    assert mock_http_client.request.call_count == 3  # 3 retries on first call
+                    # Both results should come from Web API fallback
+                    assert result1[0]["data_source"] == "web_api"
+                    assert result2[0]["data_source"] == "web_api"
 
     @pytest.mark.asyncio
     async def test_collect_oauth_token_refresh_success(self, mock_http_client, mock_anthropic_oauth_response):
@@ -644,6 +686,48 @@ class TestGeminiCollector:
         # Should return empty list or fallback to logs
         assert isinstance(result, list)
 
+    @pytest.mark.asyncio
+    async def test_collect_api_error_caching(self, mock_http_client):
+        """Test that API results are cached to avoid hammering the API (same instance)."""
+        from unittest.mock import AsyncMock
+        collector = GeminiCollector()
+
+        # Verify initial state - no cache
+        assert collector._cached_results is None
+        assert collector._last_fetch is None
+
+        # Mock API error response (429 rate limit)
+        error_response = MagicMock(spec=httpx.Response)
+        error_response.status_code = 429
+
+        # Use AsyncMock to track calls
+        mock_post = AsyncMock(return_value=error_response)
+        mock_http_client.post = mock_post
+
+        with patch('app.services.collectors.gemini.settings') as mock_settings:
+            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
+            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
+
+            with patch('builtins.open', mock_open(read_data=json.dumps({"access_token": "token", "expiry_date": 9999999999999}))):
+                with patch('app.services.collectors.gemini.os.path.exists', return_value=True):
+                    with patch('app.services.collectors.gemini.time.time', return_value=1000):
+                        # First call - API fails
+                        result1 = await collector.collect(mock_http_client)
+                        first_call_count = mock_post.call_count
+
+                        # Verify cache was populated (any result)
+                        assert collector._cached_results is not None
+                        assert collector._last_fetch is not None
+
+                        # Second call with SAME collector instance - should use cache
+                        result2 = await collector.collect(mock_http_client)
+
+                        # API should not be called again (result was cached)
+                        assert mock_post.call_count == first_call_count
+
+                        # Results should be the same (from cache)
+                        assert result1 == result2
+
 
 class TestGitHubCollector:
     """Test suite for GitHub Copilot collector."""
@@ -678,8 +762,42 @@ class TestGitHubCollector:
         with patch('app.services.collectors.github.settings') as mock_settings:
             mock_settings.GITHUB_TOKEN = None
             result = await collector.collect(mock_http_client)
-        
+
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error_caching(self, mock_http_client):
+        """Test that API results are cached to avoid hammering the API (same instance)."""
+        collector = GitHubCollector()
+
+        # Verify initial state - no cache
+        assert collector._cached_results is None
+        assert collector._last_fetch is None
+
+        # Mock API error response (500 error)
+        error_response = MagicMock(spec=httpx.Response)
+        error_response.status_code = 500
+        mock_http_client.get.return_value = error_response
+
+        with patch('app.services.collectors.github.settings') as mock_settings:
+            mock_settings.GITHUB_TOKEN = "github_token"
+
+            # First call - API fails
+            result1 = await collector.collect(mock_http_client)
+            first_call_count = mock_http_client.get.call_count
+
+            # Verify cache was populated (any result)
+            assert collector._cached_results is not None
+            assert collector._last_fetch is not None
+
+            # Second call with SAME collector instance - should use cache
+            result2 = await collector.collect(mock_http_client)
+
+            # API should not be called again (result was cached)
+            assert mock_http_client.get.call_count == first_call_count
+
+            # Results should be the same (from cache)
+            assert result1 == result2
 
 
 class TestChatGPTCollector:
@@ -720,6 +838,44 @@ class TestChatGPTCollector:
         
         # Should return error card if both API and logs fail
         assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_collect_api_error_caching(self, mock_http_client):
+        """Test that API results are cached to avoid hammering the API (same instance)."""
+        from datetime import timezone
+        collector = ChatGPTCollector()
+
+        # Verify initial state - no cache
+        assert collector._cached_api_results is None
+        assert collector._last_api_fetch is None
+
+        # Mock API error response (429 rate limit)
+        error_response = MagicMock(spec=httpx.Response)
+        error_response.status_code = 429
+        mock_http_client.get.return_value = error_response
+
+        with patch('app.services.collectors.chatgpt.settings') as mock_settings:
+            mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
+
+            with patch('builtins.open', side_effect=FileNotFoundError):
+                with patch.dict('os.environ', {'CHATGPT_OAUTH_TOKEN': 'test_token'}):
+                    # First call - API fails, no logs
+                    result1 = await collector.collect(mock_http_client)
+                    first_call_count = mock_http_client.get.call_count
+
+                    # Verify cache was populated (any result)
+                    assert collector._cached_api_results is not None
+                    assert collector._last_api_fetch is not None
+
+                    # Second call with SAME collector instance - should use cache
+                    result2 = await collector.collect(mock_http_client)
+
+                    # API should not be called again (result was cached)
+                    assert mock_http_client.get.call_count == first_call_count
+
+                    # Both results should be error cards (may have slightly different messages)
+                    assert any(r.get("remaining") == "ERR" for r in result1)
+                    assert any(r.get("remaining") == "ERR" for r in result2)
 
 
 class TestAntigravityCollector:

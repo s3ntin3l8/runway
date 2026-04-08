@@ -39,6 +39,18 @@ from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
 class ChatGPTCollector(BaseCollector):
+    def __init__(self):
+        """Initialize caching for API results."""
+        self._cached_api_results = None
+        self._last_api_fetch = None
+        self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+
+    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+        """Check if results contain an error card."""
+        if not results:
+            return True
+        return any(r.get("remaining") == "ERR" for r in results)
+
     async def _get_auth_data(self) -> Dict[str, Any]:
         """
         Retrieve ChatGPT authentication token from environment or local cache.
@@ -75,58 +87,128 @@ class ChatGPTCollector(BaseCollector):
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect ChatGPT Codex quota using API with local cache fallback.
-        
+        Collect ChatGPT Codex quota using API with caching and local fallback.
+
         Attempts:
-        1. API call to wham/usage if token available
-        2. Falls back to local session cache if API fails or no token
-        3. Returns error card if both fail
-        
+        1. Check API cache (5 min TTL) - use if fresh
+        2. API call to wham/usage if token available (cache result)
+        3. Falls back to local session cache if API fails or cached error
+        4. Returns error card if both fail
+
         Returns:
-            List[Dict[str, Any]]: Single card with usage percentage or error
+            List[Dict[str, Any]]: Cards with usage percentage or error
         """
         auth = await self._get_auth_data()
         token = auth.get("token")
-        
-        if token:
+
+        # Check API cache first (check is not None for empty lists)
+        now = datetime.now(timezone.utc)
+        cached_error = None
+        if self._cached_api_results is not None and self._last_api_fetch:
+            if (now - self._last_api_fetch).total_seconds() < self._cache_ttl:
+                # Return cached success result immediately
+                if not self._is_error_result(self._cached_api_results):
+                    return self._cached_api_results
+                # Cached error - save it for potential return later, skip API call
+                # (don't hammer the API with repeated error results)
+                cached_error = self._cached_api_results
+
+        # Try API if we have a token and no cached error
+        if token and not cached_error:
             try:
                 # Internal wham/usage endpoint (as used by CodexBar/CLI)
-                # Note: This is an unauthenticated-looking but actually Bearer-auth'd endpoint
                 url = "https://chatgpt.com/backend-api/wham/usage"
                 headers = {"Authorization": f"Bearer {token}"}
                 resp = await client.get(url, headers=headers, timeout=5)
-                
+
                 if resp.status_code == 200:
                     data = resp.json()
-                    # Expecting primary/secondary usage windows
-                    primary = data.get("primary", {})
-                    pct = primary.get("utilization_percent", 0.0)
-                    reset_ts = primary.get("resets_at")
-                    reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
-                    
-                    return [{
-                        "service": "ChatGPT Codex",
-                        "icon": "💬",
-                        "remaining": f"{(100-pct):.1f}%",
-                        "unit": "remaining",
-                        "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
-                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                        "detail": "API: wham/usage",
-                        "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": "oauth",
-                    }]
+                    # Extract tier from plan_type
+                    plan_type = data.get("plan_type", "unknown")
+                    tier = plan_type.lower() if plan_type != "unknown" else None
+
+                    cards = []
+
+                    # Main rate limit (primary_window)
+                    rate_limit = data.get("rate_limit", {})
+                    primary = rate_limit.get("primary_window", {})
+                    if primary:
+                        pct = primary.get("used_percent", 0.0)
+                        reset_ts = primary.get("reset_at")
+                        reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+
+                        cards.append({
+                            "service": "ChatGPT Codex",
+                            "icon": "💬",
+                            "remaining": f"{(100-pct):.1f}%",
+                            "unit": "remaining",
+                            "reset": human_delta(reset_at),
+                            "health": "good" if pct < 80 else "warning",
+                            "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                            "detail": f"{pct:.1f}% used",
+                            "used_value": float(pct),
+                            "limit_value": 100.0,
+                            "unit_type": "percent",
+                            "reset_at": reset_at.isoformat() if reset_at else None,
+                            "data_source": "oauth",
+                            "tier": tier,
+                        })
+
+                    # Code review rate limit (if available and different)
+                    code_review = data.get("code_review_rate_limit", {})
+                    cr_primary = code_review.get("primary_window", {})
+                    if cr_primary and cr_primary != primary:
+                        cr_pct = cr_primary.get("used_percent", 0.0)
+                        cr_reset_ts = cr_primary.get("reset_at")
+                        cr_reset_at = datetime.fromtimestamp(cr_reset_ts, tz=timezone.utc) if cr_reset_ts else None
+
+                        cards.append({
+                            "service": "ChatGPT Code Review",
+                            "icon": "💬",
+                            "remaining": f"{(100-cr_pct):.1f}%",
+                            "unit": "remaining",
+                            "reset": human_delta(cr_reset_at),
+                            "health": "good" if cr_pct < 80 else "warning",
+                            "pace": PaceCalculator.estimate_longevity(cr_pct, cr_reset_at),
+                            "detail": f"{cr_pct:.1f}% used",
+                            "used_value": float(cr_pct),
+                            "limit_value": 100.0,
+                            "unit_type": "percent",
+                            "reset_at": cr_reset_at.isoformat() if cr_reset_at else None,
+                            "data_source": "oauth",
+                            "tier": tier,
+                        })
+
+                    # Cache successful API result
+                    self._cached_api_results = cards
+                    self._last_api_fetch = now
+
+                    return cards if cards else [error_card("ChatGPT Codex", "💬", "No quota data", error_type="api_error")]
+
+                else:
+                    # API returned non-200 - cache error and fallback
+                    error_result = [error_card("ChatGPT Codex", "💬", f"API Error {resp.status_code}", error_type="api_error")]
+                    self._cached_api_results = error_result
+                    self._last_api_fetch = now
+
             except Exception as e:
-                # Fallback to local logs on API failure
-                pass
+                # Cache exception as error
+                error_result = [error_card("ChatGPT Codex", "💬", f"API Error: {str(e)[:20]}", error_type="api_error")]
+                self._cached_api_results = error_result
+                self._last_api_fetch = now
+
+        # Fallback to local logs on API failure or cached error
 
         # Local log fallback (original logic)
         path = settings.CHATGPT_SESSIONS_DIR
         try:
             files = glob.glob(f"{path}/**/*.jsonl", recursive=True)
-            if not files: 
-                # If no logs but we have a token that failed, report error
-                if token: return [error_card("ChatGPT Codex", "💬", "API Error", error_type="api_error")]
+            if not files:
+                # If no logs but we have a token that failed, return cached error if available
+                if cached_error:
+                    return cached_error
+                if token:
+                    return [error_card("ChatGPT Codex", "💬", "API Error", error_type="api_error")]
                 return [error_card("ChatGPT Codex", "💬", "No logs/auth", error_type="missing_config")]
                 
             latest = max(files, key=os.path.getmtime)
@@ -152,7 +234,10 @@ class ChatGPTCollector(BaseCollector):
                 "reset": human_delta(reset_at),
                 "health": "good" if pct < 80 else "warning",
                 "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"{pct:.1f}% used [Cache]",
+                "detail": f"{pct:.1f}% used",
+                "used_value": float(pct),
+                "limit_value": 100.0,
+                "unit_type": "percent",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "cache",
             }]
