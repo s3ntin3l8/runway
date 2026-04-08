@@ -163,12 +163,77 @@ function formatUsageValues(used, limit, unitType, currency) {
 }
 
 /**
+ * Calculate human-readable relative time delta
+ * @param {Date} targetDate - Target date
+ * @returns {string} Relative time string (e.g., "2h 30m", "5d 12h")
+ */
+function formatHumanDelta(targetDate) {
+    const now = new Date();
+    const diffMs = targetDate - now;
+    const seconds = Math.floor(diffMs / 1000);
+
+    if (seconds < 0) return 'Just now';
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) {
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+}
+
+/**
+ * Format reset time for card display (consistent with tooltip)
+ * @param {string|null} resetAt - ISO 8601 timestamp or human-readable string
+ * @returns {string} Formatted reset string for display
+ */
+function formatResetDisplay(resetAt) {
+    if (!resetAt || resetAt === '—') return '—';
+
+    // If it's not an ISO timestamp (e.g., "Rolling", "Manual"), return as-is
+    if (!resetAt.includes('T') && !resetAt.match(/^\d{4}-\d{2}-\d{2}/)) {
+        return resetAt;
+    }
+
+    try {
+        const date = new Date(resetAt);
+        if (isNaN(date.getTime())) return resetAt;
+
+        const now = new Date();
+        const diffHours = (date - now) / (1000 * 60 * 60);
+
+        // If > 24h away, show relative time (like "12d 4h")
+        if (diffHours >= 24) {
+            return formatHumanDelta(date);
+        }
+
+        // If <= 24h, show local time (like "Resets at 10:43")
+        const timeStr = date.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: undefined
+        });
+        return `Resets at ${timeStr}`;
+    } catch (e) {
+        return resetAt;
+    }
+}
+
+/**
  * Format reset time tooltip with absolute time
  * @param {string|null} resetAt - ISO 8601 timestamp
  * @returns {string|null} Formatted tooltip text or null
  */
 function formatResetTooltip(resetAt) {
     if (!resetAt || resetAt === '—') return null;
+
+    // If it's not an ISO timestamp, no tooltip needed (e.g., "Rolling", "Manual")
+    if (!resetAt.includes('T') && !resetAt.match(/^\d{4}-\d{2}-\d{2}/)) {
+        return null;
+    }
 
     try {
         const date = new Date(resetAt);
@@ -178,6 +243,11 @@ function formatResetTooltip(resetAt) {
         if (isNaN(date.getTime())) return null;
 
         const diffHours = (date - now) / (1000 * 60 * 60);
+
+        // Don't show tooltip if <24h away - card already shows "Resets at 10:43"
+        if (diffHours < 24) {
+            return null;
+        }
 
         // Format time locale-aware (12h or 24h based on browser locale)
         const timeStr = date.toLocaleTimeString(undefined, {
@@ -193,11 +263,7 @@ function formatResetTooltip(resetAt) {
         });
 
         // If > 24h away, include date
-        if (diffHours >= 24) {
-            return `Resets at ${timeStr} on ${dateStr}`;
-        } else {
-            return `Resets at ${timeStr}`;
-        }
+        return `Resets at ${timeStr} on ${dateStr}`;
     } catch (e) {
         return null;
     }
@@ -406,16 +472,17 @@ export function buildCard(item) {
     // For unlimited plans, add unit label next to infinity
     const unitLabel = isUnlimited ? `<span class="text-sm font-medium text-zinc-500 ml-2">${escapeHTML(item.unit || 'Unlimited')}</span>` : '';
 
-    // Build reset element with tooltip
+    // Build reset element with tooltip (use reset_at for consistent timezone handling)
+    const resetDisplay = formatResetDisplay(item.reset_at);
     const resetTooltip = formatResetTooltip(item.reset_at);
     const resetElement = resetTooltip ? `
         <div class="tooltip-container">
             <span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono cursor-help">
-                ${escapeHTML(item.reset)}
+                ${escapeHTML(resetDisplay)}
             </span>
             <div class="tooltip">${resetTooltip}</div>
         </div>
-    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(item.reset)}</span>`;
+    ` : `<span class="text-xs font-semibold text-zinc-400 bg-zinc-800/60 px-2 py-1 rounded-md mono">${escapeHTML(resetDisplay)}</span>`;
 
     return `
         <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl p-5 relative flex flex-col gap-3 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service)}">

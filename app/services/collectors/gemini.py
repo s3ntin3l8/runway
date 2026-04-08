@@ -255,19 +255,17 @@ class GeminiCollector(BaseCollector):
                 percent_remaining = int(remaining_fraction * 100)
                 percent_used = 100 - percent_remaining
                 
-                # Format reset time
-                reset_str = "Resetting..."
+                # Parse reset time
                 reset_at = None
+                reset_dt = None
                 if "resetTime" in bucket:
                     reset_time = bucket["resetTime"]
                     try:
-                        # Parse ISO-8601 and show time only
-                        reset_str = f"Resets at {reset_time.split('T')[-1][:5]}"
-                        # Parse for reset_at timestamp
+                        # Parse for reset_at timestamp (frontend will format display)
                         reset_dt = datetime.fromisoformat(reset_time.replace('Z', '+00:00'))
                         reset_at = reset_dt.isoformat()
                     except:
-                        reset_str = f"Resets {reset_time}"
+                        pass
 
                 # Determine health based on % used (not remaining)
                 if percent_used < 50:
@@ -285,7 +283,7 @@ class GeminiCollector(BaseCollector):
                     "icon": "🔵",
                     "remaining": f"{percent_used}%",
                     "unit": "used",
-                    "reset": reset_str,
+                    "reset": reset_at,  # Frontend will format this ISO timestamp
                     "health": health,
                     "pace": pace,
                     "detail": f"{percent_remaining}% remaining | Model: {model_id}",

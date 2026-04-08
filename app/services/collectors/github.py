@@ -147,7 +147,7 @@ class GitHubCollector(BaseCollector):
                                 "icon": "🐙",
                                 "remaining": f"{val:,}",
                                 "unit": "remaining",
-                                "reset": human_delta(reset_at),
+                                "reset": reset_at.isoformat() if reset_at else None,  # Frontend will format
                                 "health": "good" if val > 10 else "warning",
                                 "pace": pace,
                                 "detail": f"{val} requests left [Free/Limited Tier]",
@@ -187,7 +187,7 @@ class GitHubCollector(BaseCollector):
                                 "icon": "🐙",
                                 "remaining": f"{val:,}",
                                 "unit": f"/ {monthly_val:,}",
-                                "reset": human_delta(reset_at),
+                                "reset": reset_at.isoformat() if reset_at else None,  # Frontend will format
                                 "health": "good" if val > (monthly_val * 0.3 if isinstance(monthly_val, int) else 10) else "warning" if val > (monthly_val * 0.1 if isinstance(monthly_val, int) else 5) else "critical",
                                 "pace": pace,
                                 "detail": f"{val}/{monthly_val} requests left • Free Tier",

@@ -210,7 +210,7 @@ class OpenCodeCollector(BaseCollector):
                 "icon": "⚡",
                 "remaining": f"${remaining:.2f}",
                 "unit": f"${limit:.0f} limit",
-                "reset": human_delta(reset_at),
+                "reset": "Rolling 5h",
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                 "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
@@ -219,7 +219,7 @@ class OpenCodeCollector(BaseCollector):
                 "is_unlimited": False,
                 "unit_type": "currency",
                 "currency": "USD",
-                "reset_at": reset_at.isoformat() if reset_at else None,
+                "reset_at": None,  # Rolling window has no fixed reset time
                 "data_source": "web_api",
                 "usage_url": usage_url,
                 "updated_at": now,
@@ -241,11 +241,11 @@ class OpenCodeCollector(BaseCollector):
             reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
 
             cards.append({
-                "service": "OpenCode (Weekly)",
+                "service": "OpenCode (7d)",
                 "icon": "⚡",
                 "remaining": f"${remaining:.2f}",
                 "unit": f"${limit:.0f} limit",
-                "reset": human_delta(reset_at),
+                "reset": "Rolling 7d",
                 "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                 "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                 "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
@@ -254,7 +254,7 @@ class OpenCodeCollector(BaseCollector):
                 "is_unlimited": False,
                 "unit_type": "currency",
                 "currency": "USD",
-                "reset_at": reset_at.isoformat() if reset_at else None,
+                "reset_at": None,  # Rolling window has no fixed reset time
                 "data_source": "web_api",
                 "usage_url": usage_url,
                 "updated_at": now,
@@ -315,11 +315,11 @@ class OpenCodeCollector(BaseCollector):
                     remaining = max(0, limit - used)
                     pct = (used / limit * 100) if limit > 0 else 0
                     
-                    # Format window label
+                    # Format window label for display
                     window_labels = {
-                        "5h": "5 Hours",
-                        "week": "7 Days", 
-                        "month": "30 Days"
+                        "5h": "5h",
+                        "week": "7d", 
+                        "month": "30d"
                     }
                     
                     cards.append({
@@ -327,7 +327,7 @@ class OpenCodeCollector(BaseCollector):
                         "icon": "⚡",
                         "remaining": f"${remaining:.2f}",
                         "unit": f"${limit:.0f} limit",
-                        "reset": f"Rolling {window}",
+                        "reset": f"Rolling {window_labels[window]}",
                         "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                         "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                         "detail": f"${used:.2f} used · {count} msgs · Local DB",
