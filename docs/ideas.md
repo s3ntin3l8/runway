@@ -175,4 +175,116 @@ Implement detection and rendering for paid credits (`extra_usage` field in OAuth
 
 ---
 
+## Collector-Specific Ideas (from docs migration)
+
+### Claude
+
+#### CLI PTY Parsing (5th Tier Fallback)
+**Status**: Not implemented
+**File**: `app/services/collectors/anthropic.py`
+
+Spawn `claude` CLI in a PTY and parse `/usage` output. Would slot as 4th tier (before error cards):
+```
+OAuth API → Web API → Local Logs → CLI PTY → Error Cards
+```
+
+| Aspect | CLI PTY |
+|--------|---------|
+| **Requires** | CLI binary |
+| **Data Quality** | Complete (same as OAuth) |
+| **Speed** | Slow (process spawn) |
+| **Reliability** | Low (fragile parsing) |
+
+#### Alternative Endpoint: v1/rate_limits
+**Endpoint**: `https://api.anthropic.com/v1/rate_limits`
+
+Simpler data structure (single window vs per-window). Could add as fallback between OAuth and Web API:
+```
+OAuth API → v1/rate_limits → Web API → Local Logs → Error
+```
+
+#### Firefox/Safari Cookie Support
+Extend `chrome_cookies.py` to support Firefox (`cookies.sqlite`), Safari (`Cookies.binarycookies`), and Edge.
+
+#### Windows Credential Store
+Add Windows Credential Manager support for sidecar token extraction (currently macOS Keychain only).
+
+---
+
+### Gemini
+
+#### CLI `/stats` Parsing (Tertiary Fallback)
+Parse `gemini /stats` CLI output for quota percentages. Would slot between OAuth API and session logs:
+```
+OAuth API → CLI /stats (quota %) → Session Logs (token counts)
+```
+
+| Aspect | CLI /stats |
+|--------|------------|
+| **Requires** | gemini CLI binary |
+| **Data Quality** | Quota % visible |
+| **Speed** | Slow (subprocess) |
+| **Reliability** | Low (fragile parsing) |
+
+---
+
+### GitHub Copilot
+
+#### OAuth Device Flow
+Already tracked in High Priority section above.
+
+---
+
+### ChatGPT
+
+#### Web Dashboard Scraping
+Already tracked in High Priority section above.
+
+---
+
+### OpenCode
+
+#### Direct API Key Authentication
+**Status**: Deprecated
+
+OpenCode previously supported `OPENCODE_GO_API_KEY` for direct API access, but endpoints (`api.opencode.ai/v1/user/usage`) now return 404. Continue using Chrome cookie authentication.
+
+---
+
+### Kimi API
+
+#### Usage History API
+Query usage history for daily/monthly spend tracking, model-specific breakdown, cost per 1K tokens.
+
+#### Tier Detection
+Show current pricing tier if Moonshot introduces tiers (currently single tier).
+
+---
+
+### Antigravity
+
+#### File Watching
+Use `watchdog` or `inotify` to watch for quota file changes instead of polling.
+
+#### API Fallback
+If Antigravity exposes an API, add as fallback to file-based collection.
+
+#### LSP Protocol Approach
+**Reference**: [CodexBar Implementation](https://github.com/steipete/CodexBar/blob/main/docs/antigravity.md)
+
+Use active LSP protocol instead of passive file reading:
+1. Detect `language_server_macos` process with Antigravity markers
+2. Probe listening ports with HTTPS POST to `/GetUnleashData`
+3. Call `GetUserStatus` endpoint with CSRF token
+
+| Aspect | File-Based (Current) | LSP Protocol |
+|--------|---------------------|--------------|
+| **Requires** | File permission | Process + port scan |
+| **Reliability** | IDE-dependent | Real-time |
+| **Complexity** | Low | High |
+
+**Priority**: Low-Medium
+
+---
+
 *Last updated: 2026-04-08*
