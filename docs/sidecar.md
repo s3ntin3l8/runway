@@ -1,276 +1,101 @@
 # Universal Sidecar Collector
 
-The **Runway Sidecar** is a lightweight, zero-dependency Python script designed to collect AI usage metrics directly from your host machine and push them to a Runway instance (e.g., running in Docker).
+The **Runway Sidecar** is a lightweight, zero-dependency Python script that collects AI usage metrics from your host machine and pushes them to a Runway instance.
 
-## 🚀 One-Liner Setup
-
-Run the following command on your host machine to set up the sidecar as a recurring background task:
+## Quick Start
 
 ```bash
+# Install as recurring background task
 python3 scripts/sidecar.py --install
+
+# Test without pushing
+python3 scripts/sidecar.py --dry-run
+
+# Test specific provider
+python3 scripts/sidecar.py --provider anthropic --dry-run
 ```
 
-The script will interactively ask for your **Runway API URL** and **Ingestion API Key**.
+## Features
 
-## 🛠 Features
+- **Zero Dependencies:** Uses only Python Standard Library (`urllib`)
+- **Cross-Platform:** Works on macOS (crontab), Linux (crontab), Windows (Task Scheduler)
+- **10 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenCode, zAI, Kimi, Antigravity
+- **HMAC-SHA256 Signing:** Secure payload verification
 
-- **Zero Dependencies:** Uses only the Python Standard Library (`urllib`). No `pip install` required.
-- **Multi-Provider Support:** Collects from 10 different AI providers
-- **Cross-Platform:** Works on **macOS, Linux (Crontab)** and **Windows (Task Scheduler)**.
-- **Auto-Installer:** Built-in task registration logic.
-
-### Supported Providers
+## Supported Providers
 
 | Provider | Data Source | Required Environment |
 |----------|-------------|---------------------|
-| **Claude (Anthropic)** | OAuth API | `CLAUDE_CODE_OAUTH_TOKEN` or `~/.claude/.credentials.json` |
-| **GitHub Copilot** | GitHub API | `GITHUB_TOKEN` |
-| **Gemini** | OAuth API + Local logs | `GEMINI_OAUTH_CLIENT_ID/SECRET` or `~/.gemini/oauth_creds.json` |
-| **ChatGPT** | Web API + Local logs | `CHATGPT_OAUTH_TOKEN` or `~/.codex/auth.json` |
-| **OpenCode** | Local SQLite DB | `~/.local/share/opencode/opencode.db` |
-| **zAI API** | Balance API | `ZAI_API_KEY` |
-| **zAI Plan** | Quota API | `ZAI_API_KEY` |
-| **Kimi API** | Balance API | `KIMI_API_KEY` |
-| **Kimi Coding** | IDE Quotas | `KIMI_AUTH_TOKEN` or Chrome cookie |
-| **Antigravity** | Local JSON file | `~/.antigravity/state/quota.json` |
+| **Claude** | OAuth token | `CLAUDE_CODE_OAUTH_TOKEN` or `~/.claude/.credentials.json` or macOS keychain |
+| **GitHub Copilot** | API token | `GITHUB_TOKEN` |
+| **Gemini** | OAuth + logs | `~/.gemini/oauth_creds.json` |
+| **ChatGPT** | OAuth + logs | `~/.codex/auth.json` |
+| **OpenCode** | SQLite DB | `~/.local/share/opencode/opencode.db` or Chrome cookie |
+| **zAI API/Plan** | API key | `ZAI_API_KEY` |
+| **Kimi API** | API key | `KIMI_API_KEY` |
+| **Kimi Coding** | JWT/cookie | `KIMI_AUTH_TOKEN` or Chrome cookie |
+| **Antigravity** | JSON file | `~/.antigravity/state/quota.json` |
 
-## 📖 Usage Options
-
-### Manual Test (Dry Run)
-
-Check what metrics are being collected without pushing them to the API:
-
-```bash
-python3 scripts/sidecar.py --dry-run
-```
-
-Test a specific provider:
-```bash
-python3 scripts/sidecar.py --provider anthropic --dry-run
-python3 scripts/sidecar.py --provider zai_api --dry-run
-python3 scripts/sidecar.py --provider zai_plan --dry-run
-python3 scripts/sidecar.py --provider kimi_api --dry-run
-python3 scripts/sidecar.py --provider kimi_coding --dry-run
-```
+## Usage
 
 ### Manual Push
 
-Push metrics manually to a specific Runway instance:
-
 ```bash
-python3 scripts/sidecar.py --api-url http://localhost:8765 --api-key <secret>
+python3 scripts/sidecar.py \
+  --api-url http://runway-server:8765 \
+  --api-key your-secret-key
 ```
 
-### Filtering Providers
-
-Only collect metrics for a specific provider:
+### Filter by Provider
 
 ```bash
-# Claude (Anthropic)
 python3 scripts/sidecar.py --provider anthropic --dry-run
-
-# GitHub Copilot
 python3 scripts/sidecar.py --provider github --dry-run
-
-# Google Gemini
-python3 scripts/sidecar.py --provider gemini --dry-run
-
-# ChatGPT Codex
-python3 scripts/sidecar.py --provider chatgpt --dry-run
-
-# OpenCode
-python3 scripts/sidecar.py --provider opencode --dry-run
-
-# zAI API (Balance)
-python3 scripts/sidecar.py --provider zai_api --dry-run
-
-# zAI Plan (Quota)
-python3 scripts/sidecar.py --provider zai_plan --dry-run
-
-# Kimi API (Balance)
-python3 scripts/sidecar.py --provider kimi_api --dry-run
-
-# Kimi Coding (IDE)
-python3 scripts/sidecar.py --provider kimi_coding --dry-run
-
-# Antigravity IDE
-python3 scripts/sidecar.py --provider antigravity --dry-run
-
-# All providers (default)
-python3 scripts/sidecar.py --provider all --dry-run
+python3 scripts/sidecar.py --provider all --dry-run  # default
 ```
 
-## 🐳 Deployment Modes
+## Deployment Modes
 
-### Standalone (Single Machine)
-
-When Runway runs on the same machine as your coding tools, you typically don't need a sidecar. However, you can still use it to:
-- Test collection without running the full app
-- Collect metrics from isolated environments
-
+### Standalone
+Runway and sidecar on same machine (optional):
 ```bash
 python3 scripts/sidecar.py --dry-run
 ```
 
-### Multi-Host (Main PC + Laptop)
-
-**Main PC** (runs full Runway app):
+### Multi-Host
+Main PC runs Runway, laptops send data:
 ```bash
-python3 -m app.main
-```
-
-**Laptop** (sidecar only):
-```bash
+# On laptop
 python3 scripts/sidecar.py \
   --api-url http://main-pc:8765 \
   --api-key sidecar-default-secret
 ```
 
-The main PC combines its own local data with data from the laptop's sidecar.
-
-### Server/Docker (Containerized)
-
-**Server** (Docker - no local file access):
+### Docker
+Runway in container, workstations send data:
 ```bash
-docker run -p 8765:8765 \
-  -e INGEST_API_KEY=your-secret-key \
-  runway
-```
+# Server
+docker run -p 8765:8765 -e INGEST_API_KEY=secret runway
 
-**Each Workstation** (sidecar required):
-```bash
+# Each workstation
 python3 scripts/sidecar.py \
   --api-url http://server:8765 \
-  --api-key your-secret-key
+  --api-key secret
 ```
 
-The server aggregates data from ALL workstation sidecars. Heavy lifting (API calls, aggregation) happens server-side.
+See [Deployment Modes Guide](deployment-modes.md) for complete setup.
 
-## ⚙️ Configuration
+## Configuration
 
-### Environment Variables
-
-The sidecar reads the following environment variables:
-
+Environment variables (same as main app):
 ```bash
-# GitHub Copilot
 export GITHUB_TOKEN="github_pat_..."
-
-# zAI API & Plan (GLM)
 export ZAI_API_KEY="sk-..."
-
-# Kimi API (Balance)
 export KIMI_API_KEY="sk-proj-..."
-
-# Kimi Coding (IDE)
 export KIMI_AUTH_TOKEN="eyJhbG..."
-
-# Claude (optional, will try keychain/file first)
-export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-..."
-
-# ChatGPT (optional, will try auth file first)
-export CHATGPT_OAUTH_TOKEN="..."
 ```
 
-### Platform-Specific Notes
-
-#### macOS
-- Supports Keychain token extraction for Claude
-- Uses `crontab` for scheduling
-- Chrome cookies accessible for OpenCode/ChatGPT
-
-#### Linux
-- Uses `crontab` for scheduling
-- Chrome cookies accessible (if using standard paths)
-
-#### Windows
-- Uses Task Scheduler for background tasks
-- Chrome cookies accessible
-- Run with `python` (not `python3`) in Task Scheduler
-
-## 🔧 Troubleshooting
-
-### Sidecar not collecting data
-
-**Check provider-specific setup:**
-```bash
-# Test specific provider
-python3 scripts/sidecar.py --provider anthropic --dry-run
-
-# Check environment variables
-env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
-```
-
-### Push failures
-
-**Verify API connectivity:**
-The sidecar uses HMAC-SHA256 signing. Manual `curl` requires pre-calculating the signature:
-```bash
-# Example showing expected headers
-curl -X POST http://localhost:8765/api/ingest \
-  -H "Content-Type: application/json" \
-  -H "X-Signature: <hmac-sha256-hex>" \
-  -H "X-Timestamp: <unix-timestamp>" \
-  -d '{"provider":"test","metrics":[]}'
-```
-
-### Installation issues
-
-**Check existing cron tasks:**
-```bash
-crontab -l | grep sidecar
-```
-
-**Check Task Scheduler (Windows):**
-```powershell
-schtasks /query /tn "RunwaySidecar"
-```
-
-## 📝 Provider-Specific Setup
-
-### Claude (Anthropic)
-
-The sidecar tries these authentication methods in order:
-1. `CLAUDE_CODE_OAUTH_TOKEN` environment variable
-2. `~/.claude/.credentials.json` file
-3. macOS Keychain (on macOS only)
-
-### OpenCode
-
-Requires the local SQLite database:
-- **Linux/macOS**: `~/.local/share/opencode/opencode.db`
-- **Windows**: `%LOCALAPPDATA%\opencode\opencode.db`
-
-Or extract Chrome session cookie if logged into opencode.ai.
-
-### Antigravity
-
-Reads from the IDE's quota export file:
-- **All platforms**: `~/.antigravity/state/quota.json`
-
-Ensure Antigravity IDE is running and has written the quota file.
-
----
-
-## 🔐 Token Transmission Architecture
-
-### Overview
-
-Runway uses a **hybrid token architecture** where the server does all API calls, but can use tokens extracted by sidecars from other machines:
-
-**Server Responsibilities:**
-- Makes ALL API calls (OAuth, Web API, direct API)
-- Aggregates data from multiple sources
-- Serves the dashboard
-
-**Sidecar Responsibilities:**
-- Extracts tokens/cookies from local files (keychain, browser cookies, config files)
-- Reads local-only data files (SQLite, JSON logs)
-- Signs payload with `INGEST_API_KEY` using HMAC-SHA256
-- Sends tokens to server via `/api/ingest`
-- Does NOT make API calls
-
-### Token Flow
+## Token Transmission Architecture
 
 ```
 ┌──────────────┐     Signed       ┌──────────────┐
@@ -279,43 +104,59 @@ Runway uses a **hybrid token architecture** where the server does all API calls,
 │              │                  │              │
 │ • Files      │ ───────────────► │ • Signature  │
 │ • Keychain   │     POST         │   Verification
-│ • Cookies    │   /api/ingest    │ • Token Cache│
+│ • Cookies    │   /api/ingest    │ • API Calls  │
 └──────────────┘                  └──────────────┘
 ```
 
-1. Sidecar extracts tokens from local sources (every 30 minutes via cron)
-2. Sidecar sends tokens to server via `/api/ingest` endpoint
-3. Server stores tokens in **in-memory cache** (30-minute TTL)
-4. Server uses tokens to make API calls on behalf of the sidecar
-5. Results are displayed with `data_source` indicating the API type used
+**Flow:**
+1. Sidecar extracts tokens from local files/keychain (every 30 min via cron)
+2. Signs payload with `INGEST_API_KEY` using HMAC-SHA256
+3. Sends to server via `POST /api/ingest`
+4. Server verifies signature, stores tokens in memory cache (30-min TTL)
+5. Server makes API calls using cached tokens
 
-### Token Storage
+**Security:**
+- Tokens stored in memory only (no disk persistence)
+- Lost on server restart, refreshed by sidecar on next run
+- Server does all API calls, sidecar only extracts/pushes
 
-- **Memory-only**: Tokens stored in `app.services.token_cache` (30-min TTL)
-- **Stateless**: Lost on server restart, refreshed by sidecar on next run
-- **Security**: Tokens never persisted to disk
-
-### Data Source Values
+## Data Source Values
 
 | Value | Meaning | Set By |
 |-------|---------|--------|
-| `oauth` | OAuth API call (e.g., api.anthropic.com) | Server |
-| `web_api` | Cookie-based web scraping | Server |
-| `api` | Direct API call with key | Server |
-| `local` | Local file reading (DB, logs) | Server or Sidecar |
-| `cache` | Cached/stored data | Server or Sidecar |
-| `sidecar` | Data pushed from sidecar | Sidecar |
+| `oauth` | OAuth API call | Server |
+| `web_api` | Cookie-based scraping | Server |
+| `api` | Direct API call | Server |
+| `local` | Local file reading | Server or Sidecar |
+| `sidecar` | Data from sidecar | Sidecar |
 
-### Token Priority (Per Provider)
+## Troubleshooting
 
-1. Environment variables (server local)
-2. Token cache from sidecar (if available)
-3. Server local files/cookies
-4. Sidecar local data (via external_metrics)
-5. Fallback to logs
+### Sidecar not collecting
+```bash
+# Test specific provider
+python3 scripts/sidecar.py --provider anthropic --dry-run
+
+# Check env vars
+env | grep -E "(GITHUB|ZAI|KIMI)"
+```
+
+### Push failures
+- Verify API URL is reachable: `curl http://server:8765/api/health`
+- Check `INGEST_API_KEY` matches on server and sidecar
+- Ensure HMAC signature is valid (auto-generated by sidecar)
+
+### Installation issues
+```bash
+# Check cron (macOS/Linux)
+crontab -l | grep sidecar
+
+# Check Task Scheduler (Windows)
+schtasks /query /tn "RunwaySidecar"
+```
 
 ---
 
-*See individual collector docs in `docs/collectors/` for more details.*
+See [Collector Docs](../docs/collectors/) for provider-specific setup details.
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-08*
