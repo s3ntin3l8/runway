@@ -36,7 +36,7 @@ The GitHub Copilot collector retrieves quota information for GitHub Copilot, sup
 
 **Headers (VS Code Mimicking):**
 
-The collector mimics VS Code Copilot extension headers as suggested by CodexBar:
+The collector mimics VS Code Copilot extension headers:
 
 ```python
 headers = {
@@ -422,7 +422,6 @@ while True:
 
 - **GitHub Copilot API:** Internal/undocumented endpoints
 - **GitHub OAuth:** https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow
-- **CodexBar:** `docs/competitors.md` (Section: GitHub provider)
 
 ---
 

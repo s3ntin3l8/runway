@@ -1,164 +1,12 @@
 # Future Ideas & Improvements
 
-This document tracks planned enhancements for Runway, organized by category and priority.
+This document tracks planned enhancements for Runway, organized by category and priority. Items that have been implemented are periodically removed to keep this document focused and actionable.
 
 ---
 
-## Frontend
+## High Priority
 
-### High Priority
-
-#### 1. Frontend Error Messages Enhancement
-**File**: `frontend/js/app.js:49-66`  
-**Severity**: High  
-**Effort**: 1-2 hours
-
-**Current Issue**:
-- Generic catch block doesn't log error details
-- Error banner doesn't show error message to user
-- No way to distinguish between network, server, or parsing errors
-
-**Suggested Implementation**:
-```javascript
-} catch (err) {
-    console.error('Failed to fetch limits:', err);
-    const errorMsg = err.message || 'Unknown error';
-    errorBanner.textContent = `> Error: ${errorMsg}`;
-    errorBanner.classList.remove('hidden');
-    
-    // Log error type for debugging
-    if (err instanceof TypeError) {
-        console.debug('Network error detected');
-    } else if (err instanceof SyntaxError) {
-        console.debug('JSON parsing error detected');
-    }
-}
-```
-
-**Benefits**:
-- Better user experience (see actual errors)
-- Easier debugging for users reporting issues
-- Can identify patterns in failures
-
----
-
-#### 2. Frontend Type Safety (JSDoc Annotations)
-**Files**: `frontend/js/*.js`  
-**Severity**: High  
-**Effort**: 3-4 hours
-
-**Current Issue**: Pure JavaScript with no type hints
-
-**Suggested Implementation**:
-```javascript
-/**
- * Fetch all limits from backend
- * @returns {Promise<{limits: Array<LimitCard>}>}
- */
-export async function fetchLimits() { ... }
-
-/**
- * Render a single limit card
- * @param {LimitCard} card - The card data to render
- * @returns {HTMLElement} The rendered DOM element
- */
-function renderCard(card) { ... }
-
-/**
- * @typedef {Object} LimitCard
- * @property {string} service - Service name
- * @property {string} icon - Emoji icon
- * @property {string} remaining - Remaining capacity
- * @property {string} unit - Unit of measurement
- * @property {string} reset - Human-readable reset time
- * @property {string} health - "good" | "warning" | "critical"
- * @property {string} pace - Burn rate descriptor
- * @property {string} detail - Additional details
- */
-```
-
-**Benefits**:
-- IDE autocompletion in VSCode
-- Catches type errors early
-- Better documentation for contributors
-- No build step required (native JS)
-
----
-
-### Medium Priority
-
-#### 3. Dashboard Auto-Refresh UI Toggle
-**File**: `frontend/index.html` + `frontend/js/app.js`  
-**Severity**: Medium  
-**Effort**: 2-3 hours
-
-**Current Issue**: Dashboard doesn't auto-refresh, static view
-
-**Suggested Implementation**:
-```javascript
-class DashboardManager {
-    constructor() {
-        this.refreshInterval = null;
-        this.autoRefreshEnabled = localStorage.getItem('autoRefresh') === 'true';
-        this.refreshRate = parseInt(localStorage.getItem('refreshRate')) || 60000; // 60s default
-    }
-    
-    startAutoRefresh() {
-        if (this.refreshInterval) return;
-        
-        this.refreshInterval = setInterval(() => {
-            this.fetchAndRender();
-        }, this.refreshRate);
-    }
-    
-    stopAutoRefresh() {
-        if (this.refreshInterval) {
-            clearInterval(this.refreshInterval);
-            this.refreshInterval = null;
-        }
-    }
-}
-```
-
-**HTML Changes**:
-```html
-<div class="controls">
-    <label>
-        <input type="checkbox" id="autoRefresh" /> 
-        Auto-refresh
-    </label>
-    <select id="refreshRate">
-        <option value="30000">30s</option>
-        <option value="60000" selected>60s</option>
-        <option value="300000">5m</option>
-    </select>
-</div>
-```
-
-**Benefits**:
-- Real-time feel without constant fetching
-- Configurable refresh rates
-- Saves to localStorage for persistence
-- Respects user preferences
-
----
-
-## Collectors
-
-### High Priority
-
-#### 1. Claude OAuth Token Refreshing
-**File**: `app/services/collectors/anthropic.py`  
-**Severity**: High  
-**Effort**: 4-6 hours
-
-Implement automatic token refreshing via `refreshToken` in `~/.claude/.credentials.json` if the primary `accessToken` is expired (typically expires after a few hours/days). 
-
-**Note**: This would require writing back to the credentials file, which needs careful handling of file permissions and potential race conditions.
-
----
-
-#### 2. GitHub OAuth Device Flow
+### 1. GitHub OAuth Device Flow
 **File**: `app/services/collectors/github.py` + frontend  
 **Severity**: High  
 **Effort**: 6-8 hours
@@ -168,11 +16,7 @@ Replace manual `GITHUB_TOKEN` entry with the official [Device Flow](https://docs
 - Poll for access token in background.
 - Particularly useful for headless/Docker environments where browser redirects are difficult.
 
-**Related**: Inspired by `CodexBar` - see `docs/competitors.md` for reference.
-
----
-
-#### 3. ChatGPT Web Dashboard Scraping
+### 2. ChatGPT Web Dashboard Scraping
 **File**: `app/services/collectors/chatgpt.py` (new)  
 **Severity**: High  
 **Effort**: 1-2 days
@@ -180,731 +24,145 @@ Replace manual `GITHUB_TOKEN` entry with the official [Device Flow](https://docs
 Implement optional scraping of `https://chatgpt.com/codex/settings/usage` to get rate limits, credits, and detailed usage charts.
 - Support manual `Cookie:` header input for headless environments.
 - Support automatic cookie extraction from Safari/Chrome/Firefox on macOS (experimental).
-- *Inspiration: CodexBar's web scraping path.*
 
 ---
 
-### Medium Priority
+## Medium Priority
 
-#### 4. Multi-Browser Cookie Support (All Collectors)
+### 1. Dashboard Auto-Refresh UI Toggle
+**File**: `frontend/index.html` + `frontend/js/app.js`  
+**Severity**: Medium  
+**Effort**: 2-3 hours
+
+**Current Issue**: Dashboard doesn't auto-refresh, static view.
+
+**Suggested Implementation**:
+Add an "Auto-refresh" toggle with configurable intervals (30s, 60s, 5m). Store preference in `localStorage`.
+
+### 2. Move Away from Hardcoded Limits
+**Files**: `app/services/collectors/*.py`  
+**Severity**: Medium  
+**Effort**: 1-2 days
+
+**Current State**: Some collectors (like Claude local fallback) have hardcoded limits (e.g., 2M tokens).
+
+**Suggested Approach**:
+- Query local IDE config files for plan information.
+- For Anthropic: check `~/.claude/.credentials.json` for subscription tier.
+- Store limits in config, not in code.
+
+### 3. Multi-Browser Cookie Support
 **Files**: `app/core/chrome_cookies.py`, `app/services/collectors/*.py`  
 **Severity**: Medium  
 **Effort**: 4-6 hours
 
-Currently only Chrome is supported for automatic cookie extraction across all collectors (Claude, OpenCode). Add support for:
+Currently only Chrome is supported for automatic cookie extraction. Add support for:
+- **Firefox** (`cookies.sqlite`)
+- **Safari** (`Cookies.binarycookies`, macOS only)
+- **Edge** (similar to Chrome)
 
-**Firefox** (`~/.mozilla/firefox/*/cookies.sqlite`):
-- SQLite database format
-- May be encrypted (requires NSS library on some platforms)
-
-**Safari** (`~/Library/Cookies/Cookies.binarycookies`):
-- Binary plist format
-- Different encryption than Chrome
-- macOS only
-
-**Edge** (Chromium-based):
-- Similar to Chrome, different profile paths
-- `~/.config/microsoft-edge/Default/Cookies` on Linux
-- `~/Library/Application Support/Microsoft Edge/Default/Cookies` on macOS
-
-**Priority**: Low (Chrome covers 80%+ of users)
-
-**Related**: See `docs/collectors/claude.md` and `docs/collectors/opencode.md` for current Chrome-only implementations.
-
----
-
-#### 5. Missing Docstrings in Collectors
-**Files**: `app/services/collectors/*.py`  
-**Severity**: Medium  
-**Effort**: 2-3 hours
-
-**Current Gap**: No docstrings explaining collection strategy
-
-**Suggested Pattern**:
-```python
-class AnthropicCollector(BaseCollector):
-    """
-    Collects Claude Pro usage limits using a 3-tier strategy.
-    
-    Strategy:
-    1. Try OAuth API if CLAUDE_CODE_OAUTH_TOKEN is available
-       - Fetches real-time usage from Anthropic's OAuth endpoint
-       - Returns multiple quotas (5h, 7d windows)
-    2. Fallback to local log parsing (~/.claude/projects)
-       - Scans .jsonl files from last 5 hours
-       - Counts input/output tokens manually
-    3. Return error card if both fail
-    
-    Caching:
-    - OAuth results cached for 10 minutes to avoid rate limits
-    - Local logs read fresh on every request
-    
-    Raises:
-    - Returns error cards instead of raising exceptions
-    """
-    
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect Claude usage limits.
-        
-        Args:
-            client: AsyncHTTP client for making requests
-        
-        Returns:
-            List of limit card dictionaries or error card
-        """
-```
-
-**Benefits**:
-- Onboarding new contributors becomes easier
-- Helps future maintainers understand design decisions
-- Can be extracted for API docs
-
----
-
-## Architecture & Backend
-
-### High Priority
-
-#### 1. Add Unit Tests & Integration Tests
-**Directory**: `tests/`  
-**Severity**: High  
-**Effort**: 1-2 days
-
-**Current Gap**: Zero test coverage
-
-**Suggested Structure**:
-```
-tests/
-├── unit/
-│   ├── test_collectors.py          # Test each collector in isolation
-│   ├── test_config.py              # Test configuration loading
-│   ├── test_utils.py               # Test PaceCalculator, retry logic, etc.
-│   └── test_schemas.py             # Test Pydantic models
-├── integration/
-│   ├── test_endpoints.py           # Test API endpoints
-│   ├── test_collector_manager.py   # Test orchestration
-│   └── conftest.py                 # Shared fixtures
-└── fixtures/
-    └── mock_responses.json         # Mock API responses
-```
-
-**Key Tests to Add**:
-- Collector error scenarios (API down, invalid tokens, malformed data)
-- Timeout handling (verify collectors fail gracefully)
-- Rate limit retry logic (verify exponential backoff)
-- External metrics ingestion
-- Concurrent collector execution
-
-**Testing Framework**: `pytest` + `pytest-asyncio` for async tests
-
----
-
-### Medium Priority
-
-#### 2. Response Caching Strategy
-**File**: `app/services/collector_manager.py`  
-**Severity**: Medium  
-**Effort**: 4-6 hours
-
-**Current Issue**: All collectors run on every request to `/api/limits`
-
-**Suggested Implementation**:
-```python
-class CollectorManager:
-    def __init__(self):
-        self.collectors = [...]
-        self._cache = {}
-        self._cache_times = {}
-        self._cache_ttl = {
-            'anthropic': 600,      # 10 min (OAuth rate limit safety)
-            'gemini': 300,         # 5 min (frequent resets)
-            'github': 900,         # 15 min (stable)
-            'opencode': 1800,      # 30 min (rarely changes)
-            # ...
-        }
-    
-    async def collect_all(self) -> List[Dict[str, Any]]:
-        """Collect with per-collector TTL caching."""
-        results = {}
-        now = time.time()
-        
-        for name, collector in zip(collector_names, self.collectors):
-            if name in self._cache:
-                age = now - self._cache_times[name]
-                if age < self._cache_ttl.get(name, 300):
-                    results[name] = self._cache[name]
-                    continue
-            
-            # Collect fresh data
-            data = await collector.collect(client)
-            self._cache[name] = data
-            self._cache_times[name] = now
-            results[name] = data
-```
-
-**Benefits**:
-- Reduced API calls during heavy dashboard usage
-- Respects provider rate limits better
-- Frontend can show "cached X seconds ago" badge
-- Faster dashboard load times
-
----
-
-#### 3. Implement Strategy Pattern for Collectors
-**Files**: `app/services/collectors/*.py`  
-**Severity**: Medium  
-**Effort**: 2-3 hours
-
-All collectors inherit from `BaseCollector` but could benefit from consistent interface:
-
-```python
-class BaseCollector(ABC):
-    """Base class with consistent strategy pattern."""
-    
-    @abstractmethod
-    async def _primary_strategy(self) -> Optional[List[Dict]]:
-        """Try primary data source (API)."""
-        pass
-    
-    @abstractmethod
-    async def _fallback_strategy(self) -> Optional[List[Dict]]:
-        """Try fallback source (logs)."""
-        pass
-    
-    @abstractmethod
-    async def _error_handler(self, error: Exception) -> List[Dict]:
-        """Return appropriate error card."""
-        pass
-```
-
----
-
-#### 4. Error Card Categorization
+### 4. Error Card Categorization (Field Addition)
 **File**: `app/core/utils.py`  
 **Severity**: Medium  
 **Effort**: 2-3 hours
 
-**Current Issue**: All errors look the same, hard to diagnose
+**Current Issue**: All errors look identical.
 
-**Suggested Implementation**:
-```python
-def error_card(service: str, icon: str, message: str, error_type: str = "unknown"):
-    """
-    Create an error card with categorized error types.
-    
-    error_type options:
-    - "missing_config": Missing .env variable or credential file
-    - "auth_failed": Invalid token or authentication issue
-    - "rate_limited": API rate limit (429)
-    - "timeout": Request timed out
-    - "parse_error": Invalid response format
-    - "api_error": Generic API error
-    - "unknown": Unknown error
-    """
-    error_colors = {
-        "missing_config": "🟡",  # Yellow
-        "auth_failed": "🔴",      # Red
-        "rate_limited": "🟠",     # Orange
-        "timeout": "⏱️",          # Timeout symbol
-        "parse_error": "⚠️",      # Warning
-        "api_error": "❌",         # Error
-        "unknown": "❓",          # Question mark
-    }
-    
-    return {
-        "service": service,
-        "icon": error_colors.get(error_type, icon),
-        "remaining": "ERR",
-        "error_type": error_type,  # New field for frontend
-        "detail": message,
-        "health": "critical",
-    }
-```
-
-**Benefits**:
-- Frontend can style different error types differently
-- Easier to spot patterns ("most failures are auth")
-- Users can self-diagnose issues
-
----
-
-#### 5. Move Away from Hardcoded Limits
-**Files**: `app/services/collectors/*.py`  
-**Severity**: Medium  
-**Effort**: 1-2 days
-
-**Current State**: Claude limit hardcoded to 2,000,000 tokens
-
-**Suggested Approach**:
-- Query local IDE config files for plan information
-- For Anthropic: check `~/.claude/.credentials.json` for subscription tier
-- For Gemini: Use tier detection API endpoint
-- Store limits in config, not in code
-
-**Note**: This is the biggest win from API-first approaches (see `docs/competitors.md`).
-
----
-
-### Low Priority
-
-#### 6. Smart Differential Fetching
-**File**: `app/services/collectors/*.py`  
-**Severity**: Low  
-**Effort**: 2-3 days
-
-**Current Issue**: Collectors run every time, even if nothing changed
-
-**Suggested Pattern**:
-```python
-class SmartCollector(BaseCollector):
-    """Only fetch if last result is stale or errored."""
-    
-    def __init__(self):
-        self.last_result = None
-        self.last_error_count = 0
-        self.error_threshold = 3  # Retry after 3 errors
-    
-    async def collect(self, client: httpx.AsyncClient):
-        # If last collection was recent and successful, skip
-        if self.should_use_cache():
-            return self.last_result
-        
-        # Otherwise fetch fresh
-        try:
-            result = await self._fetch_fresh(client)
-            self.last_error_count = 0
-            self.last_result = result
-            return result
-        except Exception as e:
-            self.last_error_count += 1
-            # Return stale result if we have one, else error card
-            return self.last_result or error_card(...)
-```
-
-**Benefits**:
-- Fewer API calls overall
-- Graceful degradation on failures
-- Reduced latency for end users
-
----
-
-#### 7. Lazy Load Collectors
-**File**: `app/services/collector_manager.py`  
-**Severity**: Low  
-**Effort**: 2-3 hours
-
-Currently all collectors instantiate on startup. Could lazy-load only requested ones based on configuration.
-
----
-
-#### 8. Concurrent Collector Timeout Protection
-**File**: `app/services/collector_manager.py`  
-**Severity**: Low  
-**Effort**: 2-3 hours
-
-Add global timeout across all collectors (not just individual ones):
-
-```python
-async def collect_all_with_timeout(self, timeout: float = 30.0):
-    """Collect with overall timeout."""
-    try:
-        return await asyncio.wait_for(
-            asyncio.gather(...),
-            timeout=timeout
-        )
-    except asyncio.TimeoutError:
-        # Return partial results + error cards for timed-out collectors
-```
+**Suggested Enhancement**:
+Add an `error_type` field to the `error_card()` return dictionary.
+- Types: `missing_config`, `auth_failed`, `rate_limited`, `timeout`, `parse_error`.
+- Update frontend to style these categories differently (e.g., color-coded dots or icons).
 
 ---
 
 ## Sidecar & Ingestion
 
-### Medium Priority
-
-#### 1. Auto-Updating Sidecar
-**File**: `sidecar/`  
-**Severity**: Medium  
-**Effort**: 4-6 hours
-
-Enable the sidecar to self-update by checking against the main Runway server's version or a remote Git repository.
-
----
-
-#### 2. Daemon Mode
-**File**: `sidecar/sidecar.py`  
+### 1. Daemon Mode
+**File**: `scripts/sidecar.py`  
 **Severity**: Medium  
 **Effort**: 2-3 hours
 
 Support a `--daemon` flag to run as a persistent process with a configurable sleep interval, providing more real-time updates than 30m crontab tasks.
 
----
-
-#### 3. Offline Queuing
-**File**: `sidecar/sidecar.py`  
+### 2. Offline Queuing
+**File**: `scripts/sidecar.py`  
 **Severity**: Medium  
 **Effort**: 4-6 hours
 
 If the ingestion API is unreachable, cache collected metrics in a local SQLite/JSON file and retry upon the next successful connection.
 
----
-
-#### 4. Binary Sidecar Distribution
+### 3. Binary Sidecar Distribution
 **File**: `sidecar/` (build scripts)  
 **Severity**: Medium  
 **Effort**: 1-2 days
 
-Distribute the sidecar as a single-binary (using PyInstaller or Go) to avoid Python dependency issues on host machines.
+Distribute the sidecar as a single-binary (using PyInstaller) to avoid Python dependency issues on host machines.
+
+---
+
+## Architecture & Refinement
+
+### 1. Formalize Strategy Pattern
+**File**: `app/services/collectors/base.py`  
+**Severity**: Low  
+**Effort**: 2-3 hours
+
+The 3-tier fallback is described in docstrings but not enforced by the `BaseCollector` interface. Implement formal abstract methods like `_primary_strategy()`, `_fallback_strategy()`, and `_error_handler()` to enforce consistency across new collectors.
+
+### 2. Lazy Load Collectors
+**File**: `app/services/collector_manager.py`  
+**Severity**: Low  
+**Effort**: 2-3 hours
+
+Currently all collectors instantiate on startup. Could lazy-load only requested ones based on configuration to reduce memory footprint and startup time.
+
+### 3. Concurrent Collector Timeout Protection
+**File**: `app/services/collector_manager.py`  
+**Severity**: Low  
+**Effort**: 2-3 hours
+
+Add global timeout across all collectors (not just individual ones) to ensure the API never hangs indefinitely.
 
 ---
 
 ## Documentation
 
-### Low Priority
-
-#### 1. Architecture Decision Records (ADRs)
+### 1. Architecture Decision Records (ADRs)
 **File**: `docs/adr/`  
 **Severity**: Low  
 **Effort**: 1 day
 
 Document key decisions:
-- Why we chose local-first over centralized API
-- Why stateless (no database)
-- Why specific collector fallback strategies
-- Why environment-based credentials
+- Choice of local-first over centralized API.
+- Stateless design (no database).
+- Environment-based credentials.
 
----
-
-#### 2. Troubleshooting Guide
+### 2. Troubleshooting Guide
 **File**: `docs/TROUBLESHOOTING.md`  
 **Severity**: Low  
 **Effort**: 2-3 hours
 
-Guide for common issues:
-- "Why am I getting 'ERR' for Claude?"
-- "How do I update expired tokens?"
-- "Why aren't my logs being recognized?"
-- "What does '[Cached]' mean?"
+Guide for common issues: expired tokens, 429 rate limits, cookie extraction failures.
 
 ---
 
-## Future Ideas (Low Priority / Research)
+## Future Research (Low Priority)
 
-These are interesting concepts but require significant architectural changes or violate current design principles.
+### 1. Historical Tracking & Burndown Charts
+Track usage over time in a local SQLite DB (`~/.runway/history.db`) to provide trend analysis and ETA for quota exhaustion. (Note: violates current stateless principle).
 
-### 1. WebSocket Plugin Sync
-**Inspiration**: cockpit-tools (see `docs/competitors.md`)
+### 2. Metrics Export Formats (Prometheus/CSV)
+Add `/api/limits?format=prometheus` or `format=csv` for integration with external monitoring systems or spreadsheets.
 
-Use a local WebSocket (port `19528`) to talk to a browser extension. When a user logs into a web-based AI (like Claude or ChatGPT), the extension "sniffs" the token and pushes it to the local app.
+### 3. Webhook Notifications
+Send Discord/Slack alerts when quotas cross certain thresholds (e.g., >90% used).
 
-**Complexity**: High - requires browser extension development
-**Usefulness**: Medium - reduces manual token entry
+### 4. Antigravity: Active API Connection
+Research connecting to the running Antigravity process/language server via local port discovery (similar to CodexBar analysis) instead of reading JSON files.
 
----
-
-### 2. Historical Tracking & Burndown Charts
-**File**: `app/services/` (new module)  
-**Severity**: Low  
-**Effort**: 1-2 days  
-**Concern**: Violates stateless principle
-
-**Suggested Data Model**:
-```python
-class HistoricalMetrics:
-    """Track usage over time for trend analysis."""
-    
-    def __init__(self):
-        self.db_path = "~/.usage-tracker/history.db"  # SQLite
-        self.init_db()
-    
-    async def record(self, limits: List[Dict]):
-        """Store snapshot of all limits."""
-        snapshot = {
-            "timestamp": datetime.now(),
-            "limits": limits,
-        }
-        self.db.insert("snapshots", snapshot)
-```
-
-**Frontend Enhancements**:
-- Line chart showing usage trend over last 7 days
-- Estimated burndown rate
-- ETA for quota exhaustion
-- Comparison with last week
-
-**Benefits**:
-- Identify usage patterns
-- Predict when quota will run out
-- Track optimization improvements
-
-**Trade-offs**:
-- Requires persistent storage (violates stateless design)
-- Increases complexity significantly
-- Could be done by external tool ingesting from `/api/limits`
+### 5. Anthropic "Extra Usage" Support
+Implement detection and rendering for paid credits (`extra_usage` field in OAuth API) showing spend vs limit.
 
 ---
 
-### 3. Metrics Export Formats
-**File**: `app/api/routes.py`  
-**Severity**: Low  
-**Effort**: 3-4 hours
-
-**Current Issue**: API only returns JSON
-
-**Suggested Enhancement**:
-```python
-@app.get("/api/limits")
-async def get_limits(format: str = "json"):
-    """
-    Get all limits in requested format.
-    
-    Formats:
-    - json (default)
-    - csv (for Excel/spreadsheet import)
-    - prometheus (for monitoring systems)
-    - html (human-readable table)
-    """
-    limits = await manager.collect_all()
-    
-    if format == "csv":
-        return StreamingResponse(export_csv(limits), 
-                               media_type="text/csv")
-    elif format == "prometheus":
-        return Response(export_prometheus_metrics(limits),
-                       media_type="text/plain")
-    elif format == "html":
-        return HTMLResponse(export_html_table(limits))
-    else:
-        return {"limits": limits}
-```
-
-**Benefits**:
-- Integration with monitoring systems (Prometheus, Grafana)
-- Can import into spreadsheets
-- Opens up for analytics/BI tools
-
-**Trade-offs**:
-- Additional maintenance burden
-- Not core to tracking functionality
-
----
-
-### 4. Webhook Notifications for Threshold Alerts
-**File**: `app/services/` (new module)  
-**Severity**: Low  
-**Effort**: 4-6 hours
-
-**Suggested Pattern**:
-```python
-class AlertManager:
-    """Send alerts when quotas cross thresholds."""
-    
-    async def check_and_alert(self, limits: List[Dict]):
-        """
-        Check if any limits crossed configured thresholds.
-        
-        Thresholds (configurable):
-        - Critical: >90% used
-        - Warning: >70% used
-        - Info: >50% used
-        """
-        webhooks = config.ALERT_WEBHOOKS  # Discord, Slack URLs
-        
-        for limit in limits:
-            pct = parse_percent(limit['remaining'])
-            
-            if pct > 90:
-                await self.notify("critical", limit, webhooks)
-            elif pct > 70:
-                await self.notify("warning", limit, webhooks)
-```
-
-**Webhook Payload**:
-```json
-{
-  "service": "Claude Pro",
-  "status": "critical",
-  "remaining": "5%",
-  "reset": "in 2h 30m",
-  "timestamp": "2026-04-07T12:45:00Z"
-}
-```
-
-**Benefits**:
-- Get notified before running out of quota
-- Integrates with Discord/Slack teams
-- Prevents "out of quota" surprises
-
-**Trade-offs**:
-- Adds background task complexity
-- Requires configuration management
-- Not critical for core functionality
-
----
-
-*Last updated: 2026-04-07*
-
----
-
-### 6. Antigravity: Active API Connection (vs File-Based)
-**File**: `app/services/collectors/antigravity.py` (enhancement)  
-**Severity**: Medium  
-**Effort**: 1-2 days  
-**Research**: CodexBar implementation analysis
-
-**Current Implementation**: File-based reading of `~/.antigravity/state/quota.json`
-- **Pros**: Simple, reliable, cross-platform
-- **Cons**: May not be real-time, no account/plan info
-
-**CodexBar's Approach**: Active API connection to running Antigravity process
-
-**How it works**:
-1. **Process Detection**: Find running `language_server_macos` process
-2. **Port Discovery**: Use `lsof` to find listening TCP ports
-3. **Token Extraction**: Parse `--csrf_token` from process command line
-4. **API Calls**: POST to localhost endpoints:
-   - `/exa.language_server_pb.LanguageServerService/GetUserStatus`
-   - `/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs`
-
-**Key Features from CodexBar**:
-- **Real-time data**: Connects to running Antigravity process
-- **Model family classification**: Claude, Gemini Pro, Gemini Flash with smart selection
-- **Model prioritization**: Primary → Secondary → Tertiary quotas
-- **Port testing**: Tries multiple ports, tests connectivity
-- **Account info**: Gets email and plan details
-- **CSRF authentication**: Uses token from process args
-- **HTTPS with insecure delegate**: Accepts self-signed localhost certs
-
-**Smart Model Selection Logic**:
-```python
-# Skip "lite" and "autocomplete" models
-# Prioritize by selectionPriority
-# Fall back to lowest remaining percentage
-def select_representative(family, models):
-    candidates = [m for m in models 
-                  if m.family == family and m.selection_priority is not None]
-    # Return best candidate based on priority and remaining%
-```
-
-**Endpoint Fallback**:
-1. Try `GetUserStatus` (has email + plan info)
-2. Fall back to `GetCommandModelConfigs` (quota only)
-
-**Error Handling** (CodexBar style):
-- `notRunning` - Process not found
-- `missingCSRFToken` - Token extraction failed  
-- `portDetectionFailed` - lsof issues
-- `apiError` - HTTP errors (401 = session expired)
-
-**Implementation Options**:
-
-**Option A: Replace file-based with API**
-- Pros: Real-time, more accurate, account info
-- Cons: Complex, requires process access, platform-specific (macOS focused)
-
-**Option B: Hybrid approach**
-- Try API first when Antigravity is running
-- Fall back to file when not running
-- Best of both worlds
-
-**Option C: Keep file-based, enhance logic**
-- Add model family classification
-- Better model selection logic
-- More robust error handling
-- **Recommended** - simpler, sufficient for most use cases
-
-**Decision**: **Option C for now** - File-based is reliable and cross-platform. Consider Option B if users need real-time accuracy.
-
----
-
-## Token Transmission Architecture
-
-### Encrypted Token Storage (Option B)
-
-**Problem**: Memory-only cache loses tokens on server restart, requiring sidecar to resend (up to 30min wait).
-
-**Solution**: Encrypt tokens and store in file for persistence across restarts.
-
-#### Implementation Plan
-
-```python
-# app/services/token_cache.py (enhanced)
-
-from cryptography.fernet import Fernet
-import os
-
-class EncryptedTokenCache(TokenCache):
-    """
-    Token cache with encrypted file persistence.
-    
-    Uses Fernet symmetric encryption with key derived from SECRET_KEY.
-    Tokens survive server restart while maintaining security.
-    """
-    
-    def __init__(self, ttl_seconds: int = 1800, storage_path: Optional[str] = None):
-        super().__init__(ttl_seconds)
-        self._storage_path = storage_path or os.path.expanduser("~/.runway/tokens.enc")
-        self._fernet = self._init_encryption()
-        self._load_from_disk()
-    
-    def _init_encryption(self) -> Fernet:
-        """Initialize Fernet with key from SECRET_KEY."""
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        import base64
-        
-        secret = os.getenv("SECRET_KEY", "").encode()
-        if not secret:
-            raise ValueError("SECRET_KEY required for encrypted token storage")
-        
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"runway_token_salt_v1",
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(secret))
-        return Fernet(key)
-```
-
-#### Pros
-- **Better UX**: Tokens survive server restart, no 30min wait
-- **Security**: Encrypted at rest with Fernet (AES-128)
-- **Backward Compatible**: Can fall back to memory-only if encryption fails
-
-#### Cons
-- **Breaks Pure Statelessness**: Requires disk storage
-- **Key Management**: Requires SECRET_KEY env var
-- **Salt Management**: Should use unique salt per installation
-- **Security Responsibility**: Encryption is only as good as SECRET_KEY protection
-
-#### Priority
-**LOW** - Current 30min TTL is acceptable for most use cases.
-
-#### When to Implement
-- User feedback indicates 30min delay is problematic
-- Running in environment with frequent server restarts
-- Security requirements demand encrypted storage
-
----
-
-## Future Implementation Research
-
-### Anthropic Extra Usage (Paid Credits)
-**File**: `app/services/collectors/anthropic.py`
-**Severity**: Low
-**Effort**: 4-6 hours
-
-**Description**:
-The Anthropic OAuth API returns an `extra_usage` object which tracks paid credits used to extend limits beyond the base subscription. 
-
-**Current state**: 
-- We skip this data because it is often disabled (`is_enabled: false`) or has null utilization for most users.
-- Parsing logic currently treats nested nulls as 0.0 but does not render a card for it.
-
-**Future Implementation**:
-- Detect if `is_enabled` is true.
-- Render a separate "Claude (Extra Usage)" card showing the spent vs. limit in dollars.
-- Track `used_credits` and `monthly_limit`.
-
+*Last updated: 2026-04-08*

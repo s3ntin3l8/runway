@@ -280,8 +280,6 @@ codex
 
 ### Potential: Web Dashboard Scraping (Tertiary Fallback)
 
-**Source:** Inspired by CodexBar's web scraping approach - see `docs/competitors.md`
-
 **What it is:** The ChatGPT web interface at `https://chatgpt.com/codex/settings/usage` shows detailed usage charts, rate limits, and credits that aren't available via the API.
 
 **Implementation approach:**
@@ -355,7 +353,6 @@ OAuth API → Web Scraping (detailed data) → Session Cache (cached %)
 ## References
 
 - **Codex CLI:** https://github.com/openai/codex
-- **CodexBar Documentation:** `docs/competitors.md` (Section: ChatGPT/OpenAI provider)
 - **OpenAI Platform:** https://platform.openai.com
 
 ---

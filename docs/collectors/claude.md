@@ -512,8 +512,6 @@ If empty, credentials are stored in file only (not keychain).
 
 ### Potential: CLI PTY Parsing (5th Tier Fallback)
 
-**Source:** CodexBar documentation mentions `ClaudeCLISession` with `/usage` command
-
 **What it is:** Spawn `claude` CLI in a PTY and parse `/usage` output:
 ```
 Current session
@@ -681,7 +679,6 @@ This is the same client ID used by the official Claude Code CLI tool. It's publi
 - **Anthropic OAuth API:** https://api.anthropic.com/api/oauth/usage
 - **Claude Web:** https://claude.ai
 - **Chrome Cookie Decryption:** Based on Chromium source
-- **CodexBar Documentation:** `docs/competitors.md` (Claude provider section)
 
 ## Troubleshooting
 

@@ -272,8 +272,6 @@ echo $GEMINI_OAUTH_CLIENT_SECRET
 
 ### Potential: CLI `/stats` Parsing (Tertiary Fallback)
 
-**Source:** CodexBar documentation mentions `GeminiStatusProbe.parse(text:)` can parse `/stats` output.
-
 **What it is:** The Gemini CLI has a `/stats` command that outputs formatted quota tables:
 ```
 │  Model                   Reqs    Model usage                 Usage resets
@@ -340,7 +338,6 @@ OAuth API → CLI /stats (quota %) → Session Logs (token counts)
 
 ## References
 
-- **CodexBar Documentation:** `docs/competitors.md` (Section: Gemini provider)
 - **Google OAuth:** https://oauth2.googleapis.com/token
 - **Cloud Code API:** Internal Google endpoint (undocumented)
 
