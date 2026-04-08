@@ -607,15 +607,34 @@ class TestAnthropicCollector:
     def test_parse_oauth_response_empty_windows(self):
         """Test handling when no valid quota windows present."""
         collector = AnthropicCollector()
-        
+
         # Empty data - should default to 100% remaining for guaranteed windows
         result = collector._parse_oauth_response({}, {"five_hour": "Session Window"})
         assert result[0]['remaining'] == '100.0%'
-        
+
         # Data without utilization field - should default to 100% remaining for guaranteed windows
         data_no_util = {"five_hour": {"resets_at": "2025-04-07T12:00:00Z"}}
         result = collector._parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
         assert result[0]['remaining'] == '100.0%'
+
+    @pytest.mark.asyncio
+    async def test_get_claude_local_enhanced_uses_to_thread(self):
+        """C5: _get_claude_local_enhanced must delegate sync I/O to asyncio.to_thread."""
+        import asyncio
+        collector = AnthropicCollector()
+
+        with patch('app.services.collectors.anthropic.asyncio') as mock_asyncio:
+            mock_asyncio.to_thread = AsyncMock(return_value=None)
+            with patch('app.services.collectors.anthropic.settings') as mock_settings:
+                mock_settings.CLAUDE_PRO_LIMIT = 2000000
+                mock_settings.CLAUDE_FREE_LIMIT = 500000
+                mock_settings.CLAUDE_PROJECTS_DIR = ""
+
+                result = await collector._get_claude_local_enhanced()
+
+        mock_asyncio.to_thread.assert_called_once()
+        called_fn = mock_asyncio.to_thread.call_args[0][0]
+        assert callable(called_fn), "asyncio.to_thread must be called with a callable"
 
 
 class TestGeminiCollector:

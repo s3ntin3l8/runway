@@ -42,6 +42,7 @@ Error Handling:
 - Missing files/logs: Return error card with helpful message
 """
 
+import asyncio
 import os
 import glob
 import json
@@ -722,36 +723,44 @@ class AnthropicCollector(BaseCollector):
     async def _get_claude_local_enhanced(self) -> List[Dict[str, Any]]:
         """
         Enhanced fallback: Parse Claude usage from local project logs.
-        
+        Offloads blocking file I/O to a thread to avoid blocking the event loop.
+        """
+        return await asyncio.to_thread(self._get_claude_local_enhanced_sync)
+
+    def _get_claude_local_enhanced_sync(self) -> List[Dict[str, Any]]:
+        """
+        Synchronous implementation of local log parsing.
+        Called via asyncio.to_thread — must not be awaited directly.
+
         Scans multiple config directories for .jsonl files and tracks all
         token types including cache reads and cache creation.
-        
+
         Features:
         - Multiple config roots (CLAUDE_CONFIG_DIR comma-separated)
         - All token types: input, cache_read, cache_creation, output
         - Deduplication by message.id + requestId
         - 5-hour sliding window to match OAuth behavior
-        
+
         Data Source:
         - Locations: CLAUDE_CONFIG_DIR or defaults (~/.claude/projects, ~/.config/claude/projects)
         - Format: JSONL with entries containing usage field
-        
+
         Returns:
             List[Dict[str, Any]]: Single card with total tokens or None if logs unavailable
         """
         # Get config directories to scan
         config_dirs = self._get_config_dirs()
-        
+
         # Find all .jsonl files across all config directories
         all_files = []
         for projects_dir in config_dirs:
             files = glob.glob(f"{projects_dir}/**/*.jsonl", recursive=True)
             all_files.extend(files)
-        
+
         if not all_files:
             logger.debug(f"No Claude project log files found in any config directory")
             return None
-        
+
         # Read credentials file for tier info
         tier = None
         try:
@@ -768,12 +777,12 @@ class AnthropicCollector(BaseCollector):
         # Default to pro limit if we can't determine tier (safer assumption for limits)
         limit = settings.CLAUDE_FREE_LIMIT if tier == "Free" else settings.CLAUDE_PRO_LIMIT
         cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
-        
+
         # Track tokens and deduplicate
         total_tokens = 0
         seen_messages = set()  # For deduplication: (message_id, request_id)
         oldest: Optional[datetime] = None
-        
+
         for fpath in all_files:
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
@@ -782,57 +791,57 @@ class AnthropicCollector(BaseCollector):
                             entry = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        
+
                         # Only process assistant messages with usage
                         if entry.get("type") != "assistant":
                             continue
-                        
+
                         # Parse timestamp
                         ts_raw = entry.get("timestamp")
                         if not ts_raw:
                             continue
-                        
+
                         try:
                             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                         except ValueError:
                             continue
-                        
+
                         if ts < cutoff:
                             continue
-                        
+
                         # Deduplicate by message.id + requestId
                         msg_data = entry.get("message", {})
                         msg_id = msg_data.get("id", "")
                         request_id = msg_data.get("requestId", "")
                         dedup_key = (msg_id, request_id)
-                        
+
                         if dedup_key in seen_messages:
                             continue
                         seen_messages.add(dedup_key)
-                        
+
                         # Sum all token types
                         usage = msg_data.get("usage", {})
                         input_tokens = usage.get("input_tokens", 0)
                         output_tokens = usage.get("output_tokens", 0)
                         cache_read = usage.get("cache_read_tokens", 0)
                         cache_creation = usage.get("cache_creation_tokens", 0)
-                        
+
                         total_tokens += input_tokens + output_tokens + cache_read + cache_creation
-                        
+
                         if not oldest or ts < oldest:
                             oldest = ts
-                            
+
             except FileNotFoundError:
                 continue
             except Exception as e:
                 logger.warning(f"Error reading Claude log file {fpath}: {e}")
                 continue
-        
+
         # Calculate remaining and percentage
         remaining = max(0, limit - total_tokens)
         pct = (total_tokens / limit * 100) if limit > 0 else 0
         reset_at = (oldest + timedelta(hours=5)) if oldest else None
-        
+
         return [{
             "service": "Claude Pro",
             "icon": "🟠",
