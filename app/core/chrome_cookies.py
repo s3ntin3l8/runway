@@ -8,26 +8,60 @@ import sys
 import sqlite3
 import platform
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+
+
+def get_all_chrome_cookies_paths() -> List[Path]:
+    """Get all potential paths to Chrome's Cookies databases across different profiles."""
+    system = platform.system()
+    home = Path.home()
+    paths = []
+    
+    # Base user data directories
+    base_dirs = []
+    if system == "Darwin":
+        base_dirs.append(home / "Library/Application Support/Google/Chrome")
+    elif system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            base_dirs.append(Path(local_app_data) / "Google/Chrome/User Data")
+        else:
+            base_dirs.append(home / "AppData/Local/Google/Chrome/User Data")
+    else:  # Linux
+        # Standard
+        base_dirs.append(home / ".config/google-chrome")
+        base_dirs.append(home / ".config/chromium")
+        # Snap
+        base_dirs.append(home / "snap/google-chrome/common/.config/google-chrome")
+        base_dirs.append(home / "snap/chromium/common/.config/chromium")
+        # Flatpak
+        base_dirs.append(home / ".var/app/com.google.Chrome/config/google-chrome")
+    
+    # Profiles to search
+    profiles = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
+    
+    for base in base_dirs:
+        if not base.exists():
+            continue
+            
+        for profile in profiles:
+            # Different relative paths across Chrome versions
+            potential_rel_paths = [
+                profile + "/Network/Cookies",
+                profile + "/Cookies",
+            ]
+            for rel_path in potential_rel_paths:
+                p = base / rel_path
+                if p.exists():
+                    paths.append(p)
+    
+    return paths
 
 
 def get_chrome_cookies_path() -> Optional[Path]:
-    """Get the path to Chrome's Cookies database based on platform."""
-    system = platform.system()
-    home = Path.home()
-    
-    if system == "Darwin":  # macOS
-        path = home / "Library/Application Support/Google/Chrome/Default/Cookies"
-    elif system == "Windows":
-        path = home / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies"
-        if not path.exists():
-            path = home / "AppData/Local/Google/Chrome/User Data/Default/Cookies"
-    else:  # Linux
-        path = home / ".config/google-chrome/Default/Cookies"
-        if not path.exists():
-            path = home / ".config/chromium/Default/Cookies"
-    
-    return path if path.exists() else None
+    """Get the first existing path to Chrome's Cookies database."""
+    paths = get_all_chrome_cookies_paths()
+    return paths[0] if paths else None
 
 
 def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
@@ -190,144 +224,144 @@ def decrypt_cookie(encrypted_value: bytes) -> Optional[str]:
 def get_opencode_session_cookie() -> Optional[str]:
     """
     Extract the session cookie for opencode.ai from Chrome's cookie store.
+    Searches across all available Chrome profiles.
     
     Returns:
         The decrypted session cookie value, or None if not found/decryption failed.
     """
-    cookies_path = get_chrome_cookies_path()
-    if not cookies_path:
+    cookies_paths = get_all_chrome_cookies_paths()
+    if not cookies_paths:
         return None
     
-    try:
-        # Connect to Chrome's SQLite cookie database
-        conn = sqlite3.connect(str(cookies_path))
-        cursor = conn.cursor()
-        
-        # Query for opencode.ai session cookie
-        cursor.execute(
-            "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
-        )
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            encrypted_value = row[0]
+    for cookies_path in cookies_paths:
+        try:
+            # Connect to Chrome's SQLite cookie database
+            conn = sqlite3.connect(str(cookies_path))
+            cursor = conn.cursor()
             
-            # Try to decrypt
-            decrypted = decrypt_cookie(encrypted_value)
-            if decrypted:
-                return decrypted
-            
-            # If decryption failed, try treating as plaintext (some configs)
-            try:
-                return encrypted_value.decode('utf-8')
-            except UnicodeDecodeError:
-                pass
-        
-        return None
-    except Exception:
-        return None
-
-
-def get_claude_session_cookie() -> Optional[str]:
-    """
-    Extract the sessionKey cookie for claude.ai from Chrome's cookie store.
-    
-    This cookie is used to authenticate with Claude's web API when OAuth
-    credentials are not available. The cookie value starts with 'sk-ant-'.
-    
-    Returns:
-        The decrypted sessionKey cookie value (e.g., 'sk-ant-...'), or None
-        if not found or decryption failed.
-    """
-    cookies_path = get_chrome_cookies_path()
-    if not cookies_path:
-        return None
-    
-    try:
-        # Connect to Chrome's SQLite cookie database
-        conn = sqlite3.connect(str(cookies_path))
-        cursor = conn.cursor()
-        
-        # Query for claude.ai sessionKey cookie
-        # The cookie is scoped to claude.ai domain
-        cursor.execute(
-            "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name = 'sessionKey'"
-        )
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            encrypted_value = row[0]
-            
-            # Try to decrypt
-            decrypted = decrypt_cookie(encrypted_value)
-            if decrypted:
-                return decrypted
-            
-            # If decryption failed, try treating as plaintext (some configs)
-            try:
-                return encrypted_value.decode('utf-8')
-            except UnicodeDecodeError:
-                pass
-        
-        return None
-    except Exception:
-        return None
-
-
-def get_kimi_auth_cookie() -> Optional[str]:
-    """
-    Extract the kimi-auth cookie for kimi.com from Chrome's cookie store.
-    
-    This JWT token is used to authenticate with Kimi Coding IDE API
-    when KIMI_AUTH_TOKEN environment variable is not set.
-    
-    Returns:
-        The decrypted kimi-auth cookie value (JWT token), or None
-        if not found or decryption failed.
-    """
-    cookies_path = get_chrome_cookies_path()
-    if not cookies_path:
-        return None
-    
-    try:
-        # Connect to Chrome's SQLite cookie database
-        conn = sqlite3.connect(str(cookies_path))
-        cursor = conn.cursor()
-        
-        # Query for kimi.com kimi-auth cookie
-        # Try multiple possible cookie names
-        for cookie_name in ['kimi-auth', 'kimi_token', 'auth_token']:
+            # Query for opencode.ai session cookie
             cursor.execute(
-                "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
-                (cookie_name,)
+                "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%opencode.ai%' AND name = 'session'"
             )
             
             row = cursor.fetchone()
+            conn.close()
+            
             if row:
                 encrypted_value = row[0]
                 
                 # Try to decrypt
                 decrypted = decrypt_cookie(encrypted_value)
                 if decrypted:
-                    conn.close()
                     return decrypted
                 
                 # If decryption failed, try treating as plaintext (some configs)
                 try:
-                    plaintext = encrypted_value.decode('utf-8')
-                    conn.close()
-                    return plaintext
+                    return encrypted_value.decode('utf-8')
                 except UnicodeDecodeError:
                     pass
-        
-        conn.close()
+        except Exception:
+            continue
+            
+    return None
+
+
+def get_claude_session_cookie() -> Optional[str]:
+    """
+    Extract the sessionKey cookie for claude.ai from Chrome's cookie store.
+    Searches across all available Chrome profiles.
+    
+    Returns:
+        The decrypted sessionKey cookie value (e.g., 'sk-ant-...'), or None
+        if not found or decryption failed.
+    """
+    cookies_paths = get_all_chrome_cookies_paths()
+    if not cookies_paths:
         return None
-    except Exception:
+    
+    for cookies_path in cookies_paths:
+        try:
+            # Connect to Chrome's SQLite cookie database
+            conn = sqlite3.connect(str(cookies_path))
+            cursor = conn.cursor()
+            
+            # Query for claude.ai sessionKey cookie
+            cursor.execute(
+                "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%' AND name = 'sessionKey'"
+            )
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                encrypted_value = row[0]
+                
+                # Try to decrypt
+                decrypted = decrypt_cookie(encrypted_value)
+                if decrypted:
+                    return decrypted
+                
+                # If decryption failed, try treating as plaintext (some configs)
+                try:
+                    return encrypted_value.decode('utf-8')
+                except UnicodeDecodeError:
+                    pass
+        except Exception:
+            continue
+            
+    return None
+
+
+def get_kimi_auth_cookie() -> Optional[str]:
+    """
+    Extract the kimi-auth cookie for kimi.com from Chrome's cookie store.
+    Searches across all available Chrome profiles.
+    
+    Returns:
+        The decrypted kimi-auth cookie value (JWT token), or None
+        if not found or decryption failed.
+    """
+    cookies_paths = get_all_chrome_cookies_paths()
+    if not cookies_paths:
         return None
+    
+    for cookies_path in cookies_paths:
+        try:
+            # Connect to Chrome's SQLite cookie database
+            conn = sqlite3.connect(str(cookies_path))
+            cursor = conn.cursor()
+            
+            # Query for kimi.com kimi-auth cookie
+            # Try multiple possible cookie names
+            for cookie_name in ['kimi-auth', 'kimi_token', 'auth_token']:
+                cursor.execute(
+                    "SELECT encrypted_value FROM cookies WHERE host_key LIKE '%kimi.com%' AND name = ?",
+                    (cookie_name,)
+                )
+                
+                row = cursor.fetchone()
+                if row:
+                    encrypted_value = row[0]
+                    
+                    # Try to decrypt
+                    decrypted = decrypt_cookie(encrypted_value)
+                    if decrypted:
+                        conn.close()
+                        return decrypted
+                    
+                    # If decryption failed, try treating as plaintext (some configs)
+                    try:
+                        plaintext = encrypted_value.decode('utf-8')
+                        conn.close()
+                        return plaintext
+                    except UnicodeDecodeError:
+                        pass
+            
+            conn.close()
+        except Exception:
+            continue
+            
+    return None
 
 
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:

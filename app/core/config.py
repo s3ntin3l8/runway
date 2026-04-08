@@ -9,6 +9,44 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def get_platform_data_dir(app_name: str) -> str:
+    """Get the platform-specific directory for user data."""
+    system = platform.system()
+    home = os.path.expanduser("~")
+    
+    if system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return os.path.join(local_app_data, app_name)
+        return os.path.join(home, "AppData", "Local", app_name)
+    elif system == "Darwin":  # macOS
+        return os.path.join(home, "Library", "Application Support", app_name)
+    else:  # Linux / Other
+        xdg_data_home = os.getenv("XDG_DATA_HOME")
+        if xdg_data_home:
+            return os.path.join(xdg_data_home, app_name)
+        return os.path.join(home, ".local", "share", app_name)
+
+
+def get_platform_config_dir(app_name: str) -> str:
+    """Get the platform-specific directory for user configuration."""
+    system = platform.system()
+    home = os.path.expanduser("~")
+    
+    if system == "Windows":
+        app_data = os.getenv("APPDATA")
+        if app_data:
+            return os.path.join(app_data, app_name)
+        return os.path.join(home, "AppData", "Roaming", app_name)
+    elif system == "Darwin":  # macOS
+        return os.path.join(home, "Library", "Application Support", app_name)
+    else:  # Linux / Other
+        xdg_config_home = os.getenv("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return os.path.join(xdg_config_home, app_name)
+        return os.path.join(home, ".config", app_name)
+
+
 class Settings:
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
@@ -20,21 +58,23 @@ class Settings:
         if token:
             return token
 
-        # Priority 2: ~/.claude/.credentials.json (Claude Code)
-        cred_path = os.path.expanduser("~/.claude/.credentials.json")
-        if os.path.exists(cred_path):
-            try:
-                with open(cred_path, "r") as f:
-                    data = json.load(f)
-                    val = data.get("claudeAiOauth", {}).get("accessToken")
-                    if val:
-                        return val
-            except FileNotFoundError:
-                logger.debug(f"Credentials file not found: {cred_path}")
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid JSON in credentials file: {cred_path}")
-            except Exception as e:
-                logger.warning(f"Error reading credentials file: {e}")
+        # Priority 2: Claude Code credentials (search multiple locations)
+        home = os.path.expanduser("~")
+        potential_paths = [
+            os.path.join(home, ".claude", ".credentials.json"),
+            os.path.join(get_platform_config_dir("claude"), ".credentials.json"),
+        ]
+        
+        for cred_path in potential_paths:
+            if os.path.exists(cred_path):
+                try:
+                    with open(cred_path, "r") as f:
+                        data = json.load(f)
+                        val = data.get("claudeAiOauth", {}).get("accessToken")
+                        if val:
+                            return val
+                except Exception as e:
+                    logger.debug(f"Error reading credentials from {cred_path}: {e}")
 
         # Priority 3: macOS Keychain (for sidecar scenarios)
         if platform.system() == "Darwin":
@@ -88,13 +128,13 @@ class Settings:
     GEMINI_OAUTH_CLIENT_SECRET: str = os.getenv("GEMINI_OAUTH_CLIENT_SECRET", "")
     
     # Path settings
-    CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.expanduser("~/.claude/projects"))
-    GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.expanduser("~/.gemini/tmp/sessions"))
-    GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.expanduser("~/.gemini/oauth_creds.json"))
-    CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.expanduser("~/.codex/sessions"))
-    ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.expanduser("~/.antigravity/state/quota.json"))
-    OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.expanduser("~/.local/share/opencode/opencode.db"))
-    EXTERNAL_METRICS_PATH: str = os.getenv("EXTERNAL_METRICS_PATH", os.path.expanduser("~/.usage-tracker/external_metrics.json"))
+    CLAUDE_PROJECTS_DIR: str = os.getenv("CLAUDE_PROJECTS_DIR", os.path.join(get_platform_config_dir("claude"), "projects"))
+    GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"))
+    GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"))
+    CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.join(get_platform_config_dir("codex"), "sessions"))
+    ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"))
+    OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.join(get_platform_data_dir("opencode"), "opencode.db"))
+    EXTERNAL_METRICS_PATH: str = os.getenv("EXTERNAL_METRICS_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "external_metrics.json"))
     OPENCODE_LOCAL_COLLECTOR_ENABLED: bool = os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
     
     # Network settings

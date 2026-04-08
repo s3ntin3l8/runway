@@ -51,7 +51,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 import httpx
-from app.core.config import settings
+from app.core.config import settings, get_platform_config_dir
 from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
 from app.core.chrome_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
@@ -78,8 +78,13 @@ class AnthropicCollector(BaseCollector):
         self._max_refresh_backoff = 21600  # Max 6 hours
         self._terminal_failure = False  # Set to True on invalid_grant
         
-        # Credentials file path
-        self._credentials_path = os.path.expanduser("~/.claude/.credentials.json")
+        # Credentials file path (search multiple locations, default to standard)
+        home = os.path.expanduser("~")
+        self._credentials_path = os.path.join(home, ".claude", ".credentials.json")
+        platform_cred_path = os.path.join(get_platform_config_dir("claude"), ".credentials.json")
+        
+        if not os.path.exists(self._credentials_path) and os.path.exists(platform_cred_path):
+            self._credentials_path = platform_cred_path
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -826,10 +831,11 @@ class AnthropicCollector(BaseCollector):
                     if os.path.isdir(projects_path):
                         dirs.append(projects_path)
         
-        # Priority 2: Default locations
+        # Priority 2: Default locations (platform-aware)
         default_paths = [
-            os.path.expanduser("~/.config/claude/projects"),
-            os.path.expanduser("~/.claude/projects"),
+            os.path.join(get_platform_config_dir("claude"), "projects"),
+            os.path.expanduser("~/.config/claude/projects"),  # Legacy/Generic Linux
+            os.path.expanduser("~/.claude/projects"),          # Legacy/Direct home
         ]
         
         for path in default_paths:
