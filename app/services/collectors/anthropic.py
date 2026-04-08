@@ -523,6 +523,8 @@ class AnthropicCollector(BaseCollector):
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "oauth",
                 "tier": tier,
+                "usage_url": "https://claude.ai/settings/usage",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             })
         
         return results if results else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
@@ -686,6 +688,8 @@ class AnthropicCollector(BaseCollector):
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "web_api",
                 "tier": tier,
+                "usage_url": "https://claude.ai/settings/usage",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             })
         
         # Add extra usage if present
@@ -709,6 +713,8 @@ class AnthropicCollector(BaseCollector):
                     "pace": "Sustainable",
                     "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
                     "tier": tier,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
         
         return results
@@ -843,6 +849,8 @@ class AnthropicCollector(BaseCollector):
             "unit_type": "tokens",
             "reset_at": reset_at.isoformat() if reset_at else None,
             "data_source": "local",
+            "usage_url": "https://claude.ai/settings/usage",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     def _get_config_dirs(self) -> List[str]:

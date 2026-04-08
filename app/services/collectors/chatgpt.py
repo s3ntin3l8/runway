@@ -152,6 +152,8 @@ class ChatGPTCollector(BaseCollector):
                             "reset_at": reset_at.isoformat() if reset_at else None,
                             "data_source": "oauth",
                             "tier": tier,
+                            "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
                         })
 
                     # Code review rate limit (if available and different)
@@ -177,6 +179,8 @@ class ChatGPTCollector(BaseCollector):
                             "reset_at": cr_reset_at.isoformat() if cr_reset_at else None,
                             "data_source": "oauth",
                             "tier": tier,
+                            "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
                         })
 
                     # Cache successful API result
@@ -240,6 +244,8 @@ class ChatGPTCollector(BaseCollector):
                 "unit_type": "percent",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "cache",
+                "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }]
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
             return [error_card("ChatGPT Codex", "💬", "Parse Error", error_type="parse_error")]

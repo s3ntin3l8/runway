@@ -209,4 +209,5 @@ class ZaiPlanCollector(BaseCollector):
             "unit_type": unit_type,
             "reset_at": reset_at,
             "data_source": "api",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }

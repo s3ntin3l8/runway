@@ -44,7 +44,7 @@ import os
 import time
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
 from app.core.config import settings
 from app.core.utils import error_card, PaceCalculator
@@ -296,6 +296,8 @@ class GeminiCollector(BaseCollector):
                     "reset_at": reset_at,
                     "data_source": "oauth",
                     "tier": tier,
+                    "usage_url": "https://one.google.com/settings",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
             
             # Sort by usage (highest % used first = most constrained)
@@ -391,6 +393,8 @@ class GeminiCollector(BaseCollector):
                 "pace": "Stable",
                 "detail": "Fallback: Local logs",
                 "data_source": "local",
+                "usage_url": "https://one.google.com/settings",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }]
         except FileNotFoundError:
             logger.debug(f"Gemini sessions directory not found: {sessions_dir}")

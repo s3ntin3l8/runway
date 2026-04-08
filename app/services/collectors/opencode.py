@@ -108,7 +108,7 @@ class OpenCodeCollector(BaseCollector):
                 return []
             
             # 3. Parse and return cards
-            return self._parse_usage_data(usage_data)
+            return self._parse_usage_data(usage_data, workspace_id)
             
         except Exception:
             return []
@@ -177,15 +177,17 @@ class OpenCodeCollector(BaseCollector):
         except Exception:
             return None
 
-    def _parse_usage_data(self, text: str) -> List[Dict[str, Any]]:
+    def _parse_usage_data(self, text: str, workspace_id: str) -> List[Dict[str, Any]]:
         """
         Parse JavaScript response to extract usage data.
-        
+
         Expected format:
         rollingUsage:{usagePercent:45.5,resetInSec:7200,limit:12.0}
         weeklyUsage:{usagePercent:23.0,resetInSec:345600,limit:30.0}
         """
         cards = []
+        now = datetime.now(timezone.utc).isoformat()
+        usage_url = f"https://opencode.ai/workspace/{workspace_id}/go"
         
         # Parse rolling usage (5-hour window)
         rolling_match = re.search(
@@ -219,6 +221,8 @@ class OpenCodeCollector(BaseCollector):
                 "currency": "USD",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "web_api",
+                "usage_url": usage_url,
+                "updated_at": now,
             })
         
         # Parse weekly usage
@@ -252,6 +256,8 @@ class OpenCodeCollector(BaseCollector):
                 "currency": "USD",
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "web_api",
+                "usage_url": usage_url,
+                "updated_at": now,
             })
         
         return cards
@@ -332,6 +338,7 @@ class OpenCodeCollector(BaseCollector):
                         "currency": "USD",
                         "reset_at": None,  # Rolling window has no fixed reset time
                         "data_source": "local",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
                 
                 return cards

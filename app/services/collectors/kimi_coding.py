@@ -204,6 +204,7 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         except (ValueError, TypeError):
             return None
@@ -254,6 +255,7 @@ class KimiCodingCollector(BaseCollector):
                 "unit_type": "requests",
                 "reset_at": reset_dt.isoformat() if reset_dt else None,
                 "data_source": "api",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         except (ValueError, TypeError):
             return None

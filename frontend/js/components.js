@@ -56,6 +56,8 @@ function getTierBadge(tier) {
  * @property {string|null} currency - Currency code ("USD", "EUR", "CNY", etc.)
  * @property {string|null} reset_at - ISO 8601 timestamp for reset (for tooltip)
  * @property {string} data_source - Data source indicator ("oauth", "web_api", "local", "cache", "fallback", "api", "sidecar")
+ * @property {string|null} usage_url - URL to provider's usage/settings page
+ * @property {string|null} updated_at - ISO 8601 timestamp when data was last collected
  */
 
 /**
@@ -84,6 +86,32 @@ function formatCurrency(amount, currencyCode) {
     const symbols = { USD: '$', EUR: '€', GBP: '£', CNY: '¥', JPY: '¥' };
     const symbol = symbols[currencyCode] || '$';
     return `${symbol}${amount.toFixed(2)}`;
+}
+
+/**
+ * Format relative time from ISO timestamp
+ * @param {string} isoTimestamp - ISO 8601 timestamp
+ * @returns {string} Relative time string (e.g., "2m ago", "1h ago")
+ */
+function formatRelativeTime(isoTimestamp) {
+    if (!isoTimestamp) return '—';
+    try {
+        const date = new Date(isoTimestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffSecs = Math.floor(diffMs / 1000);
+        const diffMins = Math.floor(diffSecs / 60);
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+
+        if (diffSecs < 60) return 'just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 30) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    } catch (e) {
+        return '—';
+    }
 }
 
 /**
@@ -458,6 +486,13 @@ export function buildModalContent(item) {
     const sourceLabel = SOURCE_LABELS[item.data_source] || item.data_source;
     const sourceColor = SOURCE_COLORS[item.data_source] || 'text-zinc-400';
     const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString() : 'Never';
+    const updatedTime = formatRelativeTime(item.updated_at);
+
+    const linkButton = item.usage_url ? `
+        <a href="${escapeHTML(item.usage_url)}" target="_blank" rel="noopener noreferrer" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400" title="Open usage page">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+        </a>
+    ` : '';
 
     return `
         <div class="modal-header border-b border-zinc-800/80">
@@ -472,9 +507,12 @@ export function buildModalContent(item) {
                         </div>
                     </div>
                 </div>
-                <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
+                <div class="flex items-center gap-1">
+                    ${linkButton}
+                    <button id="close-modal" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-zinc-800 transition-colors text-zinc-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
             </div>
             
             <div class="mt-6 flex flex-col gap-2">
@@ -509,6 +547,10 @@ export function buildModalContent(item) {
             <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
                 <span class="text-sm font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+            </div>
+            <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
+                <span class="text-sm font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
         </div>
 

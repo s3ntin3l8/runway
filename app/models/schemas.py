@@ -25,6 +25,10 @@ class LimitCard(BaseModel):
     error_type: Optional[str] = None
     # NEW: Tier classification (None = no badge shown)
     tier: Optional[str] = None  # "Free", "Pro", "Premium", "Team", "Enterprise"
+    # NEW: URL to provider's usage/settings page
+    usage_url: Optional[str] = None
+    # NEW: ISO 8601 timestamp when data was last collected/updated
+    updated_at: Optional[str] = None
 
     @field_validator("service", "remaining", "unit", "reset", "pace", "detail", "tier")
     @classmethod

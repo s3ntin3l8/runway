@@ -60,6 +60,7 @@ class AntigravityCollector(BaseCollector):
                     "detail": f"{name} [IDE]",
                     "reset_at": reset.isoformat() if reset else None,
                     "data_source": "local",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
             return res
         except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, ValueError):

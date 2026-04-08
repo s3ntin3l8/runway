@@ -157,6 +157,8 @@ class GitHubCollector(BaseCollector):
                                 "unit_type": "requests",
                                 "reset_at": reset_at.isoformat() if reset_at else None,
                                 "data_source": "api",
+                                "usage_url": "https://github.com/settings/copilot/features",
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
                             })
 
             # Process User Response (Pro/Enterprise and Free fallback)
@@ -196,6 +198,8 @@ class GitHubCollector(BaseCollector):
                                 "unit_type": "requests",
                                 "reset_at": reset_at.isoformat() if reset_at else None,
                                 "data_source": "api",
+                                "usage_url": "https://github.com/settings/copilot/features",
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
                             })
                 
                 # Check for Pro/Enterprise tier quota snapshots
@@ -243,6 +247,8 @@ class GitHubCollector(BaseCollector):
                             "unit_type": "requests",
                             "reset_at": None,  # Rolling quotas have no fixed reset time
                             "data_source": "api",
+                            "usage_url": "https://github.com/settings/copilot/features",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
                         })
             
             # Fallback to standard rate limit if no specific copilot data found
@@ -268,6 +274,8 @@ class GitHubCollector(BaseCollector):
                         "unit_type": "requests",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": "fallback",
+                        "usage_url": "https://github.com/settings/copilot/features",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
             
             # Cache ALL results (success or partial/fallback)
