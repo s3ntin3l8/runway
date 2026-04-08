@@ -50,9 +50,11 @@ app.mount("/static", NoCacheStaticFiles(directory=frontend_path), name="static")
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    icon_path = os.path.join(frontend_path, "favicon.png")
-    if os.path.exists(icon_path):
-        return FileResponse(icon_path)
+    # Prefer SVG for transparency, fallback to PNG
+    for ext in ["svg", "png"]:
+        icon_path = os.path.join(frontend_path, f"favicon.{ext}")
+        if os.path.exists(icon_path):
+            return FileResponse(icon_path)
     return Response(status_code=204)
 
 @app.get("/", response_class=HTMLResponse)

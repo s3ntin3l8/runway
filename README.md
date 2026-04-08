@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="Runway Logo">
+</p>
+
 # Runway — AI Subscription Limits Dashboard
 
 **Runway** is a local-first, stateless monitoring tool designed to track remaining capacity and reset timers across your entire generative AI stack. Instead of digging through opaque usage menus, Runway aggregates everything into a single, high-performance glassmorphism dashboard.
@@ -159,6 +163,10 @@ Each metric card follows this schema:
 ## 🚀 Quick Start
 
 ```bash
+# Setup virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -167,6 +175,7 @@ cp .env.example .env
 # Edit .env with your API keys (see Quick Start by Provider above)
 
 # Run
+# Ensure venv is activated
 python3 -m app.main
 ```
 
@@ -225,6 +234,10 @@ To access the dashboard from phones, tablets, or other computers on your network
 git clone <repository-url>
 cd runway
 
+# Setup virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -233,6 +246,7 @@ cp .env.example .env
 # Edit .env with your API keys
 
 # Run
+# Ensure venv is activated
 python3 -m app.main
 ```
 
@@ -252,4 +266,9 @@ docker run -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
 👉 **[Docker Compose Setup](docs/deployment-modes.md#docker-compose)** | **[Full Deployment Guide](docs/deployment-modes.md)**
 
 ---
+
+## ⚖️ License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 *Built for the 2026 Developer Workflow.*

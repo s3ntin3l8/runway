@@ -51,6 +51,7 @@ Avoid writing code that relies on native desktop UI features if the app is inten
 - **Styling**: Vanilla CSS (Modern glassmorphism) + Tailwind CSS in the frontend.
 
 ### Commands
+- **Setup**: `python3 -m venv .venv && source .venv/bin/activate`
 - **Install**: `pip install -r requirements.txt`
 - **Run (Dev)**: `uvicorn app.main:app --reload --port 8765`
 - **Run (Production)**: `python3 -m app.main`
