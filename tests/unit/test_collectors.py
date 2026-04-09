@@ -85,12 +85,16 @@ class TestAnthropicCollector:
                 mock_settings.LOCAL_COLLECTOR_ENABLED = True
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
-                with patch("app.services.collectors.anthropic.glob.glob", return_value=[]):
+                with patch(
+                    "app.services.collectors.anthropic.glob.glob", return_value=[]
+                ):
                     with patch(
                         "app.services.collectors.anthropic.get_claude_session_cookie",
                         return_value=None,
                     ):
-                        with patch.object(collector, "_get_valid_token", return_value=None):
+                        with patch.object(
+                            collector, "_get_valid_token", return_value=None
+                        ):
                             result = await collector.collect(mock_http_client)
 
         # Should return error card for invalid token (no logs fallback)
@@ -492,7 +496,9 @@ class TestAnthropicCollector:
                     "app.services.collectors.anthropic.get_claude_session_cookie",
                     return_value=None,
                 ):
-                    with patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": "/path1,/path2"}):
+                    with patch.dict(
+                        "os.environ", {"CLAUDE_CONFIG_DIR": "/path1,/path2"}
+                    ):
                         with patch("os.path.isdir", return_value=True):
                             with patch(
                                 "app.services.collectors.anthropic.glob.glob"
@@ -554,7 +560,9 @@ class TestAnthropicCollector:
                                     else:
                                         return mock_open(read_data=log_data_2)()
 
-                                with patch("builtins.open", side_effect=open_side_effect):
+                                with patch(
+                                    "builtins.open", side_effect=open_side_effect
+                                ):
                                     result = await collector.collect(mock_http_client)
 
         # Should aggregate from both directories
