@@ -340,6 +340,10 @@ def get_kimi_auth_cookie() -> Optional[str]:
         if val: return val
     return None
 
+def get_chatgpt_session_token() -> Optional[str]:
+    """Extract ChatGPT session token from browser cookies."""
+    return get_session_cookie("chatgpt.com", "__Secure-next-auth.session-token")
+
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
     """Still needed for direct keychain access in sidecar."""
     if platform.system() != "Darwin": return None

@@ -827,18 +827,35 @@ class TestChatGPTCollector:
         """Test successful ChatGPT API collection."""
         collector = ChatGPTCollector()
         
-        mock_response = MagicMock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_chatgpt_usage_response
-        mock_http_client.get.return_value = mock_response
+        # Mock Account Info
+        account_response = MagicMock(spec=httpx.Response)
+        account_response.status_code = 200
+        account_response.json.return_value = {
+            "accounts": {
+                "user-123": {
+                    "account_status": "active",
+                    "entitlements": [{"slug": "plus"}]
+                }
+            }
+        }
+        
+        # Mock Usage Info
+        usage_response = MagicMock(spec=httpx.Response)
+        usage_response.status_code = 200
+        usage_response.json.return_value = mock_chatgpt_usage_response
+        
+        # Sequentially return responses
+        mock_http_client.get.side_effect = [account_response, usage_response]
         
         with patch.dict('os.environ', {'CHATGPT_OAUTH_TOKEN': 'test_token'}):
             result = await collector.collect(mock_http_client)
         
         assert isinstance(result, list)
-        assert len(result) >= 1
-        assert "ChatGPT" in str(result[0].get('service', ''))
-        assert "%" in str(result[0].get('remaining', ''))
+        assert len(result) == 2
+        assert "Account" in str(result[0].get('service', ''))
+        assert "PLUS" in str(result[0].get('remaining', ''))
+        assert "Codex" in str(result[1].get('service', ''))
+        assert "%" in str(result[1].get('remaining', ''))
 
     @pytest.mark.asyncio
     async def test_collect_fallback_to_local_logs(self, mock_http_client):

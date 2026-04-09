@@ -173,6 +173,7 @@ class Settings:
     GEMINI_SESSIONS_DIR: str = os.getenv("GEMINI_SESSIONS_DIR", os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions"))
     GEMINI_OAUTH_PATH: str = os.getenv("GEMINI_OAUTH_PATH", os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"))
     GITHUB_OAUTH_PATH: str = os.getenv("GITHUB_OAUTH_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "github_oauth.json"))
+    CHATGPT_AUTH_PATH: str = os.path.expanduser("~/.codex/auth.json")
     CHATGPT_SESSIONS_DIR: str = os.getenv("CHATGPT_SESSIONS_DIR", os.path.join(get_platform_config_dir("codex"), "sessions"))
     ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"))
     OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.join(get_platform_data_dir("opencode"), "opencode.db"))

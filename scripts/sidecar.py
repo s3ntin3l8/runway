@@ -897,13 +897,15 @@ class GeminiCollector:
 
 
 class ChatGPTCollector:
-    """Extract ChatGPT OAuth token from local sources."""
+    """Extract ChatGPT tokens and cookies from local sources."""
     
     @staticmethod
     def collect():
-        """Extract OAuth token, send to server for API call."""
+        """Extract OAuth token or session cookie, send to server."""
         token = os.getenv("CHATGPT_OAUTH_TOKEN")
+        cookie = None
         
+        # Priority 2: ~/.codex/auth.json
         if not token:
             potential_paths = [
                 Path.home() / ".codex" / "auth.json",
@@ -920,20 +922,29 @@ class ChatGPTCollector:
                     except:
                         pass
         
-        if not token:
+        # Priority 3: Browser Cookies
+        cookie = BrowserCookieExtractor.get_cookie("chatgpt.com", "__Secure-next-auth.session-token")
+        
+        if not token and not cookie:
             return []
         
+        metadata = {}
+        if token:
+            metadata["oauth_token"] = token
+        if cookie:
+            metadata["cookie___Secure-next-auth.session-token"] = cookie
+            
         return [{
             "service": "ChatGPT Codex",
             "icon": "💬",
-            "remaining": "Token",
-            "unit": "oauth",
+            "remaining": "Token" if token else "Cookie",
+            "unit": "oauth" if token else "cookie",
             "reset": "—",
             "health": "good",
-            "pace": "Token",
-            "detail": "[Token Extracted] [Sidecar]",
+            "pace": "Token" if token else "Cookie",
+            "detail": f"[{'Token' if token else 'Cookie'} Extracted] [Sidecar]",
             "data_source": "token_extracted",
-            "metadata": {"oauth_token": token}
+            "metadata": metadata
         }]
 
 
