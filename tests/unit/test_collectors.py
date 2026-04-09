@@ -266,10 +266,13 @@ class TestAnthropicCollector:
                             ):
                                 # First request gets 401, then reactive refresh happens, then second request succeeds
                                 result = await collector.collect(mock_http_client)
+                                print(f"\nDEBUG: result after refresh = {result}")
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
         assert len(result) >= 1
+        for i, card in enumerate(result):
+            print(f"DEBUG: card {i} = {card}")
         assert all(card.get("remaining") != "ERR" for card in result)
         assert any(card.get("data_source") == "oauth" for card in result)
 
