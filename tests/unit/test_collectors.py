@@ -232,18 +232,13 @@ class TestAnthropicCollector:
         oauth_success_response.status_code = 200
         oauth_success_response.json.return_value = mock_anthropic_oauth_response
 
-        # Set up mock to return different responses for different calls
-        call_count = [0]
-
+        # Set up mock to return different responses based on URL
         async def mock_request(*args, **kwargs):
-            call_count[0] += 1
             url = args[1] if len(args) > 1 else kwargs.get("url", "")
-
-            # First OAuth call (with old token) -> 401
-            if call_count[0] == 1 and "oauth/usage" in url:
-                return oauth_401_response
-            # Second OAuth call (with new token) -> success
-            elif call_count[0] == 2 and "oauth/usage" in url:
+            if "oauth/usage" in url:
+                if not hasattr(mock_request, "called"):
+                    mock_request.called = True
+                    return oauth_401_response
                 return oauth_success_response
             return oauth_success_response
 
