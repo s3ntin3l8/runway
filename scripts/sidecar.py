@@ -606,7 +606,38 @@ class BrowserCookieExtractor:
                         p = base / rel
                         if p.exists(): results.append({"browser": v["name"], "type": "chromium", "path": p})
         
-        # 2. Firefox
+        # 2. Linux Flatpak / Snap (Common on Ubuntu/Fedora)
+        if system == "Linux":
+            flatpak_bases = [
+                home / ".var/app/com.google.Chrome/config/google-chrome",
+                home / ".var/app/org.chromium.Chromium/config/chromium",
+                home / ".var/app/com.microsoft.Edge/config/microsoft-edge",
+            ]
+            for base in flatpak_bases:
+                if not base.exists(): continue
+                for profile in ["Default", "Profile 1", "Profile 2"]:
+                    for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
+                        p = base / rel
+                        if p.exists(): results.append({"browser": "Chromium (Flatpak)", "type": "chromium", "path": p})
+
+            snap_bases = [
+                home / "snap/chromium/common/chromium",
+                home / "snap/firefox/common/.mozilla/firefox",
+            ]
+            for base in snap_bases:
+                if not base.exists(): continue
+                # For Chromium snap
+                if "chromium" in str(base).lower():
+                    for profile in ["Default", "Profile 1"]:
+                        p = base / profile / "Cookies"
+                        if p.exists(): results.append({"browser": "Chromium (Snap)", "type": "chromium", "path": p})
+                # For Firefox snap
+                elif "firefox" in str(base).lower():
+                    for p in base.glob("*.default*"):
+                        if (p / "cookies.sqlite").exists():
+                            results.append({"browser": "Firefox (Snap)", "type": "firefox", "path": p / "cookies.sqlite"})
+
+        # 3. Firefox
         ff_dirs = []
         if system == "Darwin": ff_dirs.append(home / "Library/Application Support/Firefox/Profiles")
         elif system == "Windows": ff_dirs.append(home / "AppData/Roaming/Mozilla/Firefox/Profiles")
@@ -775,6 +806,27 @@ class AnthropicCollector:
         # Priority 3: macOS Keychain
         if not access_token:
             access_token, refresh_token = AnthropicCollector.get_keychain_credentials()
+        
+        # Priority 4: Browser Cookies (Fallback)
+        if not access_token:
+            # Try anthropic.com first, then claude.ai
+            session_key = BrowserCookieExtractor.get_cookie("anthropic.com", "sessionKey")
+            if not session_key:
+                session_key = BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey")
+            
+            if session_key:
+                return [{
+                    "service": "Claude (Web Session)",
+                    "icon": "🟠",
+                    "remaining": "Cookie",
+                    "unit": "cookie",
+                    "reset": "—",
+                    "health": "good",
+                    "pace": "Cookie",
+                    "detail": "[Cookie Extracted] [Sidecar]",
+                    "data_source": "token_extracted",
+                    "metadata": {"cookie_sessionKey": session_key}
+                }]
         
         if not access_token:
             return []
