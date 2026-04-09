@@ -14,7 +14,7 @@ Collection Strategy:
    - Each host runs sidecar script to push local data
 
 Local DB Collection:
-- Controlled by OPENCODE_LOCAL_COLLECTOR_ENABLED env var
+- Controlled by LOCAL_COLLECTOR_ENABLED env var
 - Only used as additional data source, not primary
 """
 
@@ -57,7 +57,7 @@ class OpenCodeCollector(BaseCollector):
             return sidecar_cards
         
         # 3. Last resort: local DB (if enabled)
-        if os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() != "false":
+        if settings.LOCAL_COLLECTOR_ENABLED:
             return await self._get_opencode_tui()
         
         return []

@@ -145,13 +145,12 @@ class TestConfigKeyringIntegration:
 
     def test_keyring_import_handled(self):
         """Test that keyring import errors are handled gracefully."""
-        # Verify the config.py code has try/except around keyring import
-        import ast
+        # Verify the credential_provider.py code has try/except around keyring import
         import inspect
-        from app.core import config
+        from app.services.credential_provider import CredentialProvider
         
-        # Get source code of the CLAUDE_CODE_OAUTH_TOKEN property
-        source = inspect.getsource(config.Settings.CLAUDE_CODE_OAUTH_TOKEN.fget)
+        # Get source code of the get_claude_token method
+        source = inspect.getsource(CredentialProvider.get_claude_token)
         
         # Check that keyring is used with try/except
         assert 'import keyring' in source or 'keyring.get_password' in source
@@ -160,9 +159,9 @@ class TestConfigKeyringIntegration:
     def test_keyring_get_password_called_with_correct_args(self):
         """Test keyring.get_password is called with correct service and username."""
         import inspect
-        from app.core import config
+        from app.services.credential_provider import CredentialProvider
         
-        source = inspect.getsource(config.Settings.CLAUDE_CODE_OAUTH_TOKEN.fget)
+        source = inspect.getsource(CredentialProvider.get_claude_token)
         
         # Should call with "runway" and "claude-oauth-token"
         assert '"runway"' in source

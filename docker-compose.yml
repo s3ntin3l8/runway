@@ -33,7 +33,8 @@ services:
       
       # Disable local file collectors (no host access in container)
       # File-based data must come from sidecars
-      - OPENCODE_LOCAL_COLLECTOR_ENABLED=false
+      - LOCAL_COLLECTOR_ENABLED=false
+      - LOCAL_CREDENTIAL_SCRAPING_ENABLED=false
       
       # API Keys (optional - can also use sidecar for these)
       # These allow direct API calls from the container

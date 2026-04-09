@@ -57,130 +57,13 @@ class Settings:
     
     # GitHub OAuth Settings
     GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "Ov23liC6f9v0bAcZpXmB") # Community default
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
-    @property
-    def GITHUB_TOKEN(self) -> str:
-        """
-        Get GitHub token with priority:
-        1. GITHUB_TOKEN env var
-        2. Stored OAuth token (~/.runway/github_oauth.json)
-        3. Sidecar token cache (in-memory)
-        """
-        # Priority 1: Env var
-        token = os.getenv("GITHUB_TOKEN", "")
-        if token:
-            return token
+    # ChatGPT OAuth Settings
+    CHATGPT_OAUTH_TOKEN: str = os.getenv("CHATGPT_OAUTH_TOKEN", "")
 
-        # Priority 2: Stored OAuth token
-        if os.path.exists(self.GITHUB_OAUTH_PATH):
-            try:
-                with open(self.GITHUB_OAUTH_PATH, "r") as f:
-                    data = json.load(f)
-                    val = data.get("access_token")
-                    if val:
-                        return val
-            except Exception as e:
-                logger.debug(f"Error reading GitHub OAuth token from {self.GITHUB_OAUTH_PATH}: {e}")
-
-        # Priority 3: Fallback to sidecar cache (will be handled by collector if this returns empty)
-        return ""
-
-    @property
-    def CHATGPT_OAUTH_TOKEN(self) -> str:
-        """Get ChatGPT OAuth token from env or auth.json."""
-        # Priority 1: Env var
-        token = os.getenv("CHATGPT_OAUTH_TOKEN", "")
-        if token:
-            return token
-
-        # Priority 2: ~/.codex/auth.json
-        if os.path.exists(self.CHATGPT_AUTH_PATH):
-            try:
-                with open(self.CHATGPT_AUTH_PATH, "r") as f:
-                    data = json.load(f)
-                    val = data.get("tokens", {}).get("access_token")
-                    if val:
-                        return val
-            except Exception as e:
-                logger.debug(f"Error reading ChatGPT auth from {self.CHATGPT_AUTH_PATH}: {e}")
-
-        return ""
-
-    _claude_token_cache: Optional[str] = None
-
-    @property
-    def CLAUDE_CODE_OAUTH_TOKEN(self) -> str:
-        if self._claude_token_cache:
-            return self._claude_token_cache
-            
-        # Priority 1: Env var
-        token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-        if token:
-            self._claude_token_cache = token
-            return token
-
-        # Priority 2: Claude Code credentials (search multiple locations)
-        home = os.path.expanduser("~")
-        potential_paths = [
-            os.path.join(home, ".claude", ".credentials.json"),
-            os.path.join(get_platform_config_dir("claude"), ".credentials.json"),
-        ]
-        
-        for cred_path in potential_paths:
-            if os.path.exists(cred_path):
-                try:
-                    with open(cred_path, "r") as f:
-                        data = json.load(f)
-                        val = data.get("claudeAiOauth", {}).get("accessToken")
-                        if val:
-                            self._claude_token_cache = val
-                            return val
-                except Exception as e:
-                    logger.debug(f"Error reading credentials from {cred_path}: {e}")
-
-        # Priority 3: macOS Keychain (for sidecar scenarios)
-        if platform.system() == "Darwin":
-            try:
-                result = subprocess.run(
-                    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    keychain_data = result.stdout.strip()
-                    # Keychain stores the entire credentials JSON
-                    try:
-                        data = json.loads(keychain_data)
-                        val = data.get("claudeAiOauth", {}).get("accessToken")
-                        if val:
-                            logger.debug("Found Claude OAuth token in macOS Keychain")
-                            self._claude_token_cache = val
-                            return val
-                    except json.JSONDecodeError:
-                        # Might be stored as raw token string
-                        if keychain_data.startswith("sk-"):
-                            self._claude_token_cache = keychain_data
-                            return keychain_data
-            except subprocess.TimeoutExpired:
-                logger.debug("Keychain access timed out")
-            except Exception as e:
-                logger.debug(f"Could not read from macOS Keychain: {e}")
-
-        # Priority 4: Python keyring library (cross-platform)
-        try:
-            import keyring
-            token = keyring.get_password("runway", "claude-oauth-token")
-            if token:
-                logger.debug("Found Claude OAuth token in system keyring")
-                self._claude_token_cache = token
-                return token
-        except ImportError:
-            logger.debug("keyring library not installed, skipping keyring retrieval")
-        except Exception as e:
-            logger.debug(f"Could not read from keyring: {e}")
-
-        return ""
+    # Claude OAuth Settings
+    CLAUDE_CODE_OAUTH_TOKEN: str = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
@@ -210,7 +93,8 @@ class Settings:
     ANTIGRAVITY_QUOTA_PATH: str = os.getenv("ANTIGRAVITY_QUOTA_PATH", os.path.join(get_platform_data_dir("antigravity"), "state", "quota.json"))
     OPENCODE_DB_PATH: str = os.getenv("OPENCODE_DB_PATH", os.path.join(get_platform_data_dir("opencode"), "opencode.db"))
     EXTERNAL_METRICS_PATH: str = os.getenv("EXTERNAL_METRICS_PATH", os.path.join(get_platform_config_dir("usage-tracker"), "external_metrics.json"))
-    OPENCODE_LOCAL_COLLECTOR_ENABLED: bool = os.getenv("OPENCODE_LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
+    LOCAL_COLLECTOR_ENABLED: bool = os.getenv("LOCAL_COLLECTOR_ENABLED", "true").lower() == "true"
+    LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = os.getenv("LOCAL_CREDENTIAL_SCRAPING_ENABLED", "true").lower() == "true"
     
     # Network settings
     APP_HOST: str = os.getenv("APP_HOST", "127.0.0.1")  # Default: local-only for security

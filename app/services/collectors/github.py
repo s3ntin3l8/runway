@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any
 import httpx
 from app.core.config import settings
+from app.services.credential_provider import credential_provider
 from app.core.utils import human_delta, error_card, PaceCalculator
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -70,7 +71,7 @@ class GitHubCollector(BaseCollector):
             List[Dict[str, Any]]: Cards for each quota type or error card
         """
         # Check for token (env var or sidecar cache)
-        token = settings.GITHUB_TOKEN
+        token = credential_provider.get_github_token()
         # Check token cache from sidecar
         if not token:
             token = await token_cache.get_token("github", "api_key")

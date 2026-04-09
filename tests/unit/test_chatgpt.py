@@ -44,7 +44,7 @@ class TestChatGPTCollectorDetailed:
         with patch.dict('os.environ', {'CHATGPT_OAUTH_TOKEN': 'env_token'}):
             auth = await collector._get_auth_data(mock_http_client)
             assert auth["token"] == "env_token"
-            assert auth["source"] == "env"
+            assert auth["source"] == "credential_provider"
 
     @pytest.mark.asyncio
     async def test_auth_priority_file(self, mock_http_client):
@@ -57,7 +57,7 @@ class TestChatGPTCollectorDetailed:
                 with patch('builtins.open', mock_open(read_data=mock_auth)):
                     auth = await collector._get_auth_data(mock_http_client)
                     assert auth["token"] == "file_token"
-                    assert auth["source"] == "auth_json"
+                    assert auth["source"] == "credential_provider"
 
     @pytest.mark.asyncio
     async def test_auth_priority_cookies_and_refresh(self, mock_http_client):

@@ -108,7 +108,8 @@ docker run -d \
   --name runway \
   -p 8765:8765 \
   -e INGEST_API_KEY=your-secret-key \
-  -e OPENCODE_LOCAL_COLLECTOR_ENABLED=false \
+  -e LOCAL_COLLECTOR_ENABLED=false \
+  -e LOCAL_CREDENTIAL_SCRAPING_ENABLED=false \
   runway
 ```
 
@@ -123,7 +124,7 @@ services:
       - "8765:8765"
     environment:
       - INGEST_API_KEY=${INGEST_API_KEY:-sidecar-default-secret}
-      - OPENCODE_LOCAL_COLLECTOR_ENABLED=false
+      - LOCAL_COLLECTOR_ENABLED=false
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
       - KIMI_API_KEY=${KIMI_API_KEY:-}
@@ -145,7 +146,8 @@ python3 scripts/sidecar.py \
 | `ZAI_API_KEY` | ✅ | ✅ | ✅ | zAI API |
 | `KIMI_API_KEY` | ✅ | ✅ | ✅ | Kimi API |
 | `INGEST_API_KEY` | Optional | Required | Required | Sidecar auth |
-| `OPENCODE_LOCAL_COLLECTOR_ENABLED` | true | true | **false** | Disable in Docker |
+| `LOCAL_COLLECTOR_ENABLED` | true | true | **false** | Disable in Docker |
+| `LOCAL_CREDENTIAL_SCRAPING_ENABLED` | true | true | **false** | Disable in Docker |
 
 ## Data Collection & Caching
 

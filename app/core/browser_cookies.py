@@ -266,6 +266,9 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
     Returns:
         The decrypted/parsed cookie value, or None if not found.
     """
+    if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        return None
+
     targets = get_all_browser_cookies_paths()
     if not targets: return None
     
@@ -343,9 +346,13 @@ def get_kimi_auth_cookie() -> Optional[str]:
 def get_chatgpt_session_token() -> Optional[str]:
     """Extract ChatGPT session token from browser cookies."""
     return get_session_cookie("chatgpt.com", "__Secure-next-auth.session-token")
+from app.core.config import settings
 
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
     """Still needed for direct keychain access in sidecar."""
+    if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+        return None
+
     if platform.system() != "Darwin": return None
     try:
         import subprocess

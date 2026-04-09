@@ -58,7 +58,7 @@ Aggregates data from multiple hosts via `opencode-<hostname>` providers.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENCODE_WORKSPACE_ID` | Optional | Override auto-detected workspace ID |
-| `OPENCODE_LOCAL_COLLECTOR_ENABLED` | Optional | Enable local DB fallback (default: true) |
+| `LOCAL_COLLECTOR_ENABLED` | Optional | Enable local DB fallback (default: true) |
 
 ## Sidecar Support
 

@@ -52,6 +52,8 @@ from app.core.utils import error_card, PaceCalculator, safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
+from app.services.collectors.oauth_base import OAuthBaseCollector
+
 logger = logging.getLogger(__name__)
 
 # Model display name mapping
@@ -66,17 +68,79 @@ MODEL_DISPLAY_NAMES = {
 }
 
 
-class GeminiCollector(BaseCollector):
+class GeminiCollector(OAuthBaseCollector):
     def __init__(self):
         """Initialize caching for API results."""
+        # Credentials file path (search multiple locations, default to standard)
+        home = os.path.expanduser("~")
+        credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(home, ".gemini", "oauth_creds.json")
+        
+        super().__init__(provider_name="Gemini", credentials_path=credentials_path)
+        
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
-        self._refresh_lock = asyncio.Lock()
-        
-        # Credentials file path (search multiple locations, default to standard)
-        home = os.path.expanduser("~")
-        self._credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(home, ".gemini", "oauth_creds.json")
+
+    async def _get_current_token(self) -> Optional[str]:
+        """Get the current access token."""
+        # Check sidecar cache first
+        token = await token_cache.get_token("gemini", "oauth_token")
+        if not token:
+            creds = await self._get_credentials()
+            if creds:
+                token = creds.get("access_token")
+        return token
+
+    async def _is_token_expired(self) -> bool:
+        """Check if Gemini token is expired."""
+        try:
+            creds = await self._get_credentials()
+            if creds:
+                expiry_ms = creds.get("expiry_date", 0)
+                return expiry_ms < (time.time() * 1000)
+        except Exception as e:
+            logger.debug(f"Could not check Gemini token expiration: {e}")
+        return True
+
+    async def _execute_refresh(self, client: httpx.AsyncClient) -> Optional[Dict]:
+        """Execute the HTTP request to refresh the token for Gemini."""
+        creds = await self._get_credentials()
+        if not creds:
+            return None
+            
+        refresh_token = creds.get("refresh_token")
+        if not refresh_token:
+            logger.warning("No refresh token in Gemini credentials")
+            return None
+
+        try:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": settings.GEMINI_OAUTH_CLIENT_ID,
+                    "client_secret": settings.GEMINI_OAUTH_CLIENT_SECRET,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+                timeout=10
+            )
+            
+            if resp.status_code == 200:
+                new_data = resp.json()
+                creds["access_token"] = new_data["access_token"]
+                # Expiry is in seconds in response, convert to ms
+                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
+                
+                # Update sidecar cache
+                await token_cache.store("gemini", {"oauth_token": new_data["access_token"]})
+                
+                return creds
+            else:
+                logger.warning(f"Gemini token refresh failed with status {resp.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to refresh Gemini token: {e}")
+            return None
 
     def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
         """Check if results contain an error card."""
@@ -97,9 +161,10 @@ class GeminiCollector(BaseCollector):
             return api_data
 
         # Fallback to logs if API failed or returned errors
-        log_data = await self._collect_via_logs()
-        if log_data:
-            return log_data
+        if settings.LOCAL_COLLECTOR_ENABLED:
+            log_data = await self._collect_via_logs()
+            if log_data:
+                return log_data
 
         # Return API error if no logs available
         return api_data if api_data else []
@@ -136,69 +201,17 @@ class GeminiCollector(BaseCollector):
     async def _collect_via_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
         Fetch Gemini quota from Google Cloud Code API.
-        
-        Steps:
-        1. Check sidecar token cache, or load OAuth credentials from GEMINI_OAUTH_PATH
-        2. Refresh token if expired (saves updated credentials back to file)
-        3. Call loadCodeAssist to discover project and get tier info
-        4. Call retrieveUserQuota with discovered project to get all model quotas (including gemini-3)
-        5. Return one card per model bucket
-        
+
         Returns empty list on any error to allow fallback to logs.
-        
+
         Returns:
             List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
-        # Check for sidecar token
-        cached_token = await token_cache.get_token("gemini", "oauth_token")
-        if cached_token:
-            creds = {"access_token": cached_token, "expiry_date": float('inf')}
-            creds_path = None  # No file path for cached tokens
-        else:
-            # Priority 2: Try multiple credential file locations
-            # (same logic as sidecar for consistency)
-            creds = None
-            
-            if await asyncio.to_thread(os.path.exists, self._credentials_path):
-                try:
-                    def read_json(path):
-                        with open(path, "r") as f:
-                            return json.load(f)
-                    
-                    creds = await asyncio.to_thread(read_json, self._credentials_path)
-                    logger.debug(f"Loaded Gemini credentials from {self._credentials_path}")
-                except Exception as e:
-                    logger.debug(f"Failed to read {self._credentials_path}: {e}")
-            
-            if not creds:
-                logger.debug(f"Gemini credentials not found at {self._credentials_path}")
-                return []  # Allow fallback to logs
+        token = await self._get_valid_token(client)
+        if not token:
+            return []
 
         try:
-            # Check expiry (expiry_date is in ms)
-            if creds.get("expiry_date", 0) < (time.time() * 1000):
-                async with self._refresh_lock:
-                    # Re-check expiry under lock
-                    if not cached_token:
-                        # Re-read from file in case another request updated it
-                        try:
-                            def read_json(path):
-                                with open(path, "r") as f:
-                                    return json.load(f)
-                            creds = await asyncio.to_thread(read_json, self._credentials_path)
-                        except:
-                            pass
-                    
-                    if creds.get("expiry_date", 0) < (time.time() * 1000):
-                        creds = await self._refresh_token(client, creds)
-                        if not creds:
-                            return [error_card("Gemini", "🔵", "Token refresh failed", error_type="auth_failed")]
-                        
-                        # Save refreshed creds back
-                        if not cached_token:
-                            self._persist_refreshed_tokens(creds)
-
-            token = creds.get("access_token")
             headers = {"Authorization": f"Bearer {token}"}
 
             # 1. Load Code Assist - get project and tier info
@@ -207,6 +220,7 @@ class GeminiCollector(BaseCollector):
                 json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
                 headers=headers
             )
+
             tier_info = tier_resp.json()
             
             # Extract project and tier
@@ -330,61 +344,6 @@ class GeminiCollector(BaseCollector):
         except Exception as e:
             logger.error(f"Gemini API collection failed: {e}")
             return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
-
-    def _persist_refreshed_tokens(self, creds: Dict):
-        """Persist refreshed tokens to local config file."""
-        if settings.RUN_MODE == "docker":
-            logger.info("Skipping Gemini token persistence in Docker mode")
-            return
-            
-        try:
-            safe_write_json(self._credentials_path, creds)
-            logger.info(f"Persisted Gemini refreshed tokens to {self._credentials_path}")
-        except Exception as e:
-            logger.error(f"Failed to persist tokens: {e}")
-
-    async def _refresh_token(self, client: httpx.AsyncClient, creds: Dict) -> Optional[Dict]:
-        """
-        Refresh Google OAuth token if expired.
-        
-        Uses refresh_token from credentials to get new access_token.
-        Updates expiry_date in credentials dictionary (milliseconds).
-        Note: Caller is responsible for saving credentials back to file.
-        
-        Args:
-            client: httpx.AsyncClient for making requests
-            creds: Dictionary with access_token, refresh_token, expiry_date
-            
-        Returns:
-            Updated creds dict with new access_token and expiry_date, or None if refresh fails
-        """
-        refresh_token = creds.get("refresh_token")
-        if not refresh_token: 
-            logger.warning("No refresh token in Gemini credentials")
-            return None
-
-        try:
-            resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": settings.GEMINI_OAUTH_CLIENT_ID,
-                    "client_secret": settings.GEMINI_OAUTH_CLIENT_SECRET,
-                    "refresh_token": refresh_token,
-                    "grant_type": "refresh_token",
-                }
-            )
-            if resp.status_code != 200:
-                logger.warning(f"Token refresh failed with status {resp.status_code}")
-                return None
-            
-            new_data = resp.json()
-            creds["access_token"] = new_data["access_token"]
-            # Expiry is in seconds in response, convert to ms
-            creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-            return creds
-        except Exception as e:
-            logger.error(f"Failed to refresh Gemini token: {e}")
-            return None
 
     async def _collect_via_logs(self) -> List[Dict[str, Any]]:
         """

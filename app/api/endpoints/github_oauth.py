@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from app.core.config import settings
+from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,7 +90,7 @@ async def get_status():
         try:
             async with httpx.AsyncClient() as client:
                 # We can't easily check validity without an API call, but we can verify presence
-                token = settings.GITHUB_TOKEN
+                token = credential_provider.get_github_token()
                 if not token:
                     return DeviceFlowStatusResponse(authenticated=False)
                 

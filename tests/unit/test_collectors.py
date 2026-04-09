@@ -72,7 +72,7 @@ class TestAnthropicCollector:
             
             with patch('app.services.collectors.anthropic.glob.glob', return_value=[]):
                 with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value=None):
-                    with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                    with patch.object(collector, '_get_valid_token', return_value=None):
                         result = await collector.collect(mock_http_client)
 
         # Should return error card for invalid token (no logs fallback)
@@ -189,8 +189,10 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "expired_token"
             mock_settings.CLAUDE_CODE_REFRESH_TOKEN = "valid_refresh_token"
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
+            mock_settings.CLAUDE_PRO_LIMIT = 2000000
+            mock_settings.CLAUDE_FREE_LIMIT = 500000
 
-            with patch.object(collector, '_persist_refreshed_tokens', return_value=None):
+            with patch.object(collector, '_persist_credentials', return_value=None):
                 with patch('app.services.token_cache.token_cache.store', return_value=None):
                     result = await collector.collect(mock_http_client)
 
@@ -235,7 +237,7 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="sk-ant-session123"):
-                with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                with patch.object(collector, '_get_valid_token', return_value=None):
                     result = await collector.collect(mock_http_client)
 
         # Should return Web API results
@@ -559,7 +561,7 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_FREE_LIMIT = 500000
             
             with patch('app.services.collectors.anthropic.get_claude_session_cookie', return_value="session_key"):
-                with patch.object(collector, '_refresh_oauth_token', return_value=None):
+                with patch.object(collector, '_get_valid_token', return_value=None):
                     result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
