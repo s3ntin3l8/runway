@@ -181,7 +181,7 @@ class ZaiPlanCollector(BaseCollector):
                 reset_dt = datetime.fromtimestamp(reset_ts, tz=timezone.utc)
                 reset_str = human_delta(reset_dt)
                 reset_at = reset_dt.isoformat()
-            except (ValueError, OSError):
+            except (ValueError, OSError, OverflowError):
                 reset_str = "Unknown"
 
         # Health based on percentage used

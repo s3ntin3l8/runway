@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
+import re
 import asyncio
 import random
 import httpx
@@ -49,9 +50,25 @@ def error_card(service: str, icon: str, message: str, error_type: str = "unknown
         "reset": "—",
         "health": "critical",
         "pace": "Stopped",
-        "detail": message,
+        "detail": truncate_string(message, 40),
         "error_type": error_type
     }
+
+def truncate_string(s: Any, limit: int = 40) -> str:
+    """Standardize string truncation with ellipsis."""
+    str_val = str(s)
+    if len(str_val) <= limit:
+        return str_val
+    return str_val[:limit-3] + "..."
+
+def extract_token_regex(detail: str, prefix: str) -> Optional[str]:
+    """
+    Robustly extract a token from a detail string using regex.
+    Matches the prefix followed by non-whitespace/separator characters.
+    """
+    pattern = rf"{re.escape(prefix)}\s*([^\s·\[\]]+)"
+    match = re.search(pattern, detail)
+    return match.group(1) if match else None
 
 async def http_request_with_retry(
     client: httpx.AsyncClient,

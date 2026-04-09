@@ -20,6 +20,7 @@ Benefits:
 
 import time
 import logging
+import copy
 from typing import List, Dict, Any, Optional
 import httpx
 
@@ -245,7 +246,7 @@ class SmartCollector:
         
         tagged = []
         for card in result:
-            card_copy = card.copy()
+            card_copy = copy.deepcopy(card)
             original_detail = card_copy.get("detail", "")
             card_copy["detail"] = f"{original_detail} [Cached {age_str} ago]"
             tagged.append(card_copy)

@@ -4,18 +4,6 @@ This document tracks planned enhancements for Runway. Items are organized by cat
 
 ---
 
-## High Priority
-
-### 1. ChatGPT Web Dashboard Scraping
-**File:** `app/services/collectors/chatgpt.py`  
-**Effort:** 1-2 days
-
-Scrape `https://chatgpt.com/codex/settings/usage` for rate limits, credits, detailed charts.
-- Support manual Cookie header input
-- Support automatic cookie extraction (Safari/Chrome/Firefox on macOS)
-
----
-
 ## Medium Priority
 
 ### 4. Move Away from Hardcoded Limits

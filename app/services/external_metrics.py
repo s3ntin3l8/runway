@@ -39,8 +39,10 @@ class ExternalMetricService:
 
     async def _save(self):
         async with self._lock:
-            with open(self.path, "w") as f:
-                json.dump(self.metrics, f, indent=2)
+            def sync_save():
+                with open(self.path, "w") as f:
+                    json.dump(self.metrics, f, indent=2)
+            await asyncio.to_thread(sync_save)
 
     async def update_metrics(self, provider: str, cards: List[LimitCard]):
         now = datetime.now(timezone.utc).isoformat()
