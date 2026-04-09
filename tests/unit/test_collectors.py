@@ -253,15 +253,23 @@ class TestAnthropicCollector:
                     with patch.object(
                         collector, "_is_token_expired", return_value=False
                     ):
+                        # Mock refresh token availability
                         with patch.object(
-                            collector, "_persist_credentials", return_value=None
+                            collector,
+                            "_get_credentials",
+                            return_value={
+                                "claudeAiOauth": {"refreshToken": "valid_refresh_token"}
+                            },
                         ):
-                            with patch(
-                                "app.services.token_cache.token_cache.store",
-                                return_value=None,
+                            with patch.object(
+                                collector, "_persist_credentials", return_value=None
                             ):
-                                # First request gets 401, then reactive refresh happens, then second request succeeds
-                                result = await collector.collect(mock_http_client)
+                                with patch(
+                                    "app.services.token_cache.token_cache.store",
+                                    return_value=None,
+                                ):
+                                    # First request gets 401, then reactive refresh happens, then second request succeeds
+                                    result = await collector.collect(mock_http_client)
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
