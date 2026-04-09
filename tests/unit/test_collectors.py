@@ -201,6 +201,8 @@ class TestAnthropicCollector:
         # Mock initial 401 response (expired token)
         oauth_401_response = MagicMock(spec=httpx.Response)
         oauth_401_response.status_code = 401
+        oauth_401_response.json.return_value = {"error": "unauthorized"}
+        oauth_401_response.text = '{"error": "unauthorized"}'
 
         # Mock successful token refresh response
         refresh_response = MagicMock(spec=httpx.Response)
@@ -234,19 +236,28 @@ class TestAnthropicCollector:
         mock_http_client.request.side_effect = mock_request
         mock_http_client.post.return_value = refresh_response
 
-        with patch("app.services.collectors.anthropic.settings") as mock_settings:
-            mock_settings.CLAUDE_CODE_OAUTH_TOKEN = "expired_token"
-            mock_settings.CLAUDE_CODE_REFRESH_TOKEN = "valid_refresh_token"
-            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-            mock_settings.CLAUDE_PRO_LIMIT = 2000000
-            mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+        with patch(
+            "app.services.credential_provider.CredentialProvider.get_claude_token",
+            return_value="expired_token",
+        ):
+            with patch("app.services.collectors.anthropic.settings") as mock_settings:
+                mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
+                mock_settings.CLAUDE_PRO_LIMIT = 2000000
+                mock_settings.CLAUDE_FREE_LIMIT = 500000
+                mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
-            with patch.object(collector, "_persist_credentials", return_value=None):
-                with patch(
-                    "app.services.token_cache.token_cache.store", return_value=None
+                # Only return expired once, then return False after refresh
+                with patch.object(
+                    collector, "_is_token_expired", side_effect=[True, False, False]
                 ):
-                    result = await collector.collect(mock_http_client)
+                    with patch.object(
+                        collector, "_persist_credentials", return_value=None
+                    ):
+                        with patch(
+                            "app.services.token_cache.token_cache.store",
+                            return_value=None,
+                        ):
+                            result = await collector.collect(mock_http_client)
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
