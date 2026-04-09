@@ -246,10 +246,8 @@ class TestAnthropicCollector:
                 mock_settings.CLAUDE_FREE_LIMIT = 500000
                 mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
-                # Only return expired once, then return False after refresh
-                with patch.object(
-                    collector, "_is_token_expired", side_effect=[True, False, False]
-                ):
+                # Return False for expiration check so we hit the reactive path (401 response)
+                with patch.object(collector, "_is_token_expired", return_value=False):
                     with patch.object(
                         collector, "_persist_credentials", return_value=None
                     ):
@@ -257,6 +255,7 @@ class TestAnthropicCollector:
                             "app.services.token_cache.token_cache.store",
                             return_value=None,
                         ):
+                            # First request gets 401, then reactive refresh happens, then second request succeeds
                             result = await collector.collect(mock_http_client)
 
         # Should return successful OAuth results (not error cards)
