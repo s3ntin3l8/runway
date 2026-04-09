@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from app.core.config import settings, get_platform_config_dir
-from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
+from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry, safe_write_json
 from app.core.chrome_cookies import get_claude_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -86,6 +86,8 @@ class AnthropicCollector(BaseCollector):
         
         if not os.path.exists(self._credentials_path) and os.path.exists(platform_cred_path):
             self._credentials_path = platform_cred_path
+            
+        self._refresh_lock = asyncio.Lock()
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
@@ -199,8 +201,19 @@ class AnthropicCollector(BaseCollector):
         Returns:
             Optional[str]: New access token if successful, None otherwise
         """
-        if not self._can_attempt_refresh():
-            return None
+        async with self._refresh_lock:
+            # Re-check expiration under lock to avoid redundant refreshes
+            token = settings.CLAUDE_CODE_OAUTH_TOKEN
+            if not token:
+                token = await token_cache.get_token("anthropic", "oauth_token")
+            
+            if token and not self._is_token_expired(token):
+                # Another request already refreshed the token
+                logger.info("Token already refreshed by another concurrent request")
+                return token
+
+            if not self._can_attempt_refresh():
+                return None
         
         # Load refresh token from credentials file or sidecar cache
         refresh_token = None
@@ -323,9 +336,8 @@ class AnthropicCollector(BaseCollector):
             data["claudeAiOauth"]["refreshToken"] = refresh_token
             data["claudeAiOauth"]["expiresAt"] = expires_at_ms
             
-            # Write back
-            with open(self._credentials_path, 'w') as f:
-                json.dump(data, f, indent=2)
+            # Write back atomically
+            safe_write_json(self._credentials_path, data)
             
             logger.info(f"Persisted refreshed tokens to {self._credentials_path}")
             

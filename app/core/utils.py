@@ -4,6 +4,9 @@ import asyncio
 import random
 import httpx
 import logging
+import os
+import json
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -99,3 +102,27 @@ async def http_request_with_retry(
     
     # This shouldn't be reached but just in case
     raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
+
+def safe_write_json(path: str, data: dict):
+    """
+    Write JSON data to a file atomically using a temporary file and rename.
+    This prevents file corruption if the process is interrupted during writing.
+    """
+    # ensure directory exists
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    # Use the same directory for the temp file to ensure os.replace is atomic (same filesystem)
+    fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".tmp")
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())  # Ensure data is written to disk
+        
+        # Atomic rename
+        os.replace(temp_path, path)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        logger.error(f"Failed to write JSON atomically to {path}: {e}")
+        raise

@@ -650,7 +650,7 @@ class AnthropicCollector:
             "reset": "—",
             "health": "good",
             "pace": "Token",
-            "detail": " ".join(detail_parts),
+            "detail": "[Token Extracted] [Sidecar]",
             "data_source": "token_extracted",
             "metadata": metadata
         }]
@@ -700,7 +700,7 @@ class GitHubCollector:
             "reset": "—",
             "health": "good",
             "pace": "Token",
-            "detail": f"api_key:{token} [Sidecar]",
+            "detail": "[Token Extracted] [Sidecar]",
             "data_source": "token_extracted",
             "metadata": {"api_key": token}
         }]
@@ -742,7 +742,7 @@ class GeminiCollector:
                 "reset": "—",
                 "health": "good",
                 "pace": "Token",
-                "detail": f"oauth_token:{token} [Sidecar]",
+                "detail": "[Token Extracted] [Sidecar]",
                 "data_source": "token_extracted",
                 "metadata": {"oauth_token": token}
             }]
@@ -785,7 +785,7 @@ class ChatGPTCollector:
             "reset": "—",
             "health": "good",
             "pace": "Token",
-            "detail": f"oauth_token:{token} [Sidecar]",
+            "detail": "[Token Extracted] [Sidecar]",
             "data_source": "token_extracted",
             "metadata": {"oauth_token": token}
         }]
@@ -843,7 +843,7 @@ class KimiCollector:
             "reset": "—",
             "health": "good",
             "pace": "Token",
-            "detail": f"cookie:kimi-auth:{token} [Sidecar]",
+            "detail": "[Cookie Extracted] [Sidecar]",
             "data_source": "token_extracted",
             "metadata": {"cookie_kimi-auth": token}
         }]
@@ -868,7 +868,7 @@ class ZaiCollector:
             "reset": "—",
             "health": "good",
             "pace": "Token",
-            "detail": f"api_key:{key} [Sidecar]",
+            "detail": "[Token Extracted] [Sidecar]",
             "data_source": "token_extracted",
             "metadata": {"api_key": key}
         }]
@@ -919,7 +919,7 @@ class OpenCodeCollector:
                 "reset": "—",
                 "health": "good",
                 "pace": "Token",
-                "detail": f"cookie:session:{session} [Sidecar]",
+                "detail": "[Cookie Extracted] [Sidecar]",
                 "data_source": "token_extracted",
                 "metadata": {"cookie_session": session}
             })

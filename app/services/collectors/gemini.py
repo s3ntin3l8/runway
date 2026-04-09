@@ -42,12 +42,13 @@ import glob
 import json
 import os
 import time
+import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import httpx
 from app.core.config import settings
-from app.core.utils import error_card, PaceCalculator
+from app.core.utils import error_card, PaceCalculator, safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
@@ -71,6 +72,11 @@ class GeminiCollector(BaseCollector):
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+        self._refresh_lock = asyncio.Lock()
+        
+        # Credentials file path (search multiple locations, default to standard)
+        home = os.path.expanduser("~")
+        self._credentials_path = settings.GEMINI_OAUTH_PATH or os.path.join(home, ".gemini", "oauth_creds.json")
 
     def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
         """Check if results contain an error card."""
@@ -145,40 +151,41 @@ class GeminiCollector(BaseCollector):
         else:
             # Priority 2: Try multiple credential file locations
             # (same logic as sidecar for consistency)
-            potential_paths = [
-                settings.GEMINI_OAUTH_PATH,  # From env var or platform config dir
-                os.path.expanduser("~/.gemini/oauth_creds.json"),  # Legacy location
-            ]
-            
-            creds_path = None
             creds = None
             
-            for path in potential_paths:
-                if os.path.exists(path):
-                    try:
-                        with open(path, "r") as f:
-                            creds = json.load(f)
-                        creds_path = path
-                        logger.debug(f"Loaded Gemini credentials from {path}")
-                        break
-                    except Exception as e:
-                        logger.debug(f"Failed to read {path}: {e}")
-                        continue
+            if os.path.exists(self._credentials_path):
+                try:
+                    with open(self._credentials_path, "r") as f:
+                        creds = json.load(f)
+                    logger.debug(f"Loaded Gemini credentials from {self._credentials_path}")
+                except Exception as e:
+                    logger.debug(f"Failed to read {self._credentials_path}: {e}")
             
             if not creds:
-                logger.debug(f"Gemini credentials not found in any location: {potential_paths}")
+                logger.debug(f"Gemini credentials not found at {self._credentials_path}")
                 return []  # Allow fallback to logs
 
         try:
             # Check expiry (expiry_date is in ms)
             if creds.get("expiry_date", 0) < (time.time() * 1000):
-                creds = await self._refresh_token(client, creds)
-                if not creds:
-                    return [error_card("Gemini", "🔵", "Token refresh failed", error_type="auth_failed")]
-                # Save refreshed creds back (only if we have a file path)
-                if not cached_token and creds_path:
-                    with open(creds_path, "w") as f:
-                        json.dump(creds, f, indent=2)
+                async with self._refresh_lock:
+                    # Re-check expiry under lock
+                    if not cached_token:
+                        # Re-read from file in case another request updated it
+                        try:
+                            with open(self._credentials_path, "r") as f:
+                                creds = json.load(f)
+                        except:
+                            pass
+                    
+                    if creds.get("expiry_date", 0) < (time.time() * 1000):
+                        creds = await self._refresh_token(client, creds)
+                        if not creds:
+                            return [error_card("Gemini", "🔵", "Token refresh failed", error_type="auth_failed")]
+                        
+                        # Save refreshed creds back
+                        if not cached_token:
+                            self._persist_refreshed_tokens(creds)
 
             token = creds.get("access_token")
             headers = {"Authorization": f"Bearer {token}"}
@@ -313,15 +320,15 @@ class GeminiCollector(BaseCollector):
             logger.error(f"Gemini API collection failed: {e}")
             return [error_card("Gemini", "🔵", f"API Error: {str(e)[:30]}", error_type="api_error")]
 
-    def _persist_refreshed_tokens(self, access_token: str, refresh_token: str):
+    def _persist_refreshed_tokens(self, creds: Dict):
         """Persist refreshed tokens to local config file."""
         if settings.RUN_MODE == "docker":
             logger.info("Skipping Gemini token persistence in Docker mode")
             return
             
         try:
-            # Logic to save to file would go here
-            pass
+            safe_write_json(self._credentials_path, creds)
+            logger.info(f"Persisted Gemini refreshed tokens to {self._credentials_path}")
         except Exception as e:
             logger.error(f"Failed to persist tokens: {e}")
 

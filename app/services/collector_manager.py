@@ -59,6 +59,7 @@ class CollectorManager:
         ]
         
         self.smart_collectors = []
+        self._client = None
         logger.info(f"CollectorManager initialized with {len(self.collector_configs)} collector configs")
 
     def _lazy_load_collectors(self):
@@ -75,6 +76,12 @@ class CollectorManager:
                 for collector_cls, name, ttl in self.collector_configs
             ]
             logger.info(f"Lazy loaded {len(self.smart_collectors)} collectors")
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create a persistent httpx client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
     
     async def collect_all(self) -> List[Dict[str, Any]]:
         """
@@ -92,20 +99,20 @@ class CollectorManager:
             List[Dict[str, Any]]: All limit cards from all sources
         """
         self._lazy_load_collectors()
+        client = await self._get_client()
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                # Run all collectors concurrently with exception handling
-                tasks = [
-                    smart_collector.collect(client)
-                    for smart_collector in self.smart_collectors
-                ]
-                # Wrap with global timeout to protect against I/O hangs
-                results = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=20.0
-                )
+            # Run all collectors concurrently with exception handling
+            tasks = [
+                smart_collector.collect(client)
+                for smart_collector in self.smart_collectors
+            ]
+            # Wrap with global timeout to protect against I/O hangs
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=25.0
+            )
         except asyncio.TimeoutError:
-            logger.error("Global collector timeout reached (20.0s). Collection aborted.")
+            logger.error("Global collector timeout reached. Collection aborted.")
             results = []
         
         # Flatten results, handling exceptions

@@ -76,41 +76,14 @@ async def ingest_metrics(
     provider_base = request.provider.split("-")[0]
     
     for card in request.metrics:
-        detail = card.detail
-        
-        # 1. New Strategy: Structured metadata extraction
+        # 1. Structured metadata extraction
         if card.metadata:
             for key, val in card.metadata.items():
                 if key in ("oauth_token", "refresh_token", "api_key") or key.startswith("cookie_"):
                     tokens[key] = val
                     logger.debug(f"Extracted {key} from metadata for {provider_base}")
         
-        # 2. Legacy Strategy: Extract tokens from detail string (backward compatibility)
-        # Extract OAuth token and refresh token BEFORE modifying detail
-        oauth_token = tokens.get("oauth_token") or (_extract_token(detail, "oauth_token:") if "oauth_token:" in detail else None)
-        refresh_token = tokens.get("refresh_token") or (_extract_token(detail, "refresh_token:") if "refresh_token:" in detail else None)
-        
-        # Store tokens
-        if oauth_token:
-            tokens["oauth_token"] = oauth_token
-        
-        if refresh_token:
-            tokens["refresh_token"] = refresh_token
-        
-        # Redact tokens from detail string
-        if oauth_token:
-            detail = detail.replace(f"oauth_token:{oauth_token}", "oauth_token:[REDACTED]")
-        if refresh_token:
-            detail = detail.replace(f"refresh_token:{refresh_token}", "refresh_token:[REDACTED]")
-            
-        # Update card detail with redactions (Fix: ensure assignment happens even if only oauth_token present)
-        card.detail = detail
-        
         # Check if this is a token-only card (should NOT be displayed)
-        # Token-only cards have indicators like:
-        # - remaining="Token" and unit="oauth"/"api_key"
-        # - data_source="token_extracted"
-        # - detail contains only redacted tokens
         is_token_only = (
             card.remaining == "Token" and card.unit in ("oauth", "api_key") and
             card.data_source == "token_extracted"
@@ -121,28 +94,8 @@ async def ingest_metrics(
             logger.debug(f"Skipping token-only card for {card.service}")
             continue
         
-        # Extract cookie (Legacy)
-        if "cookie:" in detail and not is_token_only and not any(k.startswith("cookie_") for k in tokens):
-            cookie_info = _extract_cookie(detail)
-            if cookie_info:
-                name, value = cookie_info
-                tokens[f"cookie_{name}"] = value
-                card.detail = detail.replace(f"cookie:{name}:{value}", f"cookie:{name}:[REDACTED]")
-                local_cards.append(card)
-                logger.debug(f"Extracted cookie '{name}' for {provider_base} (legacy)")
-        
-        # Extract API key (Legacy)
-        elif "api_key:" in detail and not is_token_only and "api_key" not in tokens:
-            key = _extract_token(detail, "api_key:")
-            if key:
-                tokens["api_key"] = key
-                card.detail = detail.replace(f"api_key:{key}", "api_key:[REDACTED]")
-                local_cards.append(card)
-                logger.debug(f"Extracted API key for {provider_base} (legacy)")
-        
-        # Keep actual data cards (local file readings)
-        else:
-            local_cards.append(card)
+        # Keep actual data cards
+        local_cards.append(card)
     
     # Store tokens in cache
     if tokens:
@@ -160,40 +113,3 @@ async def ingest_metrics(
         "tokens_received": len(tokens),
         "metrics_stored": len(local_cards)
     }
-
-
-def _extract_token(detail: str, prefix: str) -> Optional[str]:
-    """Extract token value after prefix."""
-    try:
-        start = detail.index(prefix) + len(prefix)
-        end = detail.find(" ", start)
-        if end == -1:
-            end = detail.find("·", start)
-        if end == -1:
-            end = detail.find("[", start)
-        if end == -1:
-            end = len(detail)
-        return detail[start:end].strip()
-    except ValueError:
-        return None
-
-
-def _extract_cookie(detail: str) -> Optional[tuple]:
-    """Extract cookie name and value."""
-    try:
-        start = detail.index("cookie:") + len("cookie:")
-        end = detail.find(" ", start)
-        if end == -1:
-            end = detail.find("·", start)
-        if end == -1:
-            end = detail.find("[", start)
-        if end == -1:
-            end = len(detail)
-        
-        cookie_str = detail[start:end].strip()
-        parts = cookie_str.split(":", 1)
-        if len(parts) == 2:
-            return parts[0], parts[1]
-    except ValueError:
-        pass
-    return None

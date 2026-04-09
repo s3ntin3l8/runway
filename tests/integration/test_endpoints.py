@@ -234,8 +234,8 @@ class TestIngestEndpoint:
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
 
-    async def test_ingest_oauth_token_redacted_no_refresh_token(self):
-        """C2: card.detail must be redacted when oauth_token present but refresh_token absent."""
+    async def test_ingest_structured_metadata_extraction(self):
+        """Verify that tokens are extracted from structured metadata."""
         from fastapi.testclient import TestClient
         from unittest.mock import patch, MagicMock
 
@@ -249,12 +249,16 @@ class TestIngestEndpoint:
                 {
                     "service": "Claude Pro",
                     "icon": "🟠",
-                    "remaining": "60%",
-                    "unit": "capacity",
-                    "reset": "in 3h",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "reset": "—",
                     "health": "good",
-                    "pace": "~5 days",
-                    "detail": f"oauth_token:{oauth_token} some other data"
+                    "pace": "Token",
+                    "detail": "[Token Extracted] [Sidecar]",
+                    "data_source": "token_extracted",
+                    "metadata": {
+                        "oauth_token": oauth_token
+                    }
                 }
             ]
         }
@@ -263,11 +267,7 @@ class TestIngestEndpoint:
         headers = self._get_hmac_headers(body, api_key=test_key)
 
         with patch('app.api.endpoints.ingest.external_metric_service') as mock_service:
-            # Capturing the cards to verify redaction
-            stored_cards = []
-            async def mock_update(provider, cards):
-                stored_cards.extend([c.model_dump() if hasattr(c, 'model_dump') else c for c in cards])
-            mock_service.metrics_update_from_ingest = AsyncMock(side_effect=mock_update)
+            mock_service.metrics_update_from_ingest = AsyncMock()
 
             with patch('app.api.endpoints.ingest.settings') as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
@@ -276,13 +276,13 @@ class TestIngestEndpoint:
                 with patch('app.api.endpoints.ingest.token_cache') as mock_cache:
                     mock_cache.store = AsyncMock()
                     response = test_client.post("/api/ingest", content=body, headers=headers)
+                    
+                    # Verify token was stored in cache
+                    mock_cache.store.assert_called_once()
+                    stored_tokens = mock_cache.store.call_args[0][1]
+                    assert stored_tokens["oauth_token"] == oauth_token
 
         assert response.status_code == 200
-        # The raw oauth token must not appear in any stored card detail
-        assert len(stored_cards) > 0
-        for card in stored_cards:
-            assert oauth_token not in card.get("detail", ""), \
-                f"Raw oauth_token found in stored card detail: {card['detail']}"
 
     async def test_ingest_invalid_payload(self):
         """Test that invalid payloads are rejected with correct HMAC."""
