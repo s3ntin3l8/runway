@@ -227,53 +227,49 @@ class TestAnthropicCollector:
             "expires_in": 28800,
         }
 
-        # Mock successful OAuth call with new token
+        # Mock successful OAuth response
         oauth_success_response = MagicMock(spec=httpx.Response)
         oauth_success_response.status_code = 200
         oauth_success_response.json.return_value = mock_anthropic_oauth_response
 
-        # Set up mock to return different responses based on URL
-        async def mock_request(*args, **kwargs):
-            url = args[1] if len(args) > 1 else kwargs.get("url", "")
-            if "oauth/usage" in url:
-                if not hasattr(mock_request, "called"):
-                    mock_request.called = True
-                    return oauth_401_response
-                return oauth_success_response
-            return oauth_success_response
-
-        mock_http_client.request.side_effect = mock_request
-        mock_http_client.post.return_value = refresh_response
-
+        # Use patch for http_request_with_retry to control the flow precisely
         with patch(
-            "app.services.credential_provider.CredentialProvider.get_claude_token",
-            return_value="expired_token",
-        ):
-            with patch("app.services.collectors.anthropic.settings") as mock_settings:
-                mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-                mock_settings.CLAUDE_PRO_LIMIT = 2000000
-                mock_settings.CLAUDE_FREE_LIMIT = 500000
-                mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-                mock_settings.LOCAL_COLLECTOR_ENABLED = False
+            "app.services.collectors.anthropic.http_request_with_retry"
+        ) as mock_retry:
+            # First call returns 401, second (after refresh) returns 200
+            mock_retry.side_effect = [oauth_401_response, oauth_success_response]
+            mock_http_client.post.return_value = refresh_response
 
-                # Return False for expiration check so we hit the reactive path (401 response)
-                with patch.object(collector, "_is_token_expired", return_value=False):
+            with patch(
+                "app.services.credential_provider.CredentialProvider.get_claude_token",
+                return_value="expired_token",
+            ):
+                with patch(
+                    "app.services.collectors.anthropic.settings"
+                ) as mock_settings:
+                    mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
+                    mock_settings.CLAUDE_PRO_LIMIT = 2000000
+                    mock_settings.CLAUDE_FREE_LIMIT = 500000
+                    mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
+                    mock_settings.LOCAL_COLLECTOR_ENABLED = False
+
+                    # Return False for expiration check so we hit the reactive path (401 response)
                     with patch.object(
-                        collector, "_persist_credentials", return_value=None
+                        collector, "_is_token_expired", return_value=False
                     ):
-                        with patch(
-                            "app.services.token_cache.token_cache.store",
-                            return_value=None,
+                        with patch.object(
+                            collector, "_persist_credentials", return_value=None
                         ):
-                            # First request gets 401, then reactive refresh happens, then second request succeeds
-                            result = await collector.collect(mock_http_client)
-                            print(f"\nDEBUG: result after refresh = {result}")
+                            with patch(
+                                "app.services.token_cache.token_cache.store",
+                                return_value=None,
+                            ):
+                                # First request gets 401, then reactive refresh happens, then second request succeeds
+                                result = await collector.collect(mock_http_client)
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
         assert len(result) >= 1
-        for i, card in enumerate(result):
-            print(f"DEBUG: card {i} = {card}")
         assert all(card.get("remaining") != "ERR" for card in result)
         assert any(card.get("data_source") == "oauth" for card in result)
 
