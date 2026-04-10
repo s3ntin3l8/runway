@@ -51,6 +51,7 @@ from app.core.config import settings
 from app.core.utils import error_card, PaceCalculator, safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
+from app.services.credential_provider import credential_provider
 
 from app.services.collectors.oauth_base import OAuthBaseCollector
 
@@ -71,15 +72,12 @@ MODEL_DISPLAY_NAMES = {
 class GeminiCollector(OAuthBaseCollector):
     def __init__(self):
         """Initialize caching for API results."""
-        # Search for credentials in multiple locations
-        home = os.path.expanduser("~")
-        potential_paths = [
-            settings.GEMINI_OAUTH_PATH,
-            os.path.join(home, ".gemini", "oauth_creds.json"),
-            os.path.join(home, ".config", "gemini", "oauth_creds.json"),
-        ]
+        # Search for credentials via centralized provider
+        credentials_path = credential_provider.get_gemini_credentials_path()
         
-        credentials_path = next((p for p in potential_paths if p and os.path.exists(p)), potential_paths[0])
+        # Fallback to default if not found
+        if not credentials_path:
+            credentials_path = settings.GEMINI_OAUTH_PATH
 
         super().__init__(provider_name="Gemini", credentials_path=credentials_path)
 

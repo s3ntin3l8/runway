@@ -3,10 +3,15 @@ import json
 import logging
 import platform
 import subprocess
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from app.core.config import settings, get_platform_config_dir
 
 logger = logging.getLogger(__name__)
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 
 class CredentialProvider:
@@ -17,9 +22,8 @@ class CredentialProvider:
 
     @staticmethod
     def get_github_token() -> str:
-        """Get GitHub token with priority: Env -> File."""
-        # Priority 1: Env var (this is already handled by settings.GITHUB_TOKEN if we keep it simple)
-        # But we'll centralize it here.
+        """Get GitHub token with priority: Env -> File (Runway) -> File (gh CLI)."""
+        # Priority 1: Env var
         token = os.getenv("GITHUB_TOKEN", "")
         if token:
             return token
@@ -28,7 +32,7 @@ class CredentialProvider:
         if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
             return ""
 
-        # Priority 2: Stored OAuth token
+        # Priority 2: Stored OAuth token (Runway-specific)
         oauth_path = settings.GITHUB_OAUTH_PATH
         if os.path.exists(oauth_path):
             try:
@@ -40,7 +44,60 @@ class CredentialProvider:
             except Exception as e:
                 logger.debug(f"Error reading GitHub OAuth token from {oauth_path}: {e}")
 
+        # Priority 3: gh CLI (GitHub CLI)
+        if yaml:
+            home = os.path.expanduser("~")
+            gh_potential_paths = [
+                os.path.join(home, ".config", "gh", "hosts.yml"),
+                os.path.join(get_platform_config_dir("gh"), "hosts.yml"),
+            ]
+            
+            # Check for Windows-specific paths if on Windows
+            if platform.system() == "Windows":
+                app_data = os.getenv("APPDATA")
+                local_app_data = os.getenv("LOCALAPPDATA")
+                if app_data:
+                    gh_potential_paths.append(os.path.join(app_data, "gh", "hosts.yml"))
+                if local_app_data:
+                    gh_potential_paths.append(os.path.join(local_app_data, "gh", "hosts.yml"))
+
+            for gh_path in gh_potential_paths:
+                if os.path.exists(gh_path):
+                    try:
+                        with open(gh_path, "r") as f:
+                            data = yaml.safe_load(f)
+                            # gh CLI format: github.com: { oauth_token: "..." }
+                            if isinstance(data, dict):
+                                github_data = data.get("github.com", {})
+                                if isinstance(github_data, dict):
+                                    val = github_data.get("oauth_token")
+                                    if val:
+                                        logger.debug(f"Found GitHub token in gh CLI config: {gh_path}")
+                                        return val
+                    except Exception as e:
+                        logger.debug(f"Error parsing gh CLI config {gh_path}: {e}")
+
         return ""
+
+    @staticmethod
+    def get_gemini_credentials_path() -> Optional[str]:
+        """Search for Gemini credentials file in standard locations."""
+        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+            return None
+
+        home = os.path.expanduser("~")
+        potential_paths = [
+            settings.GEMINI_OAUTH_PATH,
+            os.path.join(home, ".gemini", "oauth_creds.json"),
+            os.path.join(home, ".config", "gemini", "oauth_creds.json"),
+            os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"),
+        ]
+
+        for cred_path in potential_paths:
+            if cred_path and os.path.exists(cred_path):
+                return cred_path
+        
+        return None
 
     @staticmethod
     def get_chatgpt_token() -> str:
