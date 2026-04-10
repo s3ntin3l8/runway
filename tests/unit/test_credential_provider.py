@@ -7,7 +7,8 @@ from app.core.config import settings
 
 def test_github_token_env():
     """Test discovering GitHub token from environment."""
-    with patch.dict(os.environ, {"GITHUB_TOKEN": "env_token"}):
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "env_token"}), \
+         patch("os.path.exists", return_value=False):
         token = CredentialProvider.get_github_token()
         assert token == "env_token"
 
@@ -15,7 +16,7 @@ def test_github_token_runway_json():
     """Test discovering GitHub token from Runway's oauth.json."""
     mock_data = json.dumps({"access_token": "runway_token"})
     with patch.dict(os.environ, {"GITHUB_TOKEN": ""}), \
-         patch("os.path.exists", return_value=True), \
+         patch("os.path.exists", side_effect=lambda p: "github_oauth.json" in str(p)), \
          patch("builtins.open", mock_open(read_data=mock_data)):
         token = CredentialProvider.get_github_token()
         assert token == "runway_token"
@@ -26,7 +27,7 @@ def test_github_token_gh_cli():
     
     # Need to patch os.path.exists for both Runway path (return False) and gh path (return True)
     def exists_side_effect(path):
-        if "hosts.yml" in path:
+        if "hosts.yml" in str(path):
             return True
         return False
 
@@ -40,18 +41,19 @@ def test_github_token_gh_cli():
 def test_gemini_path_discovery():
     """Test discovering Gemini credentials path."""
     def exists_side_effect(path):
-        if ".gemini/oauth_creds.json" in path:
+        if ".gemini/oauth_creds.json" in str(path):
             return True
         return False
 
     with patch("os.path.exists", side_effect=exists_side_effect), \
-         patch("os.path.expanduser", return_value="/home/user"):
+         patch("os.path.expanduser", side_effect=lambda p: p.replace("~", "/home/user")):
         path = CredentialProvider.get_gemini_credentials_path()
         assert path is not None
-        assert ".gemini/oauth_creds.json" in path
+        assert ".gemini/oauth_creds.json" in str(path)
 
 def test_disabled_scraping():
     """Test that discovery returns empty/None if scraping is disabled."""
+    # Note: We patch settings at the instance level used in the provider
     with patch.object(settings, "LOCAL_CREDENTIAL_SCRAPING_ENABLED", False), \
          patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
         assert CredentialProvider.get_github_token() == ""

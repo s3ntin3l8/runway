@@ -18,6 +18,8 @@ import struct
 import glob
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from app.core.config import settings
+from app.core.registry import registry
 
 # --- Chromium-based (Chrome, Edge) decryption ---
 
@@ -418,36 +420,50 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
     return None
 
 
+# --- Registry-aware functions ---
+
+
+def get_cookie_from_registry(provider_id: str, cookie_name: Optional[str] = None) -> Optional[str]:
+    """Extract cookie for a provider using rules from registry.json."""
+    provider_config = registry.get_provider(provider_id)
+    rules = provider_config.get("rules", [])
+    
+    for rule in rules:
+        if rule.get("type") == "cookie":
+            if cookie_name and rule.get("name") != cookie_name:
+                continue
+            
+            c_name = rule.get("name")
+            for domain in rule.get("domains", []):
+                val = get_session_cookie(domain, c_name)
+                if val:
+                    return val
+    return None
+
+
 # --- Legacy compatibility functions ---
 
 
 def get_opencode_session_cookie() -> Optional[str]:
-    return get_session_cookie("opencode.ai", "session")
+    return get_cookie_from_registry("opencode")
 
 
 def get_claude_session_cookie() -> Optional[str]:
-    return get_session_cookie("claude.ai", "sessionKey")
+    return get_cookie_from_registry("anthropic")
 
 
 def get_kimi_auth_cookie() -> Optional[str]:
-    for name in ["kimi-auth", "kimi_token", "auth_token"]:
-        val = get_session_cookie("kimi.com", name)
-        if val:
-            return val
-    return None
+    return get_cookie_from_registry("kimi", "kimi-auth")
 
 
 def get_chatgpt_session_token() -> Optional[str]:
     """Extract ChatGPT session token from browser cookies."""
-    return get_session_cookie("chatgpt.com", "__Secure-next-auth.session-token")
+    return get_cookie_from_registry("chatgpt", "__Secure-next-auth.session-token")
 
 
 def get_chatgpt_device_id() -> Optional[str]:
     """Extract ChatGPT device ID from browser cookies."""
     return get_session_cookie("chatgpt.com", "oai-device-id")
-
-
-from app.core.config import settings
 
 
 def get_macos_keychain_token(service: str, account: str) -> Optional[str]:
