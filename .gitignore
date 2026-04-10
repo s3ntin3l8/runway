@@ -38,4 +38,7 @@ external_metrics.json
 .coverage
 coverage.xml
 
+# Performance comparisons
+docs/comparison/
+
 gha-creds-*.json

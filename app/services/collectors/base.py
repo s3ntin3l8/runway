@@ -35,32 +35,46 @@ class BaseCollector(ABC):
         """Return True if results are empty or contain an error card."""
         return not results or any(r.get("remaining") == "ERR" for r in results)
 
-    @abstractmethod
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Collect usage limits from the provider and return standardized result cards.
+        Automated Strategy Pattern orchestration. Executes defined strategies
+        sequentially until one succeeds or all fail.
+        """
+        strategies = self._get_strategies()
+        
+        for strategy in strategies:
+            try:
+                results = await strategy(client)
+                if not self._is_error_result(results):
+                    # Success! Return the results immediately
+                    return results
+                
+                # If we got an error result, continue to the next fallback strategy
+                strategy_name = strategy.__name__ if hasattr(strategy, '__name__') else "unknown"
+                import logging
+                logging.getLogger(__name__).debug(f"Strategy {strategy_name} returned error/empty, falling back...")
+                
+            except Exception as e:
+                # Catch all strategy failures and move to next fallback
+                strategy_name = strategy.__name__ if hasattr(strategy, '__name__') else "unknown"
+                import logging
+                logging.getLogger(__name__).warning(f"Strategy {strategy_name} raised exception: {e}")
+        
+        # All strategies failed - return the final fallback error
+        return await self._get_fallback_error()
 
-        Implements the 3-tier fallback pattern:
-        1. Primary: Direct API/OAuth calls with retry logic
-        2. Secondary: Local log/file parsing as fallback
-        3. Tertiary: Return error cards describing what failed
-
-        Args:
-            client: httpx.AsyncClient instance for making API requests.
-                   Reused across collectors to manage connection pooling.
-
-        Returns:
-            List[Dict[str, Any]]: List of result dictionaries, each containing:
-                - service: str - Provider name (e.g., "Claude Pro", "Gemini API")
-                - icon: str - Unicode emoji for visual identification
-                - remaining: str - Remaining quota/usage (number or percentage)
-                - unit: str - Unit description (e.g., "tokens", "requests")
-                - reset: str - Human-readable reset time (e.g., "in 4h 23m")
-                - health: str - Status (good/warning/critical/unknown)
-                - pace: str - Estimated consumption rate or longevity
-                - detail: str - Additional context (data source, error reason, etc.)
-
-        Note:
-            Should never raise exceptions. Return error_card() for all failure scenarios.
+    @abstractmethod
+    def _get_strategies(self) -> List[Any]:
+        """
+        Return an ordered list of async methods (strategies) to execute.
+        Expected order: Primary (API) -> Secondary (Web) -> Tertiary (Logs).
         """
         pass
+
+    @abstractmethod
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """
+        Return the ultimate error card(s) to display when all strategies fail.
+        """
+        pass
+

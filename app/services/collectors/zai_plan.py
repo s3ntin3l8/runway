@@ -55,16 +55,12 @@ class ZaiPlanCollector(BaseCollector):
         "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
     ]
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect zAI plan quota limits.
+    def _get_strategies(self) -> List[Any]:
+        """Return the strategy list for zAI Plan."""
+        return [self._strategy_api]
 
-        Tries multiple endpoints (api.z.ai first, then open.bigmodel.cn).
-        Returns 1-2 cards depending on limit types present.
-
-        Returns:
-            List[Dict[str, Any]]: Cards for each limit type or error
-        """
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return fallback error when all endpoints fail."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
             return [
@@ -72,20 +68,26 @@ class ZaiPlanCollector(BaseCollector):
                     "zAI Plan", "📊", "Missing/Invalid Key", error_type="missing_config"
                 )
             ]
+        return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
 
-        # Try each endpoint in order
-        last_error = None
+    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect zAI plan quota limits trying multiple endpoints."""
+        key = settings.ZAI_API_KEY
+        if not key or key.lower() == "zai":
+            return []
+
         for endpoint in self.API_ENDPOINTS:
             try:
                 result = await self._fetch_quota(client, key, endpoint)
                 if result:
-                    return result
-            except Exception as e:
-                last_error = e
+                    # If it's an error result, we continue to next endpoint if available
+                    if not self._is_error_result(result):
+                        return result
+            except Exception:
                 continue
+        
+        return []
 
-        # All endpoints failed
-        return [error_card("zAI Plan", "📊", "API Unavailable", error_type="api_error")]
 
     async def _fetch_quota(
         self, client: httpx.AsyncClient, key: str, endpoint: str

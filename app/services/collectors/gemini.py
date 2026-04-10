@@ -154,26 +154,33 @@ class GeminiCollector(OAuthBaseCollector):
             logger.error(f"Failed to refresh Gemini token: {e}")
             return None
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect Gemini quota using API with caching, fallback to local logs.
+    def _get_strategies(self) -> List[Any]:
+        """Return the 2-tier fallback strategies for Gemini."""
+        return [
+            self._collect_via_api_with_cache,
+            self._collect_via_logs,
+        ]
 
-        Returns:
-            List[Dict[str, Any]]: List of quota cards (one per model) or fallback data
-        """
-        # Try API first (with caching)
-        api_data = await self._collect_via_api_with_cache(client)
-        if api_data and not self._is_error_result(api_data):
-            return api_data
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return final error card context when both API and logs fail."""
+        # Check if we have credentials to determine the most helpful error
+        creds = await self._get_credentials()
+        if not creds:
+             return [
+                error_card(
+                    "Gemini",
+                    "🔵",
+                    "No credentials found",
+                    error_type="missing_config",
+                )
+            ]
+        
+        return [
+            error_card(
+                "Gemini", "🔵", "All collection strategies failed", error_type="api_error"
+            )
+        ]
 
-        # Fallback to logs if API failed or returned errors
-        if settings.LOCAL_COLLECTOR_ENABLED:
-            log_data = await self._collect_via_logs()
-            if log_data:
-                return log_data
-
-        # Return API error if no logs available
-        return api_data if api_data else []
 
     async def _collect_via_api_with_cache(
         self, client: httpx.AsyncClient

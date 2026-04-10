@@ -63,17 +63,12 @@ class KimiCodingCollector(BaseCollector):
         "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
     )
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect Kimi Coding quota information.
+    def _get_strategies(self) -> List[Any]:
+        """Return the strategy list for Kimi Coding."""
+        return [self._strategy_api]
 
-        Tries env var first, then Chrome cookie.
-        Returns 2 cards: Weekly quota + 5-hour rate limit.
-
-        Returns:
-            List[Dict[str, Any]]: Two quota cards or error
-        """
-        # Get auth token
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return fallback error when API fails."""
         token = await self._get_auth_token()
         if not token:
             return [
@@ -84,6 +79,13 @@ class KimiCodingCollector(BaseCollector):
                     error_type="missing_config",
                 )
             ]
+        return [error_card("Kimi Coding", "🌙", "API Collection Failed", error_type="api_error")]
+
+    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect Kimi Coding usage via API."""
+        token = await self._get_auth_token()
+        if not token:
+            return []
 
         try:
             resp = await client.post(
@@ -93,44 +95,18 @@ class KimiCodingCollector(BaseCollector):
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
-                json={},  # Empty body required
+                json={},
                 timeout=10.0,
             )
 
-            if resp.status_code == 401:
-                return [
-                    error_card(
-                        "Kimi Coding",
-                        "🌙",
-                        "Unauthorized (token expired)",
-                        error_type="auth_failed",
-                    )
-                ]
             if resp.status_code != 200:
-                return [
-                    error_card(
-                        "Kimi Coding",
-                        "🌙",
-                        f"HTTP {resp.status_code}",
-                        error_type="api_error",
-                    )
-                ]
+                return []
 
             data = resp.json()
             return self._parse_response(data)
+        except (httpx.RequestError, ValueError, KeyError, TypeError):
+            return []
 
-        except httpx.RequestError:
-            return [
-                error_card(
-                    "Kimi Coding", "🌙", "Connection Failed", error_type="timeout"
-                )
-            ]
-        except (ValueError, KeyError, TypeError):
-            return [
-                error_card(
-                    "Kimi Coding", "🌙", "Invalid Response", error_type="parse_error"
-                )
-            ]
 
     async def _get_auth_token(self) -> Optional[str]:
         """

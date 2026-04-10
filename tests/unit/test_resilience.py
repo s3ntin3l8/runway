@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 import json
 import httpx
+from typing import List, Any, Dict
 
 from app.services.smart_collector import SmartCollector
 from app.core.utils import extract_token_regex, human_delta
@@ -11,7 +12,13 @@ from app.services.collectors.base import BaseCollector
 
 
 class MockCollector(BaseCollector):
-    async def collect(self, client):
+    def _get_strategies(self) -> List[Any]:
+        return [self._strategy_mock]
+
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        return []
+
+    async def _strategy_mock(self, client):
         return [
             {"service": "Mock", "detail": "original", "metadata": {"nested": "value"}}
         ]

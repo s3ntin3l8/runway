@@ -365,259 +365,191 @@ class ChatGPTCollector(BaseCollector):
                 except:
                     pass
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect ChatGPT Codex quota and Account info using API with caching and local fallback.
-        """
+    def _get_strategies(self) -> List[Any]:
+        """Return the 3-tier fallback strategies for ChatGPT."""
+        return [
+            self._strategy_api,
+            self._collect_via_cli_rpc,
+            self._strategy_local_logs,
+        ]
+
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return final error card when all strategies fail."""
+        return [
+            error_card(
+                "ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config"
+            )
+        ]
+
+    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Web API / OAuth strategy with caching."""
+        # Check API cache
+        now = datetime.now(timezone.utc)
+        if self._cached_api_results is not None and self._last_api_fetch:
+            if (now - self._last_api_fetch).total_seconds() < self._cache_ttl:
+                return self._cached_api_results
+
         auth = await self._get_auth_data(client)
         token = auth.get("token")
         account_id = auth.get("account_id")
 
-        # Check API cache first
+        if not token:
+            return []
+
+        try:
+            cards = await self._fetch_api_data(client, token, account_id, auth.get("source", "oauth"))
+            # Cache results (including empty/error results) to avoid hammering API
+            self._cached_api_results = cards
+            self._last_api_fetch = now
+            return cards
+        except Exception as e:
+            logger.debug(f"ChatGPT Web API failed: {e}")
+            self._cached_api_results = []
+            self._last_api_fetch = now
+            
+        return []
+        
+
+    async def _fetch_api_data(
+        self, client: httpx.AsyncClient, token: str, account_id: Optional[str], source: str
+    ) -> List[Dict[str, Any]]:
+        """Internal helper to fetch data from ChatGPT backend APIs."""
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://chatgpt.com/",
+            "Origin": "https://chatgpt.com",
+            "oai-device-id": await self._get_device_id(),
+            "oai-language": "en-US",
+        }
+        if account_id:
+            headers["ChatGPT-Account-Id"] = account_id
+
+        cards = []
+        tier = "free"
         now = datetime.now(timezone.utc)
-        cached_error = None
-        if self._cached_api_results is not None and self._last_api_fetch:
-            if (now - self._last_api_fetch).total_seconds() < self._cache_ttl:
-                if not self._is_error_result(self._cached_api_results):
-                    return self._cached_api_results
-                cached_error = self._cached_api_results
 
-        # 1. Try API if we have a token
-        if token:
-            skip_api = False
-            if cached_error:
-                error_age = (now - self._last_api_fetch).total_seconds()
-                if error_age < 60:
-                    skip_api = True
+        # 1. Fetch Account Info
+        try:
+            acc_resp = await client.get("https://chatgpt.com/backend-api/accounts/check/v4", headers=headers, timeout=10)
+            if acc_resp.status_code == 200:
+                acc_data = acc_resp.json()
+                account_list = acc_data.get("accounts", {})
+                primary_account = next(iter(account_list.values()), {}) if account_list else {}
+                entitlements = primary_account.get("entitlements", [])
 
-            if not skip_api:
-                try:
-                    headers = {
-                        "Authorization": f"Bearer {token}",
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                        "Accept": "*/*",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Referer": "https://chatgpt.com/",
-                        "Origin": "https://chatgpt.com",
-                        "Sec-Fetch-Dest": "empty",
-                        "Sec-Fetch-Mode": "cors",
-                        "Sec-Fetch-Site": "same-origin",
-                        "oai-device-id": await self._get_device_id(),
-                        "oai-language": "en-US",
-                        "Priority": "u=1, i",
-                    }
-                    if account_id:
-                        headers["ChatGPT-Account-Id"] = account_id
-                    
-                    cards = []
-                    tier = "free"
+                if any(e.get("slug") == "plus" for e in entitlements):
+                    tier = "plus"
+                elif any(e.get("slug") == "team" for e in entitlements):
+                    tier = "team"
 
-                    # 1. Fetch Account Info (Tier, Credits) — non-fatal if 403
-                    account_url = "https://chatgpt.com/backend-api/accounts/check/v4"
-                    try:
-                        acc_resp = await client.get(account_url, headers=headers, timeout=10)
-                        if acc_resp.status_code == 401 or acc_resp.status_code == 403:
-                            logger.info(f"ChatGPT accounts/check returned {acc_resp.status_code}, skipping account card")
-                        else:
-                            acc_resp.raise_for_status()
-                            acc_data = acc_resp.json()
-                            account_list = acc_data.get("accounts", {})
-                            primary_account = (
-                                next(iter(account_list.values()), {}) if account_list else {}
-                            )
-                            entitlements = primary_account.get("entitlements", [])
+                status = primary_account.get("account_status", "active")
+                cards.append({
+                    "service": "ChatGPT Account",
+                    "icon": "💬",
+                    "remaining": tier.upper(),
+                    "unit": "tier",
+                    "reset": status.capitalize(),
+                    "health": "good",
+                    "pace": "Active" if status == "active" else "Alert",
+                    "detail": f"Account Tier: {tier.capitalize()} · {status}",
+                    "data_source": source,
+                    "tier": tier,
+                    "updated_at": now.isoformat(),
+                })
+        except Exception as e:
+            logger.debug(f"ChatGPT accounts/check failed (non-fatal): {e}")
 
-                            if any(e.get("slug") == "plus" for e in entitlements):
-                                tier = "plus"
-                            elif any(e.get("slug") == "team" for e in entitlements):
-                                tier = "team"
+        # 2. Fetch Usage
+        usage_resp = await client.get("https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+        
+        # Reactive refresh if 401/403
+        if usage_resp.status_code in (401, 403):
+            session_token = await asyncio.to_thread(get_chatgpt_session_token)
+            if session_token:
+                refreshed = await self._refresh_access_token(client, session_token)
+                if refreshed:
+                    self._refreshed_token = refreshed
+                    self._refreshed_token_expiry = now + timedelta(hours=1)
+                    headers["Authorization"] = f"Bearer {refreshed}"
+                    usage_resp = await client.get("https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+        
+        usage_resp.raise_for_status()
+        data = usage_resp.json()
+        primary = data.get("rate_limit", {}).get("primary_window", {})
+        if primary:
+            pct = primary.get("used_percent", 0.0)
+            reset_ts = primary.get("reset_at")
+            reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
 
-                            status = primary_account.get("account_status", "active")
-                            cards.append(
-                                {
-                                    "service": "ChatGPT Account",
-                                    "icon": "💬",
-                                    "remaining": tier.upper(),
-                                    "unit": "tier",
-                                    "reset": status.capitalize(),
-                                    "health": "good",
-                                    "pace": "Active" if status == "active" else "Alert",
-                                    "detail": f"Account Tier: {tier.capitalize()} · {status}",
-                                    "data_source": auth.get("source", "oauth"),
-                                    "tier": tier,
-                                    "updated_at": now.isoformat(),
-                                }
-                            )
-                    except Exception as e:
-                        logger.debug(f"ChatGPT accounts/check failed (non-fatal): {e}")
+            cards.append({
+                "service": "ChatGPT Codex",
+                "icon": "💬",
+                "remaining": f"{(100-pct):.1f}%",
+                "unit": "remaining",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 80 else "warning",
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": f"{pct:.1f}% used",
+                "used_value": float(pct),
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": source,
+                "tier": tier,
+                "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                "updated_at": now.isoformat(),
+            })
 
-                    # 2. Fetch Usage (wham/usage)
-                    usage_url = "https://chatgpt.com/backend-api/wham/usage"
-                    resp = await client.get(usage_url, headers=headers, timeout=10)
-                    if resp.status_code == 401 or resp.status_code == 403:
-                        # Token may be expired — attempt refresh and retry once
-                        session_token = get_chatgpt_session_token()
-                        if session_token:
-                            refreshed = await self._refresh_access_token(client, session_token)
-                            if refreshed:
-                                self._refreshed_token = refreshed
-                                self._refreshed_token_expiry = now + timedelta(hours=1)
-                                headers["Authorization"] = f"Bearer {refreshed}"
-                                resp = await client.get(usage_url, headers=headers, timeout=10)
-                    resp.raise_for_status()
+        return cards
 
-                    data = resp.json()
-                    rate_limit = data.get("rate_limit", {})
-                    primary = rate_limit.get("primary_window", {})
-                    if primary:
-                        pct = primary.get("used_percent", 0.0)
-                        reset_ts = primary.get("reset_at")
-                        reset_at = (
-                            datetime.fromtimestamp(reset_ts, tz=timezone.utc)
-                            if reset_ts
-                            else None
-                        )
+    async def _strategy_local_logs(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Local log parsing strategy."""
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return []
 
-                        cards.append(
-                            {
-                                "service": "ChatGPT Codex",
-                                "icon": "💬",
-                                "remaining": f"{(100-pct):.1f}%",
-                                "unit": "remaining",
-                                "reset": human_delta(reset_at),
-                                "health": "good" if pct < 80 else "warning",
-                                "pace": PaceCalculator.estimate_longevity(
-                                    pct, reset_at
-                                ),
-                                "detail": f"{pct:.1f}% used",
-                                "used_value": float(pct),
-                                "limit_value": 100.0,
-                                "unit_type": "percent",
-                                "reset_at": reset_at.isoformat() if reset_at else None,
-                                "data_source": auth.get("source", "oauth"),
-                                "tier": tier,
-                                "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                                "updated_at": now.isoformat(),
-                            }
-                        )
+        path = settings.CHATGPT_SESSIONS_DIR
+        try:
+            files = await asyncio.to_thread(glob.glob, f"{path}/**/*.jsonl", recursive=True)
+            if not files:
+                return []
 
-                    if cards:
-                        self._cached_api_results = cards
-                        self._last_api_fetch = now
-                        return cards
+            latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
+            
+            def read_last_line(file_path):
+                last_line = None
+                with open(file_path, "r") as f:
+                    for line in f:
+                        if line.strip(): last_line = line
+                return last_line
 
-                except Exception as e:
-                    logger.debug(f"ChatGPT Web API failed, trying CLI RPC: {e}")
-                    # Track this error in case fallbacks also fail
-                    cached_error = [
-                        error_card(
-                            "ChatGPT Codex",
-                            "💬",
-                            f"API Error: {str(e)[:20]}",
-                            error_type="api_error",
-                        )
-                    ]
-                    # Don't return yet, fall through to RPC
+            last_line = await asyncio.to_thread(read_last_line, latest)
+            if not last_line:
+                return []
+            
+            usage = json.loads(last_line)
+            pct = usage.get("used_percent", 0.0)
+            reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None
 
-        # 2. Try Codex CLI RPC (Fidelity Fallback)
-        if settings.LOCAL_COLLECTOR_ENABLED:
-            rpc_res = await self._collect_via_cli_rpc()
-            if rpc_res:
-                self._cached_api_results = rpc_res
-                self._last_api_fetch = now
-                return rpc_res
-
-        # 3. Fallback to local logs
-        if settings.LOCAL_COLLECTOR_ENABLED:
-            path = settings.CHATGPT_SESSIONS_DIR
-            try:
-                # Wrap blocking glob and stat calls in thread
-                files = await asyncio.to_thread(
-                    glob.glob, f"{path}/**/*.jsonl", recursive=True
-                )
-                if not files:
-                    # If we have an API error (either from this call or cached), prefer returning that
-                    final_result = cached_error or [
-                        error_card(
-                            "ChatGPT Codex",
-                            "💬",
-                            "No logs/auth",
-                            error_type="missing_config",
-                        )
-                    ]
-                    self._cached_api_results = final_result
-                    self._last_api_fetch = now
-                    return final_result
-
-                latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
-
-                def read_last_line(file_path):
-                    last_line = None
-                    with open(file_path, "r") as f:
-                        for line in f:
-                            if line.strip():
-                                last_line = line
-                    return last_line
-
-                last_line = await asyncio.to_thread(read_last_line, latest)
-
-                if not last_line:
-                    final_result = [
-                        error_card(
-                            "ChatGPT Codex", "💬", "Empty log", error_type="parse_error"
-                        )
-                    ]
-                    self._cached_api_results = final_result
-                    self._last_api_fetch = now
-                    return final_result
-                
-                usage = json.loads(last_line)
-                pct = usage.get("used_percent", 0.0)
-                reset_at = (
-                    datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc)
-                    if "resets_at" in usage
-                    else None
-                )
-
-                final_result = [
-                    {
-                        "service": "ChatGPT Codex",
-                        "icon": "💬",
-                        "remaining": f"{(100-pct):.1f}%",
-                        "unit": "remaining",
-                        "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
-                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                        "detail": f"{pct:.1f}% used",
-                        "used_value": float(pct),
-                        "limit_value": 100.0,
-                        "unit_type": "percent",
-                        "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": "cache",
-                        "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ]
-                self._cached_api_results = final_result
-                self._last_api_fetch = now
-                return final_result
-            except Exception as e:
-                logger.debug(f"ChatGPT Fallback Error: {e}")
-                final_result = [
-                    error_card(
-                        "ChatGPT Codex", "💬", "Parse Error", error_type="parse_error"
-                    )
-                ]
-                self._cached_api_results = final_result
-                self._last_api_fetch = now
-                return final_result
-
-        # If local collector is disabled and API failed, return cached error or default error
-        final_result = cached_error or [
-            error_card(
-                "ChatGPT Codex", "💬", "No auth data", error_type="missing_config"
-            )
-        ]
-        self._cached_api_results = final_result
-        self._last_api_fetch = now
-        return final_result
+            return [{
+                "service": "ChatGPT Codex",
+                "icon": "💬",
+                "remaining": f"{(100-pct):.1f}%",
+                "unit": "remaining",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct < 80 else "warning",
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": f"{pct:.1f}% used",
+                "used_value": float(pct),
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "cache",
+                "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }]
+        except Exception as e:
+            logger.debug(f"ChatGPT log strategy failed: {e}")
+            return []

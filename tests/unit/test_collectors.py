@@ -414,7 +414,10 @@ class TestAnthropicCollector:
                                 return_value=["/fake/path/test.jsonl"],
                             ):
                                 with patch("os.path.isdir", return_value=True):
-                                    result = await collector.collect(mock_http_client)
+                                    with patch.object(
+                                        collector, "_strategy_cli_pty", return_value=[]
+                                    ):
+                                        result = await collector.collect(mock_http_client)
 
         # Should return local log results
         assert isinstance(result, list)
@@ -499,7 +502,10 @@ class TestAnthropicCollector:
                                 return_value=["/fake/path/test.jsonl"],
                             ):
                                 with patch("os.path.isdir", return_value=True):
-                                    result = await collector.collect(mock_http_client)
+                                    with patch.object(
+                                        collector, "_strategy_cli_pty", return_value=[]
+                                    ):
+                                        result = await collector.collect(mock_http_client)
 
         # Should deduplicate - only count once
         assert isinstance(result, list)
@@ -539,72 +545,75 @@ class TestAnthropicCollector:
                             "os.environ", {"CLAUDE_CONFIG_DIR": "/path1,/path2"}
                         ):
                             with patch("os.path.isdir", return_value=True):
-                                with patch(
-                                    "app.services.collectors.anthropic.glob.glob"
-                                ) as mock_glob:
-                                    # Return files from both paths
-                                    def glob_side_effect(pattern, **kwargs):
-                                        if "/path1" in pattern:
-                                            return ["/path1/projects/file1.jsonl"]
-                                        elif "/path2" in pattern:
-                                            return ["/path2/projects/file2.jsonl"]
-                                        return []
-
-                                    mock_glob.side_effect = glob_side_effect
-
-                                    # Mock file contents
-                                    log_data_1 = (
-                                        json.dumps(
-                                            {
-                                                "type": "assistant",
-                                                "timestamp": datetime.now(
-                                                    timezone.utc
-                                                ).isoformat(),
-                                                "message": {
-                                                    "id": "msg_1",
-                                                    "requestId": "req_1",
-                                                    "usage": {
-                                                        "input_tokens": 1000,
-                                                        "output_tokens": 500,
-                                                    },
-                                                },
-                                            }
-                                        )
-                                        + "\n"
-                                    )
-
-                                    log_data_2 = (
-                                        json.dumps(
-                                            {
-                                                "type": "assistant",
-                                                "timestamp": datetime.now(
-                                                    timezone.utc
-                                                ).isoformat(),
-                                                "message": {
-                                                    "id": "msg_2",
-                                                    "requestId": "req_2",
-                                                    "usage": {
-                                                        "input_tokens": 500,
-                                                        "output_tokens": 200,
-                                                    },
-                                                },
-                                            }
-                                        )
-                                        + "\n"
-                                    )
-
-                                    def open_side_effect(path, **kwargs):
-                                        if "file1" in path:
-                                            return mock_open(read_data=log_data_1)()
-                                        else:
-                                            return mock_open(read_data=log_data_2)()
-
+                                with patch.object(
+                                    collector, "_strategy_cli_pty", return_value=[]
+                                ):
                                     with patch(
-                                        "builtins.open", side_effect=open_side_effect
-                                    ):
-                                        result = await collector.collect(
-                                            mock_http_client
+                                        "app.services.collectors.anthropic.glob.glob"
+                                    ) as mock_glob:
+                                        # Return files from both paths
+                                        def glob_side_effect(pattern, **kwargs):
+                                            if "/path1" in pattern:
+                                                return ["/path1/projects/file1.jsonl"]
+                                            elif "/path2" in pattern:
+                                                return ["/path2/projects/file2.jsonl"]
+                                            return []
+
+                                        mock_glob.side_effect = glob_side_effect
+
+                                        # Mock file contents
+                                        log_data_1 = (
+                                            json.dumps(
+                                                {
+                                                    "type": "assistant",
+                                                    "timestamp": datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                    "message": {
+                                                        "id": "msg_1",
+                                                        "requestId": "req_1",
+                                                        "usage": {
+                                                            "input_tokens": 1000,
+                                                            "output_tokens": 500,
+                                                        },
+                                                    },
+                                                }
+                                            )
+                                            + "\n"
                                         )
+
+                                        log_data_2 = (
+                                            json.dumps(
+                                                {
+                                                    "type": "assistant",
+                                                    "timestamp": datetime.now(
+                                                        timezone.utc
+                                                    ).isoformat(),
+                                                    "message": {
+                                                        "id": "msg_2",
+                                                        "requestId": "req_2",
+                                                        "usage": {
+                                                            "input_tokens": 500,
+                                                            "output_tokens": 200,
+                                                        },
+                                                    },
+                                                }
+                                            )
+                                            + "\n"
+                                        )
+
+                                        def open_side_effect(path, **kwargs):
+                                            if "file1" in path:
+                                                return mock_open(read_data=log_data_1)()
+                                            else:
+                                                return mock_open(read_data=log_data_2)()
+
+                                        with patch(
+                                            "builtins.open", side_effect=open_side_effect
+                                        ):
+                                            result = await collector.collect(
+                                                mock_http_client
+                                            )
 
         # Should aggregate from both directories
         assert isinstance(result, list)
@@ -1172,8 +1181,8 @@ class TestChatGPTCollector:
         mock_http_client.get.side_effect = [account_response, usage_response]
 
         with patch(
-            "app.services.credential_provider.CredentialProvider.get_chatgpt_token",
-            return_value="test_token",
+            "app.services.credential_provider.CredentialProvider.get_chatgpt_data",
+            return_value={"access_token": "test_token"},
         ):
             result = await collector.collect(mock_http_client)
 
@@ -1226,8 +1235,8 @@ class TestChatGPTCollector:
             with patch("app.services.collectors.chatgpt.ChatGPTCollector._collect_via_cli_rpc", return_value=[]):
                 with patch("builtins.open", side_effect=FileNotFoundError):
                     with patch(
-                        "app.services.credential_provider.CredentialProvider.get_chatgpt_token",
-                        return_value="test_token",
+                        "app.services.credential_provider.CredentialProvider.get_chatgpt_data",
+                        return_value={"access_token": "test_token"},
                     ):
                         # First call - API fails, no logs
                         result1 = await collector.collect(mock_http_client)

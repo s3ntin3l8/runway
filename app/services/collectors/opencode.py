@@ -36,32 +36,28 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCodeCollector(BaseCollector):
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect OpenCode quota from web API (primary) or sidecar aggregation (fallback).
+    def _get_strategies(self) -> List[Any]:
+        """Return the 3-tier fallback strategies for OpenCode."""
+        return [
+            self._get_opencode_web,
+            self._strategy_sidecar_aggregation,
+            self._strategy_local_db_fallback,
+        ]
 
-        Priority:
-        1. Web API with Chrome cookies - shows total account usage across all devices
-        2. Sidecar aggregation - combines local DB data from multiple hosts
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return empty list on failure (OpenCode is non-critical)."""
+        return []
 
-        Returns:
-            List[Dict[str, Any]]: Cards for 5h and weekly windows
-        """
-        # 1. Try web API first (aggregates all devices via opencode.ai account)
-        web_cards = await self._get_opencode_web(client)
-        if web_cards:
-            return web_cards
+    async def _strategy_sidecar_aggregation(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Second tier: Sidecar aggregation of multi-host data."""
+        return await external_metric_service.get_opencode_aggregated()
 
-        # 2. Fall back to sidecar aggregation
-        sidecar_cards = await external_metric_service.get_opencode_aggregated()
-        if sidecar_cards:
-            return sidecar_cards
-
-        # 3. Last resort: local DB (if enabled)
+    async def _strategy_local_db_fallback(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Third tier: Local database collection (if enabled)."""
         if settings.LOCAL_COLLECTOR_ENABLED:
             return await self._get_opencode_tui()
-
         return []
+
 
     async def _get_opencode_web(
         self, client: httpx.AsyncClient

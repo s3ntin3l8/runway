@@ -29,17 +29,12 @@ from app.services.collectors.base import BaseCollector
 class KimiApiCollector(BaseCollector):
     """Collector for Kimi API (Moonshot AI) prepaid balance."""
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect Kimi Code (Moonshot AI) prepaid balance.
+    def _get_strategies(self) -> List[Any]:
+        """Return the strategy list for Kimi API."""
+        return [self._strategy_api]
 
-        Requires KIMI_API_KEY (Moonshot API key with length >= 10).
-        Handles 401 Unauthorized separately to distinguish auth issues.
-        Returns error card if key missing or API fails.
-
-        Returns:
-            List[Dict[str, Any]]: Single card with balance in $ or error
-        """
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return fallback error when API fails."""
         key = settings.KIMI_API_KEY
         if not key or len(key) < 10:
             return [
@@ -47,6 +42,13 @@ class KimiApiCollector(BaseCollector):
                     "Kimi API", "🌙", "Missing/Invalid Key", error_type="missing_config"
                 )
             ]
+        return [error_card("Kimi API", "🌙", "Unauthorized", error_type="api_error")]
+
+    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect Kimi prepaid balance via API."""
+        key = settings.KIMI_API_KEY
+        if not key or len(key) < 10:
+            return []
 
         try:
             resp = await client.get(
@@ -54,21 +56,10 @@ class KimiApiCollector(BaseCollector):
                 headers={"Authorization": f"Bearer {key}"},
             )
 
-            if resp.status_code == 401:
-                return [
-                    error_card(
-                        "Kimi API", "🌙", "Unauthorized", error_type="auth_failed"
-                    )
-                ]
             if resp.status_code != 200:
-                return [
-                    error_card(
-                        "Kimi API",
-                        "🌙",
-                        f"HTTP {resp.status_code}",
-                        error_type="api_error",
-                    )
-                ]
+                # Specialized error cards can be handled via _get_fallback_error if needed, 
+                # or returned here if we want them to stop the chain.
+                return []
 
             data = resp.json()
             bal = float(data.get("data", {}).get("available_balance", 0))
@@ -85,13 +76,6 @@ class KimiApiCollector(BaseCollector):
                     "detail": "Prepaid balance (API)",
                 }
             ]
-        except httpx.RequestError:
-            return [
-                error_card("Kimi API", "🌙", "Connection Failed", error_type="timeout")
-            ]
-        except (ValueError, KeyError, TypeError):
-            return [
-                error_card(
-                    "Kimi API", "🌙", "Invalid Response", error_type="parse_error"
-                )
-            ]
+        except (httpx.RequestError, ValueError, KeyError, TypeError):
+            return []
+

@@ -29,16 +29,12 @@ from app.services.collectors.base import BaseCollector
 class ZaiApiCollector(BaseCollector):
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
 
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect zAI (Zhipu/GLM) prepaid balance.
+    def _get_strategies(self) -> List[Any]:
+        """Return the strategy list for zAI API."""
+        return [self._strategy_api]
 
-        Requires ZAI_API_KEY. Validates key is not placeholder.
-        Returns error card if key missing or API fails.
-
-        Returns:
-            List[Dict[str, Any]]: Single card with balance in ¥ or error
-        """
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return fallback error when API fails."""
         key = settings.ZAI_API_KEY
         if not key or key.lower() == "zai":
             return [
@@ -46,10 +42,15 @@ class ZaiApiCollector(BaseCollector):
                     "zAI", "🌐", "Missing/Invalid Key", error_type="missing_config"
                 )
             ]
+        return [error_card("zAI", "🌐", "API Error", error_type="api_error")]
+
+    async def _strategy_api(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect zAI prepaid balance via API."""
+        key = settings.ZAI_API_KEY
+        if not key or key.lower() == "zai":
+            return []
 
         try:
-            # Use standard httpx get with Bearer auth
-            # NOTE: Timeout is essential for responsiveness in aggregate dashboard
             resp = await client.get(
                 "https://open.bigmodel.cn/api/paas/v4/users/me/balance",
                 headers={"Authorization": f"Bearer {key}"},
@@ -57,14 +58,7 @@ class ZaiApiCollector(BaseCollector):
             )
 
             if resp.status_code != 200:
-                return [
-                    error_card(
-                        "zAI",
-                        "🌐",
-                        f"API Error ({resp.status_code})",
-                        error_type="api_error",
-                    )
-                ]
+                return []
 
             data = resp.json()
             bal = float(data.get("data", {}).get("available_balance", 0))
@@ -81,9 +75,6 @@ class ZaiApiCollector(BaseCollector):
                     "detail": "Prepaid balance (API)",
                 }
             ]
-        except httpx.RequestError:
-            return [error_card("zAI", "🌐", "Connection Failed", error_type="timeout")]
-        except (ValueError, KeyError, TypeError):
-            return [
-                error_card("zAI", "🌐", "Invalid Response", error_type="parse_error")
-            ]
+        except (httpx.RequestError, ValueError, KeyError, TypeError):
+            return []
+

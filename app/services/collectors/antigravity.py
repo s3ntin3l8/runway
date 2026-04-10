@@ -33,16 +33,16 @@ from app.services.collectors.base import BaseCollector
 
 
 class AntigravityCollector(BaseCollector):
-    async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """
-        Collect Antigravity IDE quota from local JSON file.
+    def _get_strategies(self) -> List[Any]:
+        """Return the strategy list for Antigravity."""
+        return [self._strategy_local_file]
 
-        Reads ANTIGRAVITY_QUOTA_PATH and returns cards for each model.
-        Silently fails if file unavailable (assumes IDE not configured).
+    async def _get_fallback_error(self) -> List[Dict[str, Any]]:
+        """Return empty list on failure (Antigravity is non-critical)."""
+        return []
 
-        Returns:
-            List[Dict[str, Any]]: Cards for each model or empty list if unavailable
-        """
+    async def _strategy_local_file(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Collect Antigravity quota from local JSON file."""
         path = settings.ANTIGRAVITY_QUOTA_PATH
         try:
             with open(path, "r") as f:
@@ -71,11 +71,6 @@ class AntigravityCollector(BaseCollector):
                     }
                 )
             return res
-        except (
-            FileNotFoundError,
-            PermissionError,
-            json.JSONDecodeError,
-            KeyError,
-            ValueError,
-        ):
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError, KeyError, ValueError):
             return []
+
