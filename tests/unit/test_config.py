@@ -140,34 +140,3 @@ class TestConfigEnvFileLoading:
             assert mock_load.return_value is None
 
 
-class TestConfigKeyringIntegration:
-    """Test system keyring integration for token retrieval.
-
-    Note: These tests verify the keyring logic is implemented correctly
-    in config.py. The actual keyring.get_password() call is mocked to
-    avoid requiring the keyring library to be installed.
-    """
-
-    def test_keyring_import_handled(self):
-        """Test that keyring import errors are handled gracefully."""
-        # Verify the credential_provider.py code has try/except around keyring import
-        import inspect
-        from app.services.credential_provider import CredentialProvider
-
-        # Get source code of the get_claude_token method
-        source = inspect.getsource(CredentialProvider.get_claude_token)
-
-        # Check that keyring is used with try/except
-        assert "import keyring" in source or "keyring.get_password" in source
-        assert "except ImportError" in source or "except Exception" in source
-
-    def test_keyring_get_password_called_with_correct_args(self):
-        """Test keyring.get_password is called with correct service and username."""
-        import inspect
-        from app.services.credential_provider import CredentialProvider
-
-        source = inspect.getsource(CredentialProvider.get_claude_token)
-
-        # Should call with "runway" and "claude-oauth-token"
-        assert '"runway"' in source
-        assert '"claude-oauth-token"' in source

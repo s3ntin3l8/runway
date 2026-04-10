@@ -40,5 +40,6 @@ coverage.xml
 
 # Performance comparisons
 docs/comparison/
+docs/sidecar_implementation.md
 
 gha-creds-*.json

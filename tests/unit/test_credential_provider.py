@@ -58,3 +58,27 @@ def test_disabled_scraping():
          patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
         assert CredentialProvider.get_github_token() == ""
         assert CredentialProvider.get_gemini_credentials_path() is None
+
+def test_claude_token_env():
+    """Test discovering Claude token from environment."""
+    with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "claude_env_token"}):
+        # Clear cache for test
+        CredentialProvider._claude_token_cache = None
+        token = CredentialProvider.get_claude_token()
+        assert token == "claude_env_token"
+
+def test_claude_token_file():
+    """Test discovering Claude token from .credentials.json."""
+    mock_data = json.dumps({
+        "claudeAiOauth": {
+            "accessToken": "claude_file_token",
+            "refreshToken": "claude_refresh_token"
+        }
+    })
+    with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}), \
+         patch("os.path.exists", side_effect=lambda p: ".credentials.json" in str(p)), \
+         patch("builtins.open", mock_open(read_data=mock_data)):
+        # Clear cache for test
+        CredentialProvider._claude_token_cache = None
+        token = CredentialProvider.get_claude_token()
+        assert token == "claude_file_token"

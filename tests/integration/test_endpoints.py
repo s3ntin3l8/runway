@@ -254,7 +254,7 @@ class TestIngestEndpoint:
                     "pace": "Token",
                     "detail": "[Token Extracted] [Sidecar]",
                     "data_source": "token_extracted",
-                    "metadata": {"oauth_token": oauth_token},
+                    "metadata": {"oauth_token": oauth_token, "provider_id": "anthropic"},
                 }
             ],
         }

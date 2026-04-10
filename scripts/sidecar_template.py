@@ -1092,7 +1092,7 @@ class GenericCollector:
                 "pace": "Token",
                 "detail": "[Token Extracted] [Sidecar]",
                 "data_source": "token_extracted",
-                "metadata": tokens
+                "metadata": {**tokens, "provider_id": provider_id}
             })
 
         return results

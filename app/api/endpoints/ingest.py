@@ -85,22 +85,13 @@ async def ingest_metrics(
         logger.error(f"Failed to parse ingest payload: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
 
-    tokens = {}
+    tokens_by_provider = {}
     local_cards = []
 
     # Extract base provider name (e.g., "anthropic-laptop" -> "anthropic")
-    provider_base = request.provider.split("-")[0]
+    # provider_base = request.provider.split("-")[0]  <-- This was causing the bug
 
     for card in request.metrics:
-        # 1. Structured metadata extraction
-        if card.metadata:
-            for key, val in card.metadata.items():
-                if key in ("oauth_token", "refresh_token", "api_key") or key.startswith(
-                    "cookie_"
-                ):
-                    tokens[key] = val
-                    logger.debug(f"Extracted {key} from metadata for {provider_base}")
-
         # Check if this is a token-only card (should NOT be displayed)
         is_token_only = (
             card.remaining == "Token"
@@ -109,17 +100,30 @@ async def ingest_metrics(
         )
 
         if is_token_only:
-            # Skip token-only cards - they're just for token extraction, not display
-            logger.debug(f"Skipping token-only card for {card.service}")
+            # Extract tokens and provider_id from metadata
+            if card.metadata:
+                provider_id = card.metadata.get("provider_id")
+                if provider_id:
+                    if provider_id not in tokens_by_provider:
+                        tokens_by_provider[provider_id] = {}
+                    
+                    for key, val in card.metadata.items():
+                        # Store tokens but skip the provider_id itself
+                        if key != "provider_id" and (
+                            key in ("oauth_token", "refresh_token", "api_key") 
+                            or key.startswith("cookie_")
+                        ):
+                            tokens_by_provider[provider_id][key] = val
+                            logger.debug(f"Extracted {key} for {provider_id} from {request.provider}")
             continue
 
         # Keep actual data cards
         local_cards.append(card)
 
-    # Store tokens in cache
-    if tokens:
-        await token_cache.store(provider_base, tokens)
-        logger.info(f"Received {len(tokens)} tokens from {request.provider}")
+    # Store tokens in cache for each identified provider
+    for provider_id, provider_tokens in tokens_by_provider.items():
+        await token_cache.store(provider_id, provider_tokens)
+        logger.info(f"Received {len(provider_tokens)} tokens for {provider_id} from {request.provider}")
 
     # Store local data metrics
     if local_cards:
@@ -131,6 +135,6 @@ async def ingest_metrics(
     return {
         "status": "ok",
         "provider": request.provider,
-        "tokens_received": len(tokens),
+        "tokens_received": sum(len(t) for t in tokens_by_provider.values()),
         "metrics_stored": len(local_cards),
     }

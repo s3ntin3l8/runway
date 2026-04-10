@@ -86,3 +86,4 @@ external_metrics.json
 
 # Performance comparisons
 docs/comparison/
+docs/sidecar_implementation.md
