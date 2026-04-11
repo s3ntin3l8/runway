@@ -1080,6 +1080,61 @@ class GenericCollector:
                         except Exception:
                             pass
 
+            # 8. Specialized: Claude Statusline
+            elif rule_type == "file_json_statusline":
+                for path_str in rule.get("paths", []):
+                    path = resolve_path(path_str)
+                    if path.exists():
+                        try:
+                            # Freshness check (5 minutes)
+                            mtime = os.path.getmtime(path)
+                            if (time.time() - mtime) > 300:
+                                continue
+
+                            with open(path) as f:
+                                data = json.load(f)
+                            
+                            now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                            name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
+
+                            # Rate Limits
+                            limits = data.get("rate_limits", {})
+                            for key, info in limits.items():
+                                u_type = name_map.get(key, key.replace("_", " ").title())
+                                pct_used = float(info.get("used_percentage", 0.0))
+                                reset_ts = info.get("resets_at")
+                                results.append({
+                                    "service": f"Claude ({u_type})",
+                                    "icon": icon,
+                                    "remaining": f"{(100 - pct_used):.1f}%",
+                                    "unit": "capacity",
+                                    "reset": str(datetime.datetime.fromtimestamp(reset_ts)) if reset_ts else "—",
+                                    "health": "good" if pct_used < 70 else "warning",
+                                    "pace": "Active",
+                                    "detail": f"{pct_used:.1f}% used [Sidecar]",
+                                    "data_source": "local",
+                                    "metadata": {"used": pct_used, "resets_at": reset_ts}
+                                })
+
+                            # Context / Tokens
+                            ctx = data.get("context_window", {})
+                            if ctx:
+                                tokens = ctx.get("total_input_tokens", 0) + ctx.get("total_output_tokens", 0)
+                                max_t = ctx.get("max_tokens", 200000)
+                                results.append({
+                                    "service": "Claude (Session Tokens)",
+                                    "icon": "🪙",
+                                    "remaining": f"{tokens:,}",
+                                    "unit": f"/ {max_t:,}",
+                                    "reset": data.get("model", {}).get("display_name", "Sonnet"),
+                                    "health": "good",
+                                    "pace": "Active",
+                                    "detail": f"{tokens:,} tokens [Sidecar]",
+                                    "data_source": "local"
+                                })
+                        except Exception:
+                            pass
+
         # If tokens were extracted, add a hidden token card
         if tokens:
             results.append({

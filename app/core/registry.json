@@ -35,6 +35,35 @@
           "domains": ["anthropic.com", "claude.ai"],
           "name": "sessionKey",
           "mapping": { "value": "cookie_sessionKey" }
+        },
+        {
+          "type": "file_json_statusline",
+          "paths": [
+            "~/.claude/statusline.json",
+            "{{CONFIG_DIR:claude}}/statusline.json"
+          ]
+        }
+      ]
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "icon": "🚀",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "OPENROUTER_API_KEY",
+          "mapping": { "value": "api_key" }
+        }
+      ]
+    },
+    "minimax": {
+      "name": "MiniMax",
+      "icon": "🤖",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "MINIMAX_API_KEY",
+          "mapping": { "value": "api_key" }
         }
       ]
     },

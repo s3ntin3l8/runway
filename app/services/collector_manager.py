@@ -20,6 +20,8 @@ from app.services.collectors.zai_api import ZaiApiCollector
 from app.services.collectors.zai_plan import ZaiPlanCollector
 from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
+from app.services.collectors.openrouter import OpenRouterCollector
+from app.services.collectors.minimax import MiniMaxCollector
 from app.services.smart_collector import SmartCollector
 from app.services.external_metrics import external_metric_service
 
@@ -56,6 +58,8 @@ class CollectorManager:
             (ZaiPlanCollector, "zAI Plan", 900),  # 15 min
             (KimiApiCollector, "Kimi API", 900),  # 15 min
             (KimiCodingCollector, "Kimi Coding", 900),  # 15 min
+            (OpenRouterCollector, "OpenRouter", 900),  # 15 min
+            (MiniMaxCollector, "MiniMax", 900),  # 15 min
         ]
 
         self.smart_collectors = []

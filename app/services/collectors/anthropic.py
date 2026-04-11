@@ -88,6 +88,14 @@ class AnthropicCollector(OAuthBaseCollector):
         if not os.path.exists(credentials_path) and os.path.exists(platform_cred_path):
             credentials_path = platform_cred_path
 
+        self._name_map = {
+            "five_hour": "Session Window",
+            "seven_day": "Weekly Window",
+            "seven_day_sonnet": "Sonnet Weekly",
+            "seven_day_opus": "Opus Weekly",
+            "extra_usage": "Extra Usage",
+        }
+
         super().__init__(provider_name="Anthropic", credentials_path=credentials_path)
 
         self._cached_results = None
@@ -95,6 +103,7 @@ class AnthropicCollector(OAuthBaseCollector):
         self._cache_ttl = 600  # 10 minutes cache to be safe with 429s
         self._refresh_backoff_seconds = 30  # Start with 30s
         self._max_refresh_backoff = 21600  # Max 6 hours
+        self._last_statusline_data = {} # Cache for hybrid fallback
 
     async def _get_current_token(self) -> Optional[str]:
         """Get the current access token."""
@@ -139,6 +148,10 @@ class AnthropicCollector(OAuthBaseCollector):
                     "refresh_token": refresh_token,
                     "client_id": CLAUDE_OAUTH_CLIENT_ID,
                 },
+                headers={
+                    "User-Agent": "claude-code/2.1.69",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
                 timeout=10,
             )
 
@@ -176,6 +189,107 @@ class AnthropicCollector(OAuthBaseCollector):
             logger.error(f"Failed to refresh Anthropic token: {e}")
             return None
 
+    async def _strategy_statusline(self) -> List[Dict[str, Any]]:
+        """
+        Choice #1: Read the local Claude statusline file (Fast Path).
+        Returns metrics if the file exists and is fresh (< 5 mins old).
+        """
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return []
+
+        path = settings.CLAUDE_STATUSLINE_PATH
+        try:
+            if not os.path.exists(path):
+                return []
+
+            # Freshness check (5 minutes)
+            mtime = os.path.getmtime(path)
+            if (time.time() - mtime) > 300:
+                logger.debug(f"Claude statusline file is stale ({int(time.time() - mtime)}s old)")
+                return []
+
+            with open(path, "r") as f:
+                data = json.load(f)
+
+            self._last_statusline_data = data
+            return self._parse_statusline_response(data)
+        except Exception as e:
+            logger.debug(f"Failed to read Claude statusline: {e}")
+            return []
+
+    def _parse_statusline_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse statusline.json into standardized quota cards."""
+        results = []
+        now = datetime.now(timezone.utc)
+        
+        # 1. Rate Limits
+        limits = data.get("rate_limits", {})
+        for key, info in limits.items():
+            u_type = self._name_map.get(key, key.replace("_", " ").title())
+            pct_used = float(info.get("used_percentage", 0.0))
+            reset_ts = info.get("resets_at")
+            reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+            
+            results.append({
+                "service": f"Claude ({u_type})",
+                "icon": "🟠",
+                "remaining": f"{(100 - pct_used):.1f}%",
+                "unit": "capacity",
+                "reset": human_delta(reset_at),
+                "health": "good" if pct_used < 70 else "warning" if pct_used < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                "detail": f"{pct_used:.1f}% used [Statusline]",
+                "used_value": pct_used,
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "data_source": "statusline",
+                "updated_at": now.isoformat(),
+            })
+
+        # 2. Session Context (Tokens/Cost)
+        context = data.get("context_window", {})
+        if context:
+            input_tokens = context.get("total_input_tokens", 0)
+            output_tokens = context.get("total_output_tokens", 0)
+            total = input_tokens + output_tokens
+            max_tokens = context.get("max_tokens", 200000)
+            pct = (total / max_tokens * 100) if max_tokens > 0 else 0
+            
+            results.append({
+                "service": "Claude (Session Tokens)",
+                "icon": "🪙",
+                "remaining": f"{total:,}",
+                "unit": f"/ {max_tokens:,}",
+                "reset": data.get("model", {}).get("display_name", "Sonnet"),
+                "health": "good",
+                "pace": "Active",
+                "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]",
+                "used_value": float(total),
+                "limit_value": float(max_tokens),
+                "unit_type": "tokens",
+                "data_source": "statusline",
+                "updated_at": now.isoformat(),
+            })
+
+        cost = data.get("cost", {})
+        if cost and cost.get("total_cost_usd", 0) > 0:
+            total_cost = cost.get("total_cost_usd")
+            results.append({
+                "service": "Claude (Session Cost)",
+                "icon": "💰",
+                "remaining": f"${total_cost:.2f}",
+                "unit": "USD",
+                "reset": "This Session",
+                "health": "good",
+                "pace": "Stable",
+                "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]",
+                "data_source": "statusline",
+                "updated_at": now.isoformat(),
+            })
+
+        return results
+
     def _fallback_strategies(self) -> List[Any]:
         """Return the fallback strategies for Claude (Web, CLI, Logs)."""
         return [
@@ -185,29 +299,35 @@ class AnthropicCollector(OAuthBaseCollector):
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """OAuth strategy with reactive token refresh."""
+        """Hybrid strategy: Statusline (Fast) + OAuth (Full)."""
+        results = []
+        
+        # 1. Try Statusline first (Choice #1)
+        statusline_res = await self._strategy_statusline()
+        results.extend(statusline_res)
+        
+        # 2. Try OAuth for full coverage
         token = await self._get_valid_token(client)
-        if not token:
-            return []
+        if token:
+            oauth_res = await self._get_claude_oauth_with_cache(client, token)
+            
+            # Reactive 401 handling
+            is_401 = any("Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res)
+            if is_401 and not self._terminal_failure:
+                async with self._refresh_lock:
+                    new_creds = await self._execute_refresh(client)
+                    if new_creds:
+                        new_token = new_creds.get("claudeAiOauth", {}).get("accessToken")
+                        self._persist_credentials(new_creds)
+                        oauth_res = await self._get_claude_oauth(client, new_token)
+            
+            # Merge: Add API results that aren't already covered by statusline
+            statusline_keys = {r["service"] for r in statusline_res}
+            for r in oauth_res:
+                if r["service"] not in statusline_keys:
+                    results.append(r)
 
-        oauth_res = await self._get_claude_oauth_with_cache(client, token)
-
-        # Reactive 401 handling
-        is_401 = any(
-            "Expired/Invalid Token" in str(r.get("detail", "")) for r in oauth_res
-        )
-        if is_401 and not self._terminal_failure:
-            logger.info("Got 401 from OAuth API, attempting proactive refresh")
-            async with self._refresh_lock:
-                new_creds = await self._execute_refresh(client)
-                if new_creds:
-                    new_token = new_creds.get("claudeAiOauth", {}).get("accessToken")
-                    self._persist_credentials(new_creds)
-                    self._cached_results = None
-                    self._last_fetch = None
-                    oauth_res = await self._get_claude_oauth_with_cache(client, new_token)
-
-        return oauth_res
+        return results
 
     async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return descriptive error card context when all strategies fail."""
@@ -297,6 +417,7 @@ class AnthropicCollector(OAuthBaseCollector):
         url = "https://api.anthropic.com/api/oauth/usage"
         headers = {
             "Authorization": f"Bearer {token}",
+            "User-Agent": "claude-code/2.1.69",
             "anthropic-beta": "oauth-2025-04-20",
         }
 
@@ -372,23 +493,38 @@ class AnthropicCollector(OAuthBaseCollector):
             return f"org: {org}"
         return ""
 
+    def _get_local_config_hints(self) -> Dict[str, Any]:
+        """Read supplementary billing hints from ~/.claude.json if available."""
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return {}
+        path = os.path.expanduser("~/.claude.json")
+        try:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    return data
+        except Exception:
+            pass
+        return {}
+
     def _parse_oauth_response(
         self, data: Dict[str, Any], name_map: Dict[str, str], creds: Optional[Dict] = None
     ) -> List[Dict[str, Any]]:
-        """Parse OAuth API response into quota cards with null-safety."""
+        """Parse OAuth API response into quota cards with local config hints."""
         results = []
+        
+        # Load local config hints (~/.claude.json)
+        local_hints = self._get_local_config_hints()
 
         # Extract identity and tier once for all cards
         identity_str = self._extract_identity_from_oauth(data)
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
-        # Infer plan from rate_limit_tier in credentials (Gold Standard strategy)
-        # Fallback to API plan if creds unavailable or tier missing
+        # Infer plan/tier (Priority: Credentials > Local Config > API)
         tier = None
         if creds:
             raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
             if raw_tier:
-                # Map standard Anthropic tiers to human-readable names
                 tier_map = {
                     "tier_0": "Free",
                     "tier_1": "Pro",
@@ -399,6 +535,12 @@ class AnthropicCollector(OAuthBaseCollector):
                 }
                 tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
         
+        # Supplement with local config if still missing or to override
+        if not tier:
+            local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
+            if local_tier:
+                tier = str(local_tier).capitalize()
+
         if not tier:
             account = data.get("account", {})
             plan = account.get("plan", "")
@@ -699,6 +841,8 @@ class AnthropicCollector(OAuthBaseCollector):
 
     async def _strategy_cli_pty(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Third tier: CLI PTY fallback."""
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return []
         return await self._collect_via_cli_pty()
 
     async def _collect_via_cli_pty(self) -> List[Dict[str, Any]]:
@@ -816,6 +960,8 @@ class AnthropicCollector(OAuthBaseCollector):
 
     async def _strategy_local_enhanced(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Fourth tier: Enhanced local logs fallback."""
+        if not settings.LOCAL_COLLECTOR_ENABLED:
+            return []
         return await self._get_claude_local_enhanced()
 
     async def _get_claude_local_enhanced(self) -> List[Dict[str, Any]]:

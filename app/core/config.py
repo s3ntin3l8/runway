@@ -69,6 +69,8 @@ class Settings:
     # Claude OAuth Settings
     CLAUDE_CODE_OAUTH_TOKEN: str = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    MINIMAX_API_KEY: str = os.getenv("MINIMAX_API_KEY", "")
     OPENCODE_GO_API_KEY: str = os.getenv("OPENCODE_GO_API_KEY", "")
     ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "")
     KIMI_API_KEY: str = os.getenv("KIMI_API_KEY", "")
@@ -91,6 +93,10 @@ class Settings:
     CLAUDE_PROJECTS_DIR: str = os.getenv(
         "CLAUDE_PROJECTS_DIR",
         os.path.join(get_platform_config_dir("claude"), "projects"),
+    )
+    CLAUDE_STATUSLINE_PATH: str = os.getenv(
+        "CLAUDE_STATUSLINE_PATH",
+        os.path.join(get_platform_config_dir("claude"), "statusline.json"),
     )
     GEMINI_SESSIONS_DIR: str = os.getenv(
         "GEMINI_SESSIONS_DIR",

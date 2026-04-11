@@ -8,7 +8,9 @@ __pycache__/
 venv/
 node_modules/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
 *.swp
 *.bak
 tasks.md
