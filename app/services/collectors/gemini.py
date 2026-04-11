@@ -49,7 +49,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 import httpx
 from app.core.config import settings
-from app.core.utils import error_card, PaceCalculator, safe_write_json
+from app.core.utils import error_card, PaceCalculator, safe_write_json, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 from app.services.credential_provider import credential_provider
@@ -144,7 +144,9 @@ class GeminiCollector(OAuthBaseCollector):
             return None
 
         try:
-            resp = await client.post(
+            resp = await http_request_with_retry(
+                client,
+                "POST",
                 "https://oauth2.googleapis.com/token",
                 data={
                     "client_id": client_id,
@@ -246,6 +248,14 @@ class GeminiCollector(OAuthBaseCollector):
         Returns:
             List[Dict[str, Any]]: List of quota cards, one per model, or empty list
         """
+        # Proactive backoff check
+        now = datetime.now(timezone.utc)
+        backoff_until = getattr(self, "_last_429_backoff_until", None)
+        if backoff_until and now < backoff_until:
+            wait_rem = (backoff_until - now).total_seconds()
+            logger.debug(f"Proactively skipping Gemini API call due to recent 429 (backoff for {wait_rem:.0f}s)")
+            return [error_card("Gemini", "🔵", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+
         token = await self._get_valid_token(client)
         if not token:
             return []
@@ -254,11 +264,22 @@ class GeminiCollector(OAuthBaseCollector):
             headers = {"Authorization": f"Bearer {token}"}
 
             # 1. Load Code Assist - get project and tier info
-            tier_resp = await client.post(
+            tier_resp = await http_request_with_retry(
+                client,
+                "POST",
                 "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
                 json={"metadata": {"ideType": "GEMINI_CLI", "pluginType": "GEMINI"}},
                 headers=headers,
+                timeout=10,
             )
+            
+            if tier_resp.status_code == 429:
+                # Set proactive backoff based on Retry-After or default 5m
+                retry_after = tier_resp.headers.get("Retry-After")
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                logger.warning(f"Gemini API returned 429. Proactive backoff set for {wait_sec}s")
+                return [error_card("Gemini", "🔵", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
 
             tier_info = tier_resp.json()
 
@@ -287,11 +308,23 @@ class GeminiCollector(OAuthBaseCollector):
             )
 
             # 2. Retrieve Quota with discovered project (required for gemini-3 models)
-            quota_resp = await client.post(
+            quota_resp = await http_request_with_retry(
+                client,
+                "POST",
                 "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
                 json={"project": project_id},
                 headers=headers,
+                timeout=10,
             )
+
+            if quota_resp.status_code == 429:
+                retry_after = quota_resp.headers.get("Retry-After")
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                return [error_card("Gemini", "🔵", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+
+            # Success: Clear any backoff
+            self._last_429_backoff_until = None
             quota_data = quota_resp.json()
 
             # Process quota buckets - return one card per model family

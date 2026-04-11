@@ -39,15 +39,28 @@ class AnthropicWebMixin:
         if not settings.LOCAL_COLLECTOR_ENABLED:
             return []
 
-        path = settings.CLAUDE_STATUSLINE_PATH
-        try:
-            if not os.path.exists(path):
-                return []
+        # Try multiple potential paths
+        home = os.path.expanduser("~")
+        paths = [
+            settings.CLAUDE_STATUSLINE_PATH,
+            os.path.join(home, ".claude", "statusline.json"),
+            os.path.join(home, "Library", "Application Support", "Claude", "statusline.json"),
+        ]
+        
+        path = None
+        for p in paths:
+            if os.path.exists(p):
+                path = p
+                break
+                
+        if not path:
+            return []
 
+        try:
             # Freshness check (5 minutes)
             mtime = os.path.getmtime(path)
             if (time.time() - mtime) > 300:
-                logger.debug(f"Claude statusline file is stale ({int(time.time() - mtime)}s old)")
+                # logger.info(f"Claude statusline file is stale ({int(time.time() - mtime)}s old) at {path}")
                 return []
 
             with open(path, "r") as f:
@@ -157,7 +170,12 @@ class AnthropicWebMixin:
             logger.debug("No Claude sessionKey cookie found in Chrome")
             return []
 
-        headers = {"Cookie": f"sessionKey={session_key}"}
+        headers = {
+            "Cookie": f"sessionKey={session_key}",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+            "Referer": "https://claude.ai/chat/",
+            "Accept": "application/json",
+        }
 
         try:
             # Step 1: Get organization ID
@@ -165,18 +183,18 @@ class AnthropicWebMixin:
                 "https://claude.ai/api/organizations", headers=headers, timeout=10.0
             )
             if orgs_resp.status_code != 200:
-                logger.warning(f"Claude Web API orgs call failed: {orgs_resp.status_code}")
+                logger.debug(f"Claude Web API orgs call failed: {orgs_resp.status_code}")
                 return []
 
             orgs_data = orgs_resp.json()
             if not orgs_data or not isinstance(orgs_data, list) or len(orgs_data) == 0:
-                logger.warning("No organizations found in Claude Web API response")
+                logger.debug("No organizations found in Claude Web API response")
                 return []
 
             org = orgs_data[0]
             org_id = org.get("uuid") or org.get("id")
             if not org_id:
-                logger.warning("No organization UUID found in response")
+                logger.debug("No organization UUID found in response")
                 return []
 
             # Step 2: Get account info for tier/plan
@@ -197,17 +215,17 @@ class AnthropicWebMixin:
                 timeout=10.0,
             )
             if usage_resp.status_code != 200:
-                logger.warning(f"Claude Web API usage call failed: {usage_resp.status_code}")
+                logger.debug(f"Claude Web API usage call failed: {usage_resp.status_code}")
                 return []
 
             usage_data = usage_resp.json()
             return self._parse_web_api_response(usage_data, org, account_data)
 
         except httpx.HTTPError as e:
-            logger.warning(f"Claude Web API HTTP error: {e}")
+            logger.debug(f"Claude Web API HTTP error: {e}")
             return []
         except json.JSONDecodeError as e:
-            logger.warning(f"Claude Web API JSON decode error: {e}")
+            logger.debug(f"Claude Web API JSON decode error: {e}")
             return []
         except Exception as e:
             logger.error(f"Claude Web API collection failed: {e}")
@@ -244,19 +262,25 @@ class AnthropicWebMixin:
         tier = plan.capitalize() if plan else None
 
         window_map = {
-            "session": ("Session Window", "current_window"),
-            "weekly": ("Weekly Window", "current_week"),
-            "sonnet": ("Sonnet Weekly", "current_week_sonnet"),
-            "opus": ("Opus Weekly", "current_week_opus"),
+            "session": ("Session Window", "five_hour"),
+            "weekly": ("Weekly Window", "seven_day"),
+            "sonnet": ("Sonnet Weekly", "seven_day_sonnet"),
+            "opus": ("Opus Weekly", "seven_day_opus"),
         }
 
         for window_key, (display_name, api_key) in window_map.items():
             window_data = data.get(api_key)
-            if not window_data:
+            if not window_data or not isinstance(window_data, dict):
                 continue
 
-            raw_pct = window_data.get("percentUsed")
-            pct_used = float(raw_pct) if raw_pct is not None else 0.0
+            # Web API uses "utilization" (0.0 to 1.0) or "percentUsed" (0 to 100)
+            raw_util = window_data.get("utilization")
+            if raw_util is not None:
+                pct_used = float(raw_util) * 100.0
+            else:
+                raw_pct = window_data.get("percentUsed")
+                pct_used = float(raw_pct) if raw_pct is not None else 0.0
+            
             remaining_pct = 100.0 - pct_used
 
             reset_at = None

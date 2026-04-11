@@ -6,7 +6,7 @@ Collection Strategy:
    - Requires OAuth token from environment (CHATGPT_OAUTH_TOKEN) or ~/.codex/auth.json
    - Falls back to Web Dashboard Scraping (Browser Cookies) if no token is found
    - Calls https://chatgpt.com/backend-api/wham/usage (requires Bearer auth)
-   - Returns utilization percentage and reset timestamp
+   - Returns both account tier (plan_type) and utilization metrics
 
 2. Authentication Priority:
    - Priority 1: CHATGPT_OAUTH_TOKEN environment variable
@@ -41,7 +41,7 @@ import asyncio
 import httpx
 from app.core.config import settings
 from app.services.credential_provider import credential_provider
-from app.core.utils import PaceCalculator, human_delta, error_card
+from app.core.utils import PaceCalculator, human_delta, error_card, http_request_with_retry
 from app.core.browser_cookies import get_chatgpt_session_token, get_chatgpt_device_id
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -198,7 +198,7 @@ class ChatGPTCollector(BaseCollector):
             url = "https://chatgpt.com/api/auth/session"
             headers = {
                 "Cookie": f"__Secure-next-auth.session-token={session_token}",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
                 "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
                 "Referer": "https://chatgpt.com/",
@@ -415,7 +415,7 @@ class ChatGPTCollector(BaseCollector):
         """Internal helper to fetch data from ChatGPT backend APIs."""
         headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://chatgpt.com/",
@@ -427,80 +427,75 @@ class ChatGPTCollector(BaseCollector):
             headers["ChatGPT-Account-Id"] = account_id
 
         cards = []
-        tier = "free"
         now = datetime.now(timezone.utc)
 
-        # 1. Fetch Account Info
+        # Proactive backoff check
+        backoff_until = getattr(self, "_last_429_backoff_until", None)
+        if backoff_until and now < backoff_until:
+            wait_rem = (backoff_until - now).total_seconds()
+            logger.debug(f"Proactively skipping ChatGPT API call due to recent 429 (backoff for {wait_rem:.0f}s)")
+            return [error_card("ChatGPT", "💬", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+
+        # Fetch Unified Usage & Tier Info
         try:
-            acc_resp = await client.get("https://chatgpt.com/backend-api/accounts/check/v4", headers=headers, timeout=10)
-            if acc_resp.status_code == 200:
-                acc_data = acc_resp.json()
-                account_list = acc_data.get("accounts", {})
-                primary_account = next(iter(account_list.values()), {}) if account_list else {}
-                entitlements = primary_account.get("entitlements", [])
+            usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+            
+            # Reactive refresh if 401/403
+            if usage_resp.status_code in (401, 403):
+                session_token = await asyncio.to_thread(get_chatgpt_session_token)
+                if session_token:
+                    refreshed = await self._refresh_access_token(client, session_token)
+                    if refreshed:
+                        self._refreshed_token = refreshed
+                        self._refreshed_token_expiry = now + timedelta(hours=1)
+                        headers["Authorization"] = f"Bearer {refreshed}"
+                        usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+            
+            if usage_resp.status_code == 429:
+                # Set proactive backoff based on Retry-After or default 10m
+                retry_after = usage_resp.headers.get("Retry-After")
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 600
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                return [error_card("ChatGPT", "💬", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
 
-                if any(e.get("slug") == "plus" for e in entitlements):
-                    tier = "plus"
-                elif any(e.get("slug") == "team" for e in entitlements):
-                    tier = "team"
+            if usage_resp.status_code == 200:
+                self._last_429_backoff_until = None
+                data = usage_resp.json()
+                
+                # 1. Extract Tier & Account Info
+                tier = data.get("plan_type", "free")
+                email = data.get("email", "")
+                identity_suffix = f" · {email}" if email else ""
 
-                status = primary_account.get("account_status", "active")
-                cards.append({
-                    "service": "ChatGPT Account",
-                    "icon": "💬",
-                    "remaining": tier.upper(),
-                    "unit": "tier",
-                    "reset": status.capitalize(),
-                    "health": "good",
-                    "pace": "Active" if status == "active" else "Alert",
-                    "detail": f"Account Tier: {tier.capitalize()} · {status}",
-                    "data_source": source,
-                    "tier": tier,
-                    "updated_at": now.isoformat(),
-                })
+                # 2. Extract Quota
+                primary = data.get("rate_limit", {}).get("primary_window", {})
+                if primary:
+                    pct = primary.get("used_percent", 0.0)
+                    reset_ts = primary.get("reset_at")
+                    reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
+
+                    cards.append({
+                        "service": "ChatGPT Codex",
+                        "icon": "💬",
+                        "remaining": f"{(100-pct):.1f}%",
+                        "unit": "remaining",
+                        "reset": human_delta(reset_at),
+                        "health": "good" if pct < 80 else "warning",
+                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                        "detail": f"{tier.upper()} Account{identity_suffix} · {pct:.1f}% used",
+                        "used_value": float(pct),
+                        "limit_value": 100.0,
+                        "unit_type": "percent",
+                        "reset_at": reset_at.isoformat() if reset_at else None,
+                        "data_source": source,
+                        "tier": tier,
+                        "usage_url": "https://chatgpt.com/codex/settings/usage/",
+                        "updated_at": now.isoformat(),
+                    })
+            else:
+                logger.debug(f"ChatGPT usage fetch failed with status {usage_resp.status_code}")
         except Exception as e:
-            logger.debug(f"ChatGPT accounts/check failed (non-fatal): {e}")
-
-        # 2. Fetch Usage
-        usage_resp = await client.get("https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
-        
-        # Reactive refresh if 401/403
-        if usage_resp.status_code in (401, 403):
-            session_token = await asyncio.to_thread(get_chatgpt_session_token)
-            if session_token:
-                refreshed = await self._refresh_access_token(client, session_token)
-                if refreshed:
-                    self._refreshed_token = refreshed
-                    self._refreshed_token_expiry = now + timedelta(hours=1)
-                    headers["Authorization"] = f"Bearer {refreshed}"
-                    usage_resp = await client.get("https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
-        
-        usage_resp.raise_for_status()
-        data = usage_resp.json()
-        primary = data.get("rate_limit", {}).get("primary_window", {})
-        if primary:
-            pct = primary.get("used_percent", 0.0)
-            reset_ts = primary.get("reset_at")
-            reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
-
-            cards.append({
-                "service": "ChatGPT Codex",
-                "icon": "💬",
-                "remaining": f"{(100-pct):.1f}%",
-                "unit": "remaining",
-                "reset": human_delta(reset_at),
-                "health": "good" if pct < 80 else "warning",
-                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                "detail": f"{pct:.1f}% used",
-                "used_value": float(pct),
-                "limit_value": 100.0,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": source,
-                "tier": tier,
-                "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                "updated_at": now.isoformat(),
-            })
+            logger.debug(f"ChatGPT usage fetch failed (non-fatal): {e}")
 
         return cards
 

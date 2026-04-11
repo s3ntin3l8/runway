@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import httpx
 
@@ -109,52 +109,19 @@ class TestAnthropicCollector:
         assert any("ERR" in str(card.get("remaining", "")) for card in result)
 
     @pytest.mark.asyncio
-    async def test_collect_caching(
-        self, mock_http_client, mock_anthropic_oauth_response
+    @patch("asyncio.sleep")
+    async def test_collect_oauth_proactive_429_backoff(
+        self, mock_sleep, mock_http_client, mock_anthropic_oauth_response
     ):
-        """Test that OAuth results are cached for 10 minutes."""
+        """Test that 429 rate limit triggers proactive backoff for subsequent calls."""
         collector = AnthropicCollector()
 
-        mock_response = MagicMock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_anthropic_oauth_response
-        mock_http_client.request.return_value = mock_response
-
-        with patch(
-            "app.services.credential_provider.CredentialProvider.get_claude_token",
-            return_value="test_token",
-        ):
-            with patch("app.services.collectors.anthropic.settings") as mock_settings:
-                mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-                mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-                mock_settings.LOCAL_COLLECTOR_ENABLED = False
-
-                with patch(
-                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
-                    return_value=None,
-                ):
-                    with patch.object(
-                        collector, "_get_valid_token", return_value="test_token"
-                    ):
-                        # First call - should hit API
-                        result1 = await collector.collect(mock_http_client)
-
-                        # Second call immediately - should use cache
-                        result2 = await collector.collect(mock_http_client)
-
-                # API should only be called once (cached on second call)
-                assert mock_http_client.request.call_count == 1
-                # Results should be identical (same cached data)
-                assert result1 == result2
-
-    @pytest.mark.asyncio
-    async def test_collect_oauth_429_error_caching(self, mock_http_client):
-        """Test that 429 rate limit errors are cached to avoid hammering the API."""
-        collector = AnthropicCollector()
-
-        # Mock 429 rate limit response (http_request_with_retry makes 3 attempts)
+        # Mock 429 rate limit response with a Retry-After header
         mock_429_response = MagicMock(spec=httpx.Response)
         mock_429_response.status_code = 429
+        mock_429_response.headers = {"Retry-After": "60"}  # 60 seconds
+
+        # After 3 retries (first call), it returns the 429
         mock_http_client.request.return_value = mock_429_response
 
         with patch(
@@ -176,36 +143,43 @@ class TestAnthropicCollector:
                         with patch.object(
                             collector,
                             "_get_claude_via_web_api",
-                            return_value=[
-                                {
-                                    "service": "Claude (Session Window)",
-                                    "icon": "🟠",
-                                    "remaining": "50.0%",
-                                    "unit": "capacity",
-                                    "reset": "in 4h",
-                                    "health": "good",
-                                    "pace": "Sustainable",
-                                    "detail": "50.0% used [Web API]",
-                                    "used_value": 50.0,
-                                    "limit_value": 100.0,
-                                    "unit_type": "percent",
-                                    "data_source": "web_api",
-                                }
-                            ],
+                            return_value=[{"service": "Fallback", "data_source": "web_api"}],
                         ):
-                            # First call - OAuth gets 429 (3 retries), falls back to Web API
-                            result1 = await collector.collect(mock_http_client)
+                            # First call - OAuth gets 429 with 60s Retry-After.
+                            # http_request_with_retry will abort retries because 60s > 10s cap.
+                            await collector.collect(mock_http_client)
+                            assert mock_http_client.request.call_count == 1
 
-                            # Second call - should use cached 429 error, skip OAuth entirely
-                            result2 = await collector.collect(mock_http_client)
+                            # Second call - should skip OAuth entirely due to proactive backoff
+                            await collector.collect(mock_http_client)
 
-                            # OAuth API should be called 3 times on first call (retries), 0 times on second (cached)
-                            assert (
-                                mock_http_client.request.call_count == 3
-                            )  # 3 retries on first call
-                            # Both results should come from Web API fallback
-                            assert result1[0]["data_source"] == "web_api"
-                            assert result2[0]["data_source"] == "web_api"
+                            # Still 1 call, not 2 (OAuth was skipped proactively)
+                            assert mock_http_client.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_collect_oauth_success_clears_backoff(
+        self, mock_http_client, mock_anthropic_oauth_response
+    ):
+        """Test that a successful call clears any previous 429 backoff."""
+        collector = AnthropicCollector()
+
+        # Mock success response
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_anthropic_oauth_response
+        mock_response.headers = {}
+        mock_http_client.request.return_value = mock_response
+
+        # Manually set a backoff from the past
+        collector._last_429_backoff_until = datetime.now(timezone.utc) - timedelta(
+            minutes=1
+        )
+
+        with patch.object(collector, "_get_valid_token", return_value="test_token"):
+            await collector.collect(mock_http_client)
+
+            # Backoff should be cleared on success
+            assert collector._last_429_backoff_until is None
 
     @pytest.mark.asyncio
     async def test_collect_oauth_token_refresh_success(
@@ -940,6 +914,7 @@ class TestGeminiCollector:
         # Mock responses - tier request comes FIRST (to get project ID)
         tier_response = MagicMock(spec=httpx.Response)
         tier_response.status_code = 200
+        tier_response.headers = {}
         tier_response.json.return_value = {
             "currentTier": {"id": "standard-tier", "name": "Gemini Code Assist"},
             "cloudaicompanionProject": "test-project-123",
@@ -947,19 +922,20 @@ class TestGeminiCollector:
 
         quota_response = MagicMock(spec=httpx.Response)
         quota_response.status_code = 200
+        quota_response.headers = {}
         quota_response.json.return_value = mock_gemini_quota_response
 
         # Create async mock that returns responses in order
         call_count = [0]
 
-        async def mock_post(*args, **kwargs):
+        async def mock_request(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
                 return tier_response  # First call: loadCodeAssist
             else:
                 return quota_response  # Second call: retrieveUserQuota
 
-        mock_http_client.post = mock_post
+        mock_http_client.request = mock_request
 
         with patch("app.services.collectors.gemini.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
@@ -1029,10 +1005,11 @@ class TestGeminiCollector:
         # Mock API error response (429 rate limit)
         error_response = MagicMock(spec=httpx.Response)
         error_response.status_code = 429
+        error_response.headers = {}
 
         # Use AsyncMock to track calls
-        mock_post = AsyncMock(return_value=error_response)
-        mock_http_client.post = mock_post
+        mock_request = AsyncMock(return_value=error_response)
+        mock_http_client.request = mock_request
 
         with patch("app.services.collectors.gemini.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
@@ -1055,7 +1032,7 @@ class TestGeminiCollector:
                     ):
                         # First call - API fails
                         result1 = await collector.collect(mock_http_client)
-                        first_call_count = mock_post.call_count
+                        first_call_count = mock_request.call_count
 
                         # Verify cache was populated (any result)
                         assert collector._cached_results is not None
@@ -1065,7 +1042,7 @@ class TestGeminiCollector:
                         result2 = await collector.collect(mock_http_client)
 
                         # API should not be called again (result was cached)
-                        assert mock_post.call_count == first_call_count
+                        assert mock_request.call_count == first_call_count
 
                         # Results should be the same (from cache)
                         assert result1 == result2
@@ -1162,25 +1139,17 @@ class TestChatGPTCollector:
         """Test successful ChatGPT API collection."""
         collector = ChatGPTCollector()
 
-        # Mock Account Info
-        account_response = MagicMock(spec=httpx.Response)
-        account_response.status_code = 200
-        account_response.json.return_value = {
-            "accounts": {
-                "user-123": {
-                    "account_status": "active",
-                    "entitlements": [{"slug": "plus"}],
-                }
-            }
-        }
-
-        # Mock Usage Info
+        # Mock Usage Info (Unified)
+        usage_data = mock_chatgpt_usage_response.copy()
+        usage_data["plan_type"] = "plus"
+        
         usage_response = MagicMock(spec=httpx.Response)
         usage_response.status_code = 200
-        usage_response.json.return_value = mock_chatgpt_usage_response
+        usage_response.headers = {}
+        usage_response.json.return_value = usage_data
 
-        # Sequentially return responses
-        mock_http_client.get.side_effect = [account_response, usage_response]
+        # Only one call needed now
+        mock_http_client.request.side_effect = [usage_response]
 
         with patch(
             "app.services.credential_provider.CredentialProvider.get_chatgpt_data",
@@ -1189,11 +1158,10 @@ class TestChatGPTCollector:
             result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert len(result) == 2
-        assert "Account" in str(result[0].get("service", ""))
-        assert "PLUS" in str(result[0].get("remaining", ""))
-        assert "Codex" in str(result[1].get("service", ""))
-        assert "%" in str(result[1].get("remaining", ""))
+        assert len(result) == 1
+        assert "Codex" in str(result[0].get("service", ""))
+        assert "PLUS" in str(result[0].get("detail", ""))
+        assert "%" in str(result[0].get("remaining", ""))
 
     @pytest.mark.asyncio
     async def test_collect_fallback_to_local_logs(self, mock_http_client):

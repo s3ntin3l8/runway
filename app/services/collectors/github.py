@@ -35,7 +35,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
 from app.services.credential_provider import credential_provider
-from app.core.utils import human_delta, error_card, PaceCalculator
+from app.core.utils import human_delta, error_card, PaceCalculator, http_request_with_retry
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
@@ -89,6 +89,13 @@ class GitHubCollector(BaseCollector):
             if (now - self._last_fetch).total_seconds() < self._cache_ttl:
                 return self._cached_results
 
+        # Proactive backoff check
+        backoff_until = getattr(self, "_last_429_backoff_until", None)
+        if backoff_until and now < backoff_until:
+            wait_rem = (backoff_until - now).total_seconds()
+            logger.debug(f"Proactively skipping GitHub API call due to recent 429 (backoff for {wait_rem:.0f}s)")
+            return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+
         try:
             headers = {
                 "Authorization": f"token {token}",
@@ -100,7 +107,9 @@ class GitHubCollector(BaseCollector):
             }
 
             # 1. Fetch User/Quota Info first
-            user_resp = await client.get(
+            user_resp = await http_request_with_retry(
+                client,
+                "GET",
                 "https://api.github.com/copilot_internal/user",
                 headers=headers,
                 timeout=10.0,
@@ -117,18 +126,38 @@ class GitHubCollector(BaseCollector):
                     and "limited_user_reset_date" in user_data
                 )
                 if not (has_snapshots or has_limited_info):
-                    token_resp = await client.get(
+                    token_resp = await http_request_with_retry(
+                        client,
+                        "GET",
                         "https://api.github.com/copilot_internal/v2/token",
                         headers=headers,
                         timeout=10.0,
                     )
+            elif user_resp.status_code == 429:
+                # Set proactive backoff based on Retry-After or default 5m
+                retry_after = user_resp.headers.get("Retry-After")
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                logger.warning(f"GitHub API returned 429. Proactive backoff set for {wait_sec}s")
+                return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
             else:
-                token_resp = await client.get(
+                token_resp = await http_request_with_retry(
+                    client,
+                    "GET",
                     "https://api.github.com/copilot_internal/v2/token",
                     headers=headers,
                     timeout=10.0,
                 )
 
+            # Check token_resp for 429 too
+            if token_resp and token_resp.status_code == 429:
+                retry_after = token_resp.headers.get("Retry-After")
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                return [error_card("GitHub Copilot", "🐙", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+
+            # Success: Clear any backoff
+            self._last_429_backoff_until = None
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             # Cache results (including empty/error cards) to avoid hammering API
             self._cached_results = cards

@@ -77,6 +77,7 @@ class ZaiApiCollector(BaseCollector):
                     "health": "good" if bal > 10 else "warning",
                     "pace": "Stable",
                     "detail": "Prepaid balance (API)",
+                    "data_source": "api",
                 }
             ]
         except (httpx.RequestError, ValueError, KeyError, TypeError):

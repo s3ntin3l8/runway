@@ -138,8 +138,13 @@ class SmartCollector:
         self.consecutive_errors = 0
         self.last_error_message = None
 
+        # Extract unique sources from results
+        sources = sorted(list({str(r.get("data_source", "unknown")) for r in result}))
+        source_str = f" [source: {', '.join(sources)}]" if sources else ""
+
         logger.info(
-            f"{self.collector_name}: Successful fetch " f"({len(result)} cards)"
+            f"{self.collector_name}: Successful fetch "
+            f"({len(result)} cards){source_str}"
         )
 
     def _mark_failure(self, error: Exception) -> None:
@@ -199,6 +204,9 @@ class SmartCollector:
             result = await self.collector.collect(client)
 
             if result:
+                # DEBUG: log all sources
+                # for r in result:
+                    # logger.info(f"DEBUG CARD: {r['service']} source={r.get('data_source')}")
                 self._mark_success(result)
                 return copy.deepcopy(result)
             else:

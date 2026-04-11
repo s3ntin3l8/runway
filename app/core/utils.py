@@ -68,6 +68,8 @@ def error_card(service: str, icon: str, message: str, error_type: str = "unknown
         "pace": "Stopped",
         "detail": truncate_string(message, 40),
         "error_type": error_type,
+        "data_source": "error",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -99,6 +101,7 @@ async def http_request_with_retry(
 ) -> httpx.Response:
     """
     Make an HTTP request with exponential backoff retry on 429 (rate limit).
+    Respects 'Retry-After' header if present.
 
     Args:
         client: httpx.AsyncClient instance
@@ -126,10 +129,33 @@ async def http_request_with_retry(
                 )
                 return response
 
-            # Calculate backoff with jitter
-            wait_time = (2**attempt) * initial_delay + random.uniform(
-                0, 0.1 * (2**attempt)
-            )
+            # Calculate backoff: check Retry-After header first, then exponential with jitter
+            retry_after = response.headers.get("Retry-After")
+            try:
+                if retry_after:
+                    if retry_after.isdigit():
+                        wait_time = float(retry_after)
+                    else:
+                        # Handle HTTP-date format (optional but good practice)
+                        from email.utils import parsedate_to_datetime
+                        retry_date = parsedate_to_datetime(retry_after)
+                        wait_time = (retry_date - datetime.now(timezone.utc)).total_seconds()
+                    
+                    # Add a small buffer
+                    wait_time = max(0.1, wait_time + 0.5)
+                else:
+                    wait_time = (2**attempt) * initial_delay + random.uniform(0, 0.1 * (2**attempt))
+            except Exception:
+                wait_time = (2**attempt) * initial_delay + random.uniform(0, 0.1 * (2**attempt))
+
+            # CRITICAL: Cap wait time. If it's too long (e.g. 1 hour), 
+            # don't block the collector task (which now has a 20s timeout).
+            if wait_time > 5.0:
+                logger.warning(
+                    f"Rate limit wait time too long ({wait_time:.1f}s), aborting retries for {method.upper()} {url}"
+                )
+                return response
+
             logger.info(
                 f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})"
             )
