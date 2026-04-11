@@ -34,7 +34,7 @@
         },
         {
           "type": "cookie",
-          "domains": ["anthropic.com", "claude.ai"],
+          "domains": ["anthropic.com", ".anthropic.com", "claude.ai", ".claude.ai"],
           "name": "sessionKey",
           "mapping": { "value": "cookie_sessionKey" }
         },
@@ -186,8 +186,8 @@
       "rules": [
         {
           "type": "cookie",
-          "domains": ["opencode.ai"],
-          "name": "session",
+          "domains": ["opencode.ai", ".opencode.ai"],
+          "name": "auth",
           "mapping": { "value": "cookie_session" }
         },
         {

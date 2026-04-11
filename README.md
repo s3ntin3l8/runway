@@ -19,12 +19,14 @@
 
 ## Quick Start
 
+- **Python 3.12+** is required.
+
 ```bash
 # 1. Clone and setup
 git clone <repository-url> && cd runway
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
+```
 # 2. Configure (add your API keys)
 cp .env.example .env
 

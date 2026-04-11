@@ -8,6 +8,7 @@ for intelligent caching to reduce API calls while maintaining fresh data.
 import asyncio
 import httpx
 import logging
+import os
 import platform
 from typing import List, Dict, Any
 
@@ -51,7 +52,7 @@ class CollectorManager:
         """Initialize collector configurations for lazy loading."""
         # Define collectors with names and TTL values (classes instead of instances)
         self.collector_configs = [
-            (AnthropicCollector, "Claude (Anthropic)", 600),  # 10 min
+            (AnthropicCollector, "Claude (Anthropic)", 60),  # 60s for snappy Statusline
             (GeminiCollector, "Gemini", 300),  # 5 min
             (GitHubCollector, "GitHub Copilot", 900),  # 15 min
             (ChatGPTCollector, "ChatGPT", 600),  # 10 min
@@ -71,6 +72,11 @@ class CollectorManager:
         logger.info(
             f"CollectorManager initialized with {len(self.collector_configs)} collector configs"
         )
+        
+        # Proactively warm up on startup if enabled - this runs in the main thread
+        # to ensure macOS Keychain prompts can be interactive.
+        if settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+            asyncio.create_task(self._warmup_keychain())
 
     async def _warmup_keychain(self):
         """
@@ -85,18 +91,24 @@ class CollectorManager:
 
         from app.core.keychain import get_keychain_secret
         
+        tasks = []
+
         # 1. Claude/Anthropic Credentials (if not set in env)
         if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
             logger.info("Warming up keychain access for Claude (Anthropic)...")
-            await asyncio.to_thread(get_keychain_secret, "Claude Code-credentials")
+            tasks.append(asyncio.to_thread(get_keychain_secret, "Claude Code-credentials"))
 
         # 2. Chrome Safe Storage (for any cookie-based collectors)
         cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi"]
         if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
              logger.info("Warming up keychain access for Browser Decryption (Chrome)...")
-             await asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage")
+             tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))
              # Also Edge as fallback
-             await asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage")
+             tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
+
+        if tasks:
+            # Wait for all prompts to be dismissed (or timeout)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._keychain_warmed_up = True
 
@@ -145,14 +157,14 @@ class CollectorManager:
         client = await self._get_client()
         try:
             # Run all collectors concurrently with exception handling and per-collector timeouts
-            # Each collector gets 10s to complete, with a 25s global timeout as safety
+            # Each collector gets 20s to complete, with a 40s global timeout as safety
             tasks = [
-                asyncio.wait_for(smart_collector.collect(client), timeout=10.0)
+                asyncio.wait_for(smart_collector.collect(client), timeout=20.0)
                 for smart_collector in self.smart_collectors
             ]
             # Wrap with global timeout to protect against I/O hangs
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=25.0
+                asyncio.gather(*tasks, return_exceptions=True), timeout=40.0
             )
         except asyncio.TimeoutError:
             logger.error("Global collector timeout reached. Collection aborted.")
@@ -165,8 +177,10 @@ class CollectorManager:
                 # SmartCollector handles exceptions, so this shouldn't happen
                 # But log it just in case
                 smart_collector = self.smart_collectors[i]
+                # If exception has no string representation (like TimeoutError), use class name
+                err_msg = str(res) or res.__class__.__name__
                 logger.error(
-                    f"Unexpected exception from {smart_collector.collector_name}: {res}"
+                    f"Unexpected exception from {smart_collector.collector_name}: {err_msg}"
                 )
                 continue
 

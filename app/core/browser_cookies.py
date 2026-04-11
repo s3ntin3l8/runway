@@ -16,11 +16,14 @@ import shutil
 import tempfile
 import struct
 import glob
+import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from app.core.config import settings
 from app.core.registry import registry
 from app.core.keychain import get_keychain_secret
+
+logger = logging.getLogger(__name__)
 
 # --- Chromium-based (Chrome, Edge) decryption ---
 
@@ -29,10 +32,10 @@ def decrypt_macos_cookie(encrypted_value: bytes) -> Optional[str]:
     """Decrypt a cookie value using macOS Keychain."""
     try:
         # Use centralized keychain access with caching
-        password = get_keychain_secret("Chrome Safe Storage")
+        password = get_keychain_secret("Chrome Safe Storage", force_refresh=True)
         if not password:
             # Try Edge-specific storage if Chrome fails
-            password = get_keychain_secret("Microsoft Edge Safe Storage")
+            password = get_keychain_secret("Microsoft Edge Safe Storage", force_refresh=True)
 
         if not password:
             return None
@@ -175,6 +178,10 @@ class SafariBinaryCookieParser:
                 for size in page_sizes:
                     page_data = f.read(size)
                     cookies.extend(SafariBinaryCookieParser.parse_page(page_data))
+            
+            # DEBUG: Print all found cookies
+            # for c in cookies:
+            #    print(f"DEBUG SAFARI: {c['domain']} - {c['name']}")
         except Exception:
             pass
         return cookies
@@ -229,7 +236,17 @@ def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
     home = Path.home()
     results = []  # List of { 'browser': str, 'type': 'sqlite'|'binary', 'path': Path }
 
-    # 1. Chrome / Chromium / Edge (Chromium-based)
+    # 1. Safari (PRIORITY on Darwin as it is unencrypted)
+    if system == "Darwin":
+        safari_paths = [
+            home / "Library/Cookies/Cookies.binarycookies",
+            home / "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
+        ]
+        for p in safari_paths:
+            if p and p.exists():
+                results.append({"browser": "Safari", "type": "safari", "path": p})
+
+    # 2. Chrome / Chromium / Edge (Chromium-based)
     chromium_variants = [
         {
             "name": "Chrome",
@@ -296,7 +313,7 @@ def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
                             {"browser": variant["name"], "type": "chromium", "path": p}
                         )
 
-    # 2. Firefox
+    # 3. Firefox
     ff_bases = []
     if system == "Darwin":
         ff_bases.append(home / "Library/Application Support/Firefox/Profiles")
@@ -316,12 +333,6 @@ def get_all_browser_cookies_paths() -> List[Dict[str, Any]]:
                 results.append(
                     {"browser": "Firefox", "type": "firefox", "path": cookie_sqlite}
                 )
-
-    # 3. Safari
-    if system == "Darwin":
-        safari_path = home / "Library/Cookies/Cookies.binarycookies"
-        if safari_path.exists():
-            results.append({"browser": "Safari", "type": "safari", "path": safari_path})
 
     return results
 
@@ -344,16 +355,27 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
     if not targets:
         return None
 
+    logger.info(f"🍪 Searching for {cookie_name} cookie in domain {domain_substring}...")
     for target in targets:
         path = target["path"]
         b_type = target["type"]
+        browser_name = target["browser"]
+
+        if not os.path.exists(path):
+            continue
+
+        logger.info(f"🔎 Checking {browser_name} database at {path}...")
 
         # Safari (Binary)
         if b_type == "safari":
-            cookies = SafariBinaryCookieParser.parse_file(path)
-            for c in cookies:
-                if domain_substring in c["domain"] and c["name"] == cookie_name:
-                    return c["value"]
+            try:
+                cookies = SafariBinaryCookieParser.parse_file(path)
+                for c in cookies:
+                    if domain_substring in c["domain"] and c["name"] == cookie_name:
+                        logger.info(f"✅ Found {cookie_name} cookie for {domain_substring} in Safari")
+                        return c["value"]
+            except Exception as e:
+                logger.info(f"❌ Safari parsing error: {e}")
             continue
 
         # SQLite browsers (Chromium and Firefox)
@@ -373,10 +395,16 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
                 )
                 row = cursor.fetchone()
                 if row:
+                    logger.info(f"📦 Found encrypted {cookie_name} cookie in {browser_name}")
                     decrypted = decrypt_chromium_cookie(row[0])
                     if decrypted:
+                        logger.info(f"✅ Successfully decrypted {cookie_name} cookie from {browser_name}")
                         conn.close()
                         return decrypted
+                    else:
+                        logger.warning(f"⚠️ Failed to decrypt {cookie_name} cookie from {browser_name} (Keychain permission issue)")
+                else:
+                    logger.info(f"◽ Cookie {cookie_name} not found in {browser_name} for {domain_substring}")
 
             elif b_type == "firefox":
                 # Firefox schema: host, name, value
@@ -386,12 +414,14 @@ def get_session_cookie(domain_substring: str, cookie_name: str) -> Optional[str]
                 )
                 row = cursor.fetchone()
                 if row:
+                    logger.info(f"✅ Found {cookie_name} cookie for {domain_substring} in Firefox")
                     val = row[0]
                     conn.close()
                     return val
 
             conn.close()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error checking {browser_name} database: {e}")
             continue
         finally:
             if temp_path and os.path.exists(temp_path):

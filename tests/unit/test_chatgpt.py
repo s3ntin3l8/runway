@@ -128,47 +128,69 @@ class TestChatGPTCollectorDetailed:
 
     @pytest.mark.asyncio
     async def test_tier_detection_plus(
-        self, mock_http_client, chatgpt_account_response, chatgpt_usage_response
+        self, mock_http_client, chatgpt_usage_response
     ):
-        """Verify 'PLUS' tier detection from entitlements."""
+        """Verify 'PLUS' tier detection from unified usage data."""
         collector = ChatGPTCollector()
-
-        acc_resp = MagicMock(spec=httpx.Response)
-        acc_resp.status_code = 200
-        acc_resp.json.return_value = chatgpt_account_response  # contains "plus"
 
         usage_resp = MagicMock(spec=httpx.Response)
         usage_resp.status_code = 200
-        usage_resp.json.return_value = chatgpt_usage_response
+        usage_resp.headers = {}
+        usage_resp.json.return_value = chatgpt_usage_response # contains "plus"
 
-        mock_http_client.get.side_effect = [acc_resp, usage_resp]
+        mock_http_client.request.side_effect = [usage_resp]
 
         # Isolation
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
             results = await collector.collect(mock_http_client)
 
-            assert results[0]["service"] == "ChatGPT Account"
-            assert results[0]["remaining"] == "PLUS"
-            assert "Plus" in results[0]["detail"]
+            # Consolidated into a single usage card
+            assert len(results) == 1
+            assert results[0]["service"] == "ChatGPT Codex"
+            assert "PLUS" in results[0]["detail"]
 
     @pytest.mark.asyncio
     async def test_tier_detection_free(self, mock_http_client, chatgpt_usage_response):
-        """Verify 'FREE' tier detection when no 'plus' entitlement exists."""
+        """Verify 'FREE' tier detection from unified usage data."""
         collector = ChatGPTCollector()
 
-        acc_resp = MagicMock(spec=httpx.Response)
-        acc_resp.status_code = 200
-        acc_resp.json.return_value = {"accounts": {"u": {"entitlements": []}}}
+        # Modify fixture to be free for this specific test
+        free_usage = chatgpt_usage_response.copy()
+        free_usage["plan_type"] = "free"
 
         usage_resp = MagicMock(spec=httpx.Response)
         usage_resp.status_code = 200
-        usage_resp.json.return_value = chatgpt_usage_response
+        usage_resp.headers = {}
+        usage_resp.json.return_value = free_usage
 
-        mock_http_client.get.side_effect = [acc_resp, usage_resp]
+        mock_http_client.request.side_effect = [usage_resp]
 
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
             results = await collector.collect(mock_http_client)
-            assert results[0]["remaining"] == "FREE"
+            assert len(results) == 1
+            assert "FREE" in results[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_tier_extraction_from_usage_on_account_fail(self, mock_http_client, chatgpt_usage_response):
+        """Verify tier is extracted correctly from single usage call."""
+        collector = ChatGPTCollector()
+
+        # Mock usage success with "plus" tier
+        usage_resp = MagicMock(spec=httpx.Response)
+        usage_resp.status_code = 200
+        usage_resp.headers = {}
+        usage_resp.json.return_value = chatgpt_usage_response
+
+        # Now only 1 call is needed
+        mock_http_client.request.side_effect = [usage_resp]
+
+        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
+            results = await collector.collect(mock_http_client)
+            
+            # Should have the Codex card with PLUS tier
+            assert any(r["service"] == "ChatGPT Codex" for r in results)
+            codex_card = next(r for r in results if r["service"] == "ChatGPT Codex")
+            assert codex_card["tier"] == "plus"
 
     @pytest.mark.asyncio
     async def test_collect_api_failure_fallback(self, mock_http_client):
@@ -178,7 +200,8 @@ class TestChatGPTCollectorDetailed:
         # Mock API failure
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 429
-        mock_http_client.get.return_value = mock_resp
+        mock_resp.headers = {}
+        mock_http_client.request.return_value = mock_resp
 
         # Mock local logs existence
         log_content = json.dumps({"used_percent": 88.0, "resets_at": 1744876800})

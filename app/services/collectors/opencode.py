@@ -26,7 +26,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
-from app.core.utils import error_card, human_delta
+from app.core.utils import error_card, human_delta, http_request_with_retry, PaceCalculator
 from app.core.browser_cookies import get_opencode_session_cookie
 from app.services.collectors.base import BaseCollector
 from app.services.external_metrics import external_metric_service
@@ -94,8 +94,16 @@ class OpenCodeCollector(BaseCollector):
 
         try:
             headers = {
-                "Cookie": f"session={session_cookie}",
+                "Cookie": f"auth={session_cookie}",
                 "Content-Type": "application/json",
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                "Referer": "https://opencode.ai/",
+                "Origin": "https://opencode.ai",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
             }
 
             # 1. Get workspace ID
@@ -129,15 +137,27 @@ class OpenCodeCollector(BaseCollector):
                     return env_workspace.split("workspace/")[-1].split("/")[0]
                 return env_workspace
 
-            # Call workspaces endpoint
-            resp = await client.post(
-                "https://opencode.ai/_server",
-                headers=headers,
-                json={
-                    "functionId": "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"  # workspaces
-                },
-                timeout=10.0,
+            import uuid
+            ws_headers = headers.copy()
+            func_id = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
+            ws_headers.update({
+                "X-Server-Id": func_id,
+                "X-Server-Instance": f"server-fn:{uuid.uuid4()}",
+                "Accept": "text/javascript, application/json;q=0.9, */*;q=0.8",
+            })
+
+            # Try primary GET approach
+            url = f"https://opencode.ai/_server?id={func_id}"
+            resp = await http_request_with_retry(
+                client, "GET", url, headers=ws_headers, timeout=10.0, follow_redirects=True
             )
+
+            # Fallback to POST with empty body if GET fails
+            if resp.status_code != 200:
+                resp = await http_request_with_retry(
+                    client, "POST", "https://opencode.ai/_server", 
+                    headers=ws_headers, json=[], timeout=10.0, follow_redirects=True
+                )
 
             if resp.status_code != 200:
                 return None
@@ -148,7 +168,7 @@ class OpenCodeCollector(BaseCollector):
             match = re.search(r'id:"(wrk_[a-zA-Z0-9]+)"', text)
             if match:
                 return match.group(1)
-
+            
             return None
         except Exception:
             return None
@@ -156,16 +176,15 @@ class OpenCodeCollector(BaseCollector):
     async def _get_subscription_data(
         self, client: httpx.AsyncClient, headers: Dict[str, str], workspace_id: str
     ) -> Optional[str]:
-        """Get subscription/usage data from opencode.ai."""
+        """Get subscription/usage data from the workspace page (GET)."""
         try:
-            resp = await client.post(
-                "https://opencode.ai/_server",
-                headers=headers,
-                json={
-                    "functionId": "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4",  # subscription.get
-                    "workspaceId": workspace_id,
-                },
-                timeout=10.0,
+            url = f"https://opencode.ai/workspace/{workspace_id}/go"
+            # Switch to HTML accept header for the page fetch
+            usage_headers = headers.copy()
+            usage_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            
+            resp = await http_request_with_retry(
+                client, "GET", url, headers=usage_headers, timeout=15.0, follow_redirects=True
             )
 
             if resp.status_code != 200:
@@ -177,95 +196,76 @@ class OpenCodeCollector(BaseCollector):
 
     def _parse_usage_data(self, text: str, workspace_id: str) -> List[Dict[str, Any]]:
         """
-        Parse JavaScript response to extract usage data.
-
-        Expected format:
-        rollingUsage:{usagePercent:45.5,resetInSec:7200,limit:12.0}
-        weeklyUsage:{usagePercent:23.0,resetInSec:345600,limit:30.0}
+        Parse JavaScript/React stream response to extract usage data.
         """
+        # logger.info(f"OpenCode parsing usage data (text length: {len(text)})")
+        # Log a snippet of where usage usually is
+        if "Usage" in text:
+            start = text.find("Usage")
+            # logger.info(f"OpenCode usage snippet: {text[start-50:start+2000]}")
+        
         cards = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         usage_url = f"https://opencode.ai/workspace/{workspace_id}/go"
 
-        # Parse rolling usage (5-hour window)
-        rolling_match = re.search(
-            r"rollingUsage:\{usagePercent:([\d.]+),resetInSec:(\d+)(?:,limit:([\d.]+))?\}",
-            text,
-        )
-        if rolling_match:
-            pct = float(rolling_match.group(1))
-            reset_sec = int(rolling_match.group(2))
-            limit = float(rolling_match.group(3)) if rolling_match.group(3) else 12.0
+        # Definition of windows to search for
+        windows = [
+            ("rollingUsage", "OpenCode (5h)", 12.0, "Rolling 5h"),
+            ("weeklyUsage", "OpenCode (7d)", 30.0, "Rolling 7d"),
+            ("monthlyUsage", "OpenCode (30d)", 60.0, "Monthly"),
+        ]
+
+        for key, service_name, limit, reset_label in windows:
+            # Even more flexible regex
+            # key:($R[xx]=)?{...}
+            pattern = fr'{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}'
+            match = re.search(pattern, text)
+            
+            if not match:
+                logger.info(f"OpenCode: Could not find object for {key}")
+                continue
+                
+            obj_content = match.group(1)
+            # logger.info(f"OpenCode: Found {key} object content: {obj_content}")
+            
+            # Extract fields from the object content
+            pct_match = re.search(r'usagePercent:([\d.]+)', obj_content)
+            reset_match = re.search(r'resetInSec:(\d+)', obj_content)
+            
+            if not pct_match or not reset_match:
+                logger.info(f"OpenCode: Missing fields in {key} object")
+                continue
+                
+            pct = float(pct_match.group(1))
+            reset_sec = int(reset_match.group(1))
+            # logger.info(f"OpenCode: Parsed {key}: {pct}% used, reset in {reset_sec}s")
 
             used = (pct / 100) * limit
             remaining = max(0, limit - used)
+            reset_at = now + timedelta(seconds=reset_sec)
 
-            # Calculate reset time
-            reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
+            cards.append({
+                "service": service_name,
+                "icon": "⚡",
+                "remaining": f"${remaining:.2f}",
+                "unit": f"${limit:.0f} limit",
+                "reset": reset_label,
+                "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
+                "used_value": used,
+                "limit_value": limit,
+                "is_unlimited": False,
+                "unit_type": "currency",
+                "currency": "USD",
+                "reset_at": reset_at.isoformat(),
+                "data_source": "web_api",
+                "usage_url": usage_url,
+                "updated_at": now_iso,
+            })
 
-            cards.append(
-                {
-                    "service": "OpenCode (5h)",
-                    "icon": "⚡",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": f"${limit:.0f} limit",
-                    "reset": "Rolling 5h",
-                    "health": (
-                        "good" if pct < 70 else "warning" if pct < 90 else "critical"
-                    ),
-                    "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
-                    "used_value": used,
-                    "limit_value": limit,
-                    "is_unlimited": False,
-                    "unit_type": "currency",
-                    "currency": "USD",
-                    "reset_at": None,  # Rolling window has no fixed reset time
-                    "data_source": "web_api",
-                    "usage_url": usage_url,
-                    "updated_at": now,
-                }
-            )
-
-        # Parse weekly usage
-        weekly_match = re.search(
-            r"weeklyUsage:\{usagePercent:([\d.]+),resetInSec:(\d+)(?:,limit:([\d.]+))?\}",
-            text,
-        )
-        if weekly_match:
-            pct = float(weekly_match.group(1))
-            reset_sec = int(weekly_match.group(2))
-            limit = float(weekly_match.group(3)) if weekly_match.group(3) else 30.0
-
-            used = (pct / 100) * limit
-            remaining = max(0, limit - used)
-
-            reset_at = datetime.now(timezone.utc) + timedelta(seconds=reset_sec)
-
-            cards.append(
-                {
-                    "service": "OpenCode (7d)",
-                    "icon": "⚡",
-                    "remaining": f"${remaining:.2f}",
-                    "unit": f"${limit:.0f} limit",
-                    "reset": "Rolling 7d",
-                    "health": (
-                        "good" if pct < 70 else "warning" if pct < 90 else "critical"
-                    ),
-                    "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                    "detail": f"${used:.2f} used ({pct:.1f}%) · Web API",
-                    "used_value": used,
-                    "limit_value": limit,
-                    "is_unlimited": False,
-                    "unit_type": "currency",
-                    "currency": "USD",
-                    "reset_at": None,  # Rolling window has no fixed reset time
-                    "data_source": "web_api",
-                    "usage_url": usage_url,
-                    "updated_at": now,
-                }
-            )
-
+        # logger.info(f"OpenCode: _parse_usage_data returning {len(cards)} cards")
         return cards
 
     async def _get_opencode_tui(self) -> List[Dict[str, Any]]:
@@ -277,8 +277,22 @@ class OpenCodeCollector(BaseCollector):
         Returns:
             List[Dict[str, Any]]: Cards for each time window (5h, week, month)
         """
-        db = settings.OPENCODE_DB_PATH
-        if not os.path.exists(db):
+        # Try multiple potential DB paths (platform data dir vs legacy/Linux paths)
+        potential_paths = [
+            settings.OPENCODE_DB_PATH,
+            os.path.expanduser("~/.local/share/opencode/opencode.db"),
+            os.path.expanduser("~/.opencode/opencode.db"),
+        ]
+        
+        db = None
+        for p in potential_paths:
+            if os.path.exists(p):
+                db = p
+                logger.debug(f"Found OpenCode database at: {p}")
+                break
+                
+        if not db:
+            logger.debug("No OpenCode database found in any of the potential paths.")
             return []
 
         try:

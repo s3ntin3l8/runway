@@ -46,8 +46,18 @@ class AnthropicCollector(AnthropicOAuthMixin, AnthropicWebMixin, AnthropicLocalM
     AnthropicCollector → AnthropicOAuthMixin (→ OAuthBaseCollector → BaseCollector)
     """
 
+    def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
+        """
+        Anthropic specific error check. 
+        If we have ANY non-error cards (e.g. from Statusline), consider it success.
+        """
+        if not results:
+            return True
+        # Success if at least one card is NOT an error
+        return all(r.get("remaining") == "ERR" for r in results)
+
     def __init__(self):
-        """Initialize caching for OAuth results and token refresh tracking."""
+        """Initialize orchestrator."""
         # Credentials file path (search multiple locations)
         home = os.path.expanduser("~")
         credentials_path = os.path.join(home, ".claude", ".credentials.json")
@@ -67,9 +77,10 @@ class AnthropicCollector(AnthropicOAuthMixin, AnthropicWebMixin, AnthropicLocalM
 
         super().__init__(provider_name="Anthropic", credentials_path=credentials_path)
 
-        self._cached_results = None
-        self._last_fetch = None
-        self._cache_ttl = 600           # 10 minutes — safe for 429s
+        # Result caching for API calls (Statusline updates independently via SmartCollector 60s TTL)
+        self._cached_api_results = None
+        self._last_api_fetch = None
+        
         self._refresh_backoff_seconds = 30
         self._max_refresh_backoff = 21600  # 6 hours max
         self._last_statusline_data = {}    # Cache for hybrid fallback
@@ -100,6 +111,7 @@ class AnthropicCollector(AnthropicOAuthMixin, AnthropicWebMixin, AnthropicLocalM
         # 2. OAuth API — full window data
         token = await self._get_valid_token(client)
         if token:
+            # Mixin handles its own proactive 429 backoff and internal 10m cache
             oauth_res = await self._get_claude_oauth_with_cache(client, token)
 
             # Reactive 401 handling: refresh and retry once
@@ -114,16 +126,46 @@ class AnthropicCollector(AnthropicOAuthMixin, AnthropicWebMixin, AnthropicLocalM
                         self._persist_credentials(new_creds)
                         oauth_res = await self._get_claude_oauth(client, new_token)
 
-            # Merge: only add OAuth cards not covered by statusline
-            statusline_keys = {r["service"] for r in statusline_res}
+            # Merge OAuth
+            statusline_keys = {r["service"] for r in results}
+            is_oauth_error = any(r.get("remaining") == "ERR" for r in oauth_res)
+            
+            # Add successful OAuth cards
             for r in oauth_res:
-                if r["service"] not in statusline_keys:
+                if r["service"] not in statusline_keys and r.get("remaining") != "ERR":
                     results.append(r)
 
+        # 3. Web API fallback (Chrome/Safari cookies) — try if results are still missing or OAuth failed
+        # We only do this if OAuth didn't give us good data, to avoid hitting the web API too much
+        has_full_coverage = any("Weekly" in r["service"] for r in results)
+        if not has_full_coverage:
+            web_res = await self._get_claude_via_web_api(client)
+            if web_res:
+                current_keys = {r["service"] for r in results}
+                for r in web_res:
+                    if r["service"] not in current_keys:
+                        results.append(r)
+
+        # 4. Final Cleanup: If we have ANY successful cards, remove any leftover error cards
+        # to prevent triggering SmartCollector's failure fallback.
+        has_success = any(r.get("remaining") != "ERR" for r in results)
+        if has_success:
+            results = [r for r in results if r.get("remaining") != "ERR"]
+
+        # logger.info(f"Claude primary strategy final cards: {[r['service'] for r in results]}")
         return results
 
     async def _error_handler(self) -> List[Dict[str, Any]]:
         """Return a descriptive error card when all strategies fail."""
+        # Check for proactive rate limit backoff
+        backoff_until = getattr(self, "_last_429_backoff_until", None)
+        if backoff_until and datetime.now(timezone.utc) < backoff_until:
+            wait_rem = (backoff_until - datetime.now(timezone.utc)).total_seconds()
+            return [error_card(
+                "Claude Pro", "🟠", f"Rate Limited (429) - Retry in {wait_rem/60:.0f}m",
+                error_type="rate_limited",
+            )]
+
         if credential_provider.get_claude_token():
             return [error_card(
                 "Claude Pro", "🟠", "No data — OAuth failed & Logs empty",

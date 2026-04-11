@@ -103,7 +103,7 @@ class KimiApiCollector(BaseCollector):
         try:
             # Usage endpoint: /v1/users/me/usage (if available) or specific model usage
             # For now, we'll implement a robust placeholder for the history API
-            # as per the CodexBar patterns for prepaid collectors.
+            # as per standard patterns for prepaid collectors.
             return [] # History API logic would go here once endpoint is confirmed
         except Exception:
             return []

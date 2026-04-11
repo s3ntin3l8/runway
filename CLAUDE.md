@@ -16,7 +16,7 @@ Runway is a local-first, stateless monitoring tool for AI provider quotas.
 - **Manual Ingest Test**: `python3 scripts/test_ingest.py`
 
 ## Code Style & Patterns
-- **Backend**: Python 3.9+, FastAPI, Pydantic v2, `httpx` (async).
+- **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
 - **Frontend**: Vanilla CSS (glassmorphism) + Tailwind CSS.
 - **Async Required**: Everything from endpoints to collectors MUST be `async`.
 - **Typing**: Use explicit type hints for all API responses and internal models.

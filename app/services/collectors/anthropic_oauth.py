@@ -12,7 +12,7 @@ import json
 import base64
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import httpx
 
@@ -153,20 +153,33 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         self, client: httpx.AsyncClient, token: str
     ) -> List[Dict[str, Any]]:
         """
-        Fetch Claude OAuth usage with 10-minute result caching.
-
-        Caches ALL results (success AND errors like 429) to avoid hammering the
-        API when rate limited. Falls back to Web API/logs when a cached error is returned.
+        Fetch Claude OAuth usage with internal 10-minute caching for API calls.
+        
+        This allows the Statusline to update frequently (via SmartCollector 60s TTL)
+        while keeping the expensive/rate-limited API calls on a slower cycle.
         """
         now = datetime.now(timezone.utc)
-
-        if self._cached_results is not None and self._last_fetch:
-            if (now - self._last_fetch).total_seconds() < self._cache_ttl:
-                return self._cached_results
+        
+        # Check internal API cache (10 mins)
+        if hasattr(self, "_cached_api_results") and self._cached_api_results is not None and self._last_api_fetch:
+            if (now - self._last_api_fetch).total_seconds() < 600:
+                # If the cached result is a rate limit error, check if backoff expired
+                is_rate_limited = any(r.get("error_type") == "rate_limited" for r in self._cached_api_results)
+                if is_rate_limited:
+                    backoff_until = getattr(self, "_last_429_backoff_until", None)
+                    if backoff_until and now < backoff_until:
+                        return self._cached_api_results
+                    # Backoff expired, fall through to fetch fresh
+                else:
+                    return self._cached_api_results
 
         res = await self._get_claude_oauth(client, token)
-        self._cached_results = res
-        self._last_fetch = now
+        
+        # Only cache if not a transient connection error
+        if not any(r.get("error_type") == "timeout" for r in res):
+            self._cached_api_results = res
+            self._last_api_fetch = now
+            
         return res
 
     async def _get_claude_oauth(
@@ -175,9 +188,17 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         """
         Fetch Claude quota from Anthropic OAuth API.
 
-        Calls https://api.anthropic.com/api/oauth/usage and returns quota cards
-        for all windows (5h, 7d, 7d-sonnet, 7d-opus, extra).
+        Calls https://api.anthropic.com/api/oauth/usage and returns quota cards.
+        Proactively respects 429 backoff to avoid hammering the API.
         """
+        # Proactive backoff check
+        now = datetime.now(timezone.utc)
+        backoff_until = getattr(self, "_last_429_backoff_until", None)
+        if backoff_until and now < backoff_until:
+            wait_rem = (backoff_until - now).total_seconds()
+            logger.debug(f"Proactively skipping Anthropic API call due to recent 429 (backoff for {wait_rem:.0f}s)")
+            return [error_card("Claude Pro", "🟠", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
+
         url = "https://api.anthropic.com/api/oauth/usage"
         headers = {
             "Authorization": f"Bearer {token}",
@@ -197,11 +218,21 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
             if resp.status_code == 401:
                 return [error_card("Claude Pro", "🟠", "Expired/Invalid Token (OAuth)", error_type="auth_failed")]
+            
             if resp.status_code == 429:
-                return [error_card("Claude Pro", "🟠", "Rate Limited (429) - max retries exceeded", error_type="rate_limited")]
+                # Set proactive backoff based on Retry-After or default 5m
+                retry_after = resp.headers.get("Retry-After")
+                # Default to 5 mins if no header, but trust the header if present
+                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
+                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                logger.warning(f"Anthropic API returned 429. Proactive backoff set for {wait_sec}s")
+                return [error_card("Claude Pro", "🟠", f"Rate Limited (429) - Try in {wait_sec/60:.1f}m", error_type="rate_limited")]
+            
             if resp.status_code != 200:
                 return [error_card("Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error")]
 
+            # Success: Clear any backoff
+            self._last_429_backoff_until = None
             data = resp.json()
             creds = await self._get_credentials()
             return self._parse_oauth_response(data, name_map, creds)

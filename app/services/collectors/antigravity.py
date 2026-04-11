@@ -76,23 +76,27 @@ class AntigravityCollector(BaseCollector):
             seen_services = set()
 
             for pid, tokens in proc_info.items():
-                # 2. Find all listening ports for this PID
+                # 2. Find listening ports
                 ports = await self._find_listening_ports(pid)
-                
+
+                # 3. Probe all port/token combinations in parallel
+                probe_tasks = []
                 for port in ports:
-                    # 3. Try each token (sometimes --csrf_token vs --extension_server_csrf_token)
                     for csrf in tokens:
                         if not csrf: continue
-                        
-                        cards = await self._probe_lsp_service(client, port, csrf)
-                        if cards:
+                        probe_tasks.append(self._probe_lsp_service(client, port, csrf))
+
+                if probe_tasks:
+                    # Run all probes concurrently
+                    probe_results = await asyncio.gather(*probe_tasks, return_exceptions=True)
+
+                    for cards in probe_results:
+                        if isinstance(cards, list):
                             for card in cards:
                                 svc_key = f"{card['service']}_{card['remaining']}"
                                 if svc_key not in seen_services:
                                     results.append(card)
                                     seen_services.add(svc_key)
-                            # If we found data on a port with a token, we can move to the next port
-                            break
 
             return results
 
@@ -123,17 +127,18 @@ class AntigravityCollector(BaseCollector):
             "/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs"
         ]
 
-        # Try HTTPS then HTTP
-        for scheme in ["https", "http"]:
+        # Try HTTP only (since localhost is always HTTP for this service)
+        for scheme in ["http"]:
             for path in paths:
                 try:
                     url = f"{scheme}://127.0.0.1:{port}{path}"
-                    resp = await client.post(url, headers=headers, json=payload, timeout=2.0)
+                    # Use a short timeout since it's a local connection
+                    resp = await client.post(url, headers=headers, json=payload, timeout=0.5)
                     
                     if resp.status_code == 200:
                         data = resp.json()
                         return self._parse_lsp_response(data)
-                    elif resp.status_code == 403:
+                    elif resp.status_code in (401, 403):
                         # Token might be wrong, skip this token/port combo
                         return []
                 except Exception:
@@ -186,7 +191,10 @@ class AntigravityCollector(BaseCollector):
                 # Extract port from e.g. "TCP 127.0.0.1:61641 (LISTEN)"
                 match = re.search(r":(\d+)\s+\(LISTEN\)", line)
                 if match:
-                    ports.append(int(match.group(1)))
+                    port = int(match.group(1))
+                    # Exclude our own application port
+                    if port != settings.APP_PORT:
+                        ports.append(port)
             return sorted(list(set(ports)))
         except Exception:
             return []
@@ -195,12 +203,19 @@ class AntigravityCollector(BaseCollector):
         """Parse the binary/JSON Connect response into standardized quota cards."""
         results = []
         user_status = data.get("userStatus", {})
+        
+        # New structure parsing
+        email = user_status.get("email", "")
+        plan_info = user_status.get("planStatus", {}).get("planInfo", {})
+        plan = plan_info.get("planName", "Standard")
+        
+        # Fallback to userTier if needed
+        if plan == "Standard":
+            plan = user_status.get("userTier", {}).get("name", "Standard")
+
         cascade_data = user_status.get("cascadeModelConfigData", {})
         configs = cascade_data.get("clientModelConfigs", [])
 
-        # Identity info
-        email = user_status.get("accountEmail", "")
-        plan = user_status.get("planName", "Standard")
         identity_suffix = f" | {email}" if email else ""
 
         for config in configs:
