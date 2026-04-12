@@ -227,6 +227,41 @@
           ]
         }
       ]
+    },
+    "ollama": {
+      "name": "Ollama Cloud",
+      "icon": "🦙",
+      "rules": [
+        {
+          "type": "env",
+          "variable": "OLLAMA_SESSION_TOKEN",
+          "mapping": { "value": "cookie_session" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["ollama.com", ".ollama.com"],
+          "name": "session",
+          "mapping": { "value": "cookie_session" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["ollama.com", ".ollama.com"],
+          "name": "ollama_session",
+          "mapping": { "value": "cookie_session" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["ollama.com", ".ollama.com"],
+          "name": "__Host-ollama_session",
+          "mapping": { "value": "cookie_session" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["ollama.com", ".ollama.com"],
+          "name": "__Secure-next-auth.session-token",
+          "mapping": { "value": "cookie_session" }
+        }
+      ]
     }
   }
 }
