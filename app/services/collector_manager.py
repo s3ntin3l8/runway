@@ -26,6 +26,7 @@ from app.services.collectors.kimi_api import KimiApiCollector
 from app.services.collectors.kimi_coding import KimiCodingCollector
 from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.minimax import MiniMaxCollector
+from app.services.collectors.ollama import OllamaCollector
 from app.services.smart_collector import SmartCollector
 from app.services.external_metrics import external_metric_service
 
@@ -64,6 +65,7 @@ class CollectorManager:
             (KimiCodingCollector, "Kimi Coding", 900),  # 15 min
             (OpenRouterCollector, "OpenRouter", 900),  # 15 min
             (MiniMaxCollector, "MiniMax", 900),  # 15 min
+            (OllamaCollector, "Ollama Cloud", 900),  # 15 min
         ]
 
         self.smart_collectors = []
