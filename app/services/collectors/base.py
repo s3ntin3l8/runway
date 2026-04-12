@@ -6,15 +6,13 @@ must implement. Each collector follows a 3-tier fallback pattern:
 1. Primary Strategy: Direct API calls (OAuth, REST API, etc.)
 2. Secondary Strategy: Local log parsing (CLI logs, cache files, etc.)
 3. Tertiary Strategy: Error cards or graceful degradation
-
-The collector pattern ensures resilience in headless environments (Docker, CI/CD)
-where desktop UI features may not be available.
 """
 
 import httpx
 import logging
+import asyncio
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Callable, Awaitable
+from typing import List, Dict, Any, Callable, Awaitable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +20,19 @@ logger = logging.getLogger(__name__)
 class BaseCollector(ABC):
     """
     Abstract base class for all AI provider quota collectors.
-
-    Defines the interface that all provider-specific collectors must implement.
-    Collectors are responsible for:
-    - Fetching quota and usage data from their respective providers
-    - Implementing resilient fallback strategies when APIs are unavailable
-    - Returning standardized LimitCard dictionaries for frontend rendering
-
-    The collect() method should be idempotent and handle errors gracefully,
-    returning error cards instead of raising exceptions.
+    Now supports multi-account isolation.
     """
+
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        """
+        Initialize BaseCollector.
+
+        Args:
+            account_id: Unique identifier for the account (None for default/ENV)
+            account_name: Human-readable account name (e.g. email)
+        """
+        self.account_id = account_id
+        self.account_name = account_name
 
     def _is_error_result(self, results: List[Dict[str, Any]]) -> bool:
         """Return True if results are empty or contain an error card."""
@@ -39,39 +40,88 @@ class BaseCollector(ABC):
 
     async def collect(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """
-        Automated Strategy Pattern orchestration. Executes the primary strategy,
-        then fallback strategies sequentially until one succeeds or all fail.
+        Orchestrate collection strategy with fallbacks and error handling.
+        Automatically tags results with account identifiers.
         """
-        # 1. Try Primary Strategy
         try:
+            # 1. Try Primary Strategy
             results = await self._primary_strategy(client)
             if not self._is_error_result(results):
-                return results
-            logger.debug(f"Primary strategy returned error/empty, proceeding to fallbacks...")
+                return self._tag_results(results)
+
+            # 2. Try Fallbacks
+            for strategy in self._fallback_strategies():
+                try:
+                    results = await strategy(client)
+                    if not self._is_error_result(results):
+                        return self._tag_results(results)
+                except Exception as e:
+                    logger.warning(f"Fallback strategy failed: {e}")
+
+            # 3. All failed
+            return self._tag_results(await self._error_handler())
+
         except Exception as e:
-            logger.warning(f"Primary strategy raised exception: {e}")
+            logger.error(f"Collector {self.__class__.__name__} failed: {e}")
+            return self._tag_results([
+                {
+                    "service": "Collector Error",
+                    "icon": "⚠️",
+                    "remaining": "ERR",
+                    "unit": "fail",
+                    "reset": "—",
+                    "pace": "Stopped",
+                    "detail": f"Internal Error: {str(e)[:30]}",
+                    "health": "critical",
+                }
+            ])
 
-        # 2. Try Fallback Strategies
-        for strategy in self._fallback_strategies():
-            try:
-                results = await strategy(client)
-                if not self._is_error_result(results):
-                    return results
+    def _tag_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Add account identifiers to every card in the result list.
+        Also attempts to discover account_name if it is missing by scanning card details.
+        """
+        if not results:
+            return []
+        
+        # 1. Try to discover account_name if missing
+        if not self.account_name:
+            import re
+            for card in results:
+                detail = card.get("detail", "")
+                if not detail:
+                    continue
+                # Simple email/identity regex for discovery
+                # Looks for email-like strings or "org: ..." patterns
+                match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", detail)
+                if match:
+                    self.account_name = match.group(1)
+                    break
+                
+                # Fallback to org pattern or standalone username after separator (·)
+                org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
+                if org_match:
+                    self.account_name = f"org: {org_match.group(1)}"
+                    break
+                
+                # Standalone username after a dot/separator e.g. "· username"
+                user_match = re.search(r"·\s*([a-zA-Z0-9_-]+)$", detail)
+                if user_match:
+                    self.account_name = user_match.group(1)
+                    break
 
-                strategy_name = (
-                    strategy.__name__ if hasattr(strategy, "__name__") else "unknown"
-                )
-                logger.debug(
-                    f"Fallback strategy {strategy_name} returned error/empty, falling back..."
-                )
-            except Exception as e:
-                strategy_name = (
-                    strategy.__name__ if hasattr(strategy, "__name__") else "unknown"
-                )
-                logger.warning(f"Fallback strategy {strategy_name} raised exception: {e}")
-
-        # 3. All strategies failed - return final error
-        return await self._error_handler()
+        # 2. Tag cards
+        for card in results:
+            if "account_id" not in card:
+                card["account_id"] = self.account_id
+            if "account_name" not in card or not card["account_name"]:
+                card["account_name"] = self.account_name or "Default"
+            
+            # Final fallback: if account_name is still None/empty, set to "Default"
+            if not card["account_name"]:
+                card["account_name"] = "Default"
+                
+        return results
 
     @abstractmethod
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
@@ -82,11 +132,10 @@ class BaseCollector(ABC):
     def _fallback_strategies(
         self,
     ) -> List[Callable[[httpx.AsyncClient], Awaitable[List[Dict[str, Any]]]]]:
-        """Return an ordered list of fallback async methods to execute if the primary fails."""
+        """Return an ordered list of fallback async methods to execute."""
         pass
 
     @abstractmethod
     async def _error_handler(self) -> List[Dict[str, Any]]:
-        """Return the ultimate error card(s) to display when all strategies fail."""
+        """Return the error card(s) when all strategies fail."""
         pass
-

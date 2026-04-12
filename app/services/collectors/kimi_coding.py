@@ -57,6 +57,8 @@ from app.services.collectors.base import BaseCollector
 
 
 class KimiCodingCollector(BaseCollector):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
     """Collector for Kimi Coding IDE quotas (weekly + rate limits)."""
 
     API_ENDPOINT = (

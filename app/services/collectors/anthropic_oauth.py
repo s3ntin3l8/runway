@@ -33,12 +33,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     # ──────────────────────────────── Token lifecycle ────────────────────────
 
-    async def _get_current_token(self) -> Optional[str]:
-        """Get the current access token from credential provider or sidecar cache."""
-        token = credential_provider.get_claude_token()
-        if not token:
-            token = await token_cache.get_token("anthropic", "oauth_token")
-        return token
 
     async def _is_token_expired(self) -> bool:
         """Check if OAuth token is expired by reading credentials file."""
@@ -66,7 +60,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken") if creds else None
 
         if not refresh_token:
-            refresh_token = await token_cache.get_token("anthropic", "refresh_token")
+            refresh_token = await token_cache.get_token(
+                "anthropic", "refresh_token", account_id=self.account_id
+            )
 
         if not refresh_token:
             return None
@@ -136,9 +132,8 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     new_data.get("refresh_token", refresh_token),
                 )
 
-                # Update credential_provider cache via proper setter
-                credential_provider.update_claude_token(new_data["access_token"])
-
+                # Return for base collector compatibility
+                creds["access_token"] = new_data["access_token"]
                 return creds
             elif resp.status_code == 400:
                 error_data = resp.json()
@@ -244,8 +239,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.error(f"Claude OAuth collection failed: {e}")
             return [error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")]
 
-    def _extract_identity_from_oauth(self, data: Dict[str, Any]) -> str:
+    def _extract_identity_from_oauth(self, data: Optional[Dict[str, Any]]) -> str:
         """Extract account identity string from OAuth API response."""
+        if not data:
+            return ""
         account = data.get("account", {})
         email = account.get("email", "")
         org = account.get("organization", "")
@@ -282,8 +279,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         results = []
         local_hints = self._get_local_config_hints()
 
-        identity_str = self._extract_identity_from_oauth(data)
-        identity_suffix = f" | {identity_str}" if identity_str else ""
 
         # Infer plan/tier: Credentials > Local Config > API
         tier = None
@@ -318,6 +313,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 return list(name_map.keys()).index(k)
             except ValueError:
                 return 999
+
+        # Identity: Try specific credentials (file/sidecar) first, fall back to API response data
+        identity_str = self._extract_identity_from_oauth(creds)
+        if not identity_str:
+            identity_str = self._extract_identity_from_oauth(data)
+            
+        identity_suffix = f" | {identity_str}" if identity_str else ""
 
         for key in sorted(all_keys, key=sort_key):
             if key == "account":

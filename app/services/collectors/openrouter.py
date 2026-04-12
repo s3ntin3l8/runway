@@ -3,6 +3,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from app.services.collectors.base import BaseCollector
 from app.core.config import settings
+from app.services.token_cache import token_cache
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -13,17 +14,29 @@ class OpenRouterCollector(BaseCollector):
     Uses: https://openrouter.ai/api/v1/credits
     """
 
-    def __init__(self):
-        self.api_key = settings.OPENROUTER_API_KEY
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
+
+    async def _get_api_key(self) -> Optional[str]:
+        """Discovery API key from cache or settings."""
+        # 1. Try account-specific token from cache
+        if self.account_id:
+            token = await token_cache.get_token("openrouter", "api_key", account_id=self.account_id)
+            if token:
+                return token
+        
+        # 2. Fallback to settings
+        return settings.OPENROUTER_API_KEY
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
         """Collect usage data from OpenRouter via API."""
-        if not self.api_key:
+        api_key = await self._get_api_key()
+        if not api_key:
             return []
 
         try:
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
             
@@ -73,7 +86,8 @@ class OpenRouterCollector(BaseCollector):
         """Return the ultimate error card(s) when all strategies fail."""
         from app.core.utils import error_card
         
-        if not self.api_key:
+        api_key = await self._get_api_key()
+        if not api_key:
             return [error_card("OpenRouter", "🚀", "Missing OPENROUTER_API_KEY", error_type="missing_config")]
             
         return [error_card("OpenRouter", "🚀", "API connection failed", error_type="api_error")]

@@ -30,7 +30,7 @@ Headers:
 
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 import httpx
 from app.core.config import settings
@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 
 
 class GitHubCollector(BaseCollector):
-    def __init__(self):
-        """Initialize caching for API results."""
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        """Initialize orchestrator."""
+        super().__init__(account_id=account_id, account_name=account_name)
         self._cached_results = None
         self._last_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
+
 
     def _fallback_strategies(self) -> List[Any]:
         """Return the fallback strategies for GitHub (None)."""
@@ -158,6 +160,21 @@ class GitHubCollector(BaseCollector):
 
             # Success: Clear any backoff
             self._last_429_backoff_until = None
+
+            # Try to discover identity from local gh config for promotion
+            identity = None
+            gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
+            if os.path.exists(gh_config_path):
+                try:
+                    import yaml
+                    with open(gh_config_path, "r") as f:
+                        config = yaml.safe_load(f)
+                        host_config = config.get("github.com", {})
+                        identity = host_config.get("user") or list(host_config.get("users", {}).keys())[0]
+                except Exception:
+                    pass
+            
+            self._identity = identity
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             # Cache results (including empty/error cards) to avoid hammering API
             self._cached_results = cards
@@ -174,8 +191,11 @@ class GitHubCollector(BaseCollector):
     async def _get_token(self) -> Optional[str]:
         """Internal helper to get token from multiple sources."""
         token = credential_provider.get_github_token()
-        if not token:
-            token = await token_cache.get_token("github", "api_key")
+        if token:
+            return token
+
+        if self.account_id:
+            token = await token_cache.get_token("github", "api_key", account_id=self.account_id)
         return token
 
     def _parse_api_responses(self, user_resp, token_resp, user_data) -> List[Dict[str, Any]]:
@@ -222,6 +242,7 @@ class GitHubCollector(BaseCollector):
                 used_val = monthly_val - val if isinstance(monthly_val, int) else 0
                 pct_used = (used_val / monthly_val * 100) if isinstance(monthly_val, (int, float)) and monthly_val > 0 else 0
                 pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
+                identity_suffix = f" · {self._identity}" if getattr(self, "_identity", None) else ""
                 results.append({
                     "service": f"Copilot ({key.title()})",
                     "icon": "🐙",
@@ -230,7 +251,7 @@ class GitHubCollector(BaseCollector):
                     "reset": reset_at.isoformat() if reset_at else None,
                     "health": "good" if val > 10 else "warning",
                     "pace": pace,
-                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}",
+                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
                     "used_value": float(used_val),
                     "limit_value": float(monthly_val) if isinstance(monthly_val, (int, float)) else 100.0,
                     "is_unlimited": False,
@@ -283,4 +304,3 @@ class GitHubCollector(BaseCollector):
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
         return results
-

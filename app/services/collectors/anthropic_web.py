@@ -29,6 +29,14 @@ class AnthropicWebMixin:
     Intended to be composed into AnthropicCollector.
     """
 
+    _name_map = {
+        "five_hour": "Session Window",
+        "seven_day": "Weekly Window",
+        "seven_day_sonnet": "Sonnet Weekly",
+        "seven_day_opus": "Opus Weekly",
+        "extra_usage": "Extra Usage",
+    }
+
     # ─────────────────────────────── Statusline (fast path) ──────────────────
 
     async def _strategy_statusline(self) -> List[Dict[str, Any]]:

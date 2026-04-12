@@ -85,11 +85,8 @@ async def ingest_metrics(
         logger.error(f"Failed to parse ingest payload: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
 
-    tokens_by_provider = {}
+    tokens_to_store = []
     local_cards = []
-
-    # Extract base provider name (e.g., "anthropic-laptop" -> "anthropic")
-    # provider_base = request.provider.split("-")[0]  <-- This was causing the bug
 
     for card in request.metrics:
         # Check if this is a token-only card (should NOT be displayed)
@@ -104,26 +101,32 @@ async def ingest_metrics(
             if card.metadata:
                 provider_id = card.metadata.get("provider_id")
                 if provider_id:
-                    if provider_id not in tokens_by_provider:
-                        tokens_by_provider[provider_id] = {}
+                    acc_id = card.metadata.get("account_id")
+                    acc_name = card.metadata.get("account_name")
                     
+                    provider_tokens = {}
                     for key, val in card.metadata.items():
-                        # Store tokens but skip the provider_id itself
-                        if key != "provider_id" and (
+                        # Store tokens but skip the provider/account identifiers
+                        if key not in ("provider_id", "account_id", "account_name") and (
                             key in ("oauth_token", "refresh_token", "api_key") 
                             or key.startswith("cookie_")
                         ):
-                            tokens_by_provider[provider_id][key] = val
-                            logger.debug(f"Extracted {key} for {provider_id} from {request.provider}")
+                            provider_tokens[key] = val
+                    
+                    if provider_tokens:
+                        tokens_to_store.append((provider_id, provider_tokens, acc_id, acc_name))
+                        logger.debug(f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {request.provider}")
             continue
 
         # Keep actual data cards
         local_cards.append(card)
 
-    # Store tokens in cache for each identified provider
-    for provider_id, provider_tokens in tokens_by_provider.items():
-        await token_cache.store(provider_id, provider_tokens)
-        logger.info(f"Received {len(provider_tokens)} tokens for {provider_id} from {request.provider}")
+    # Store tokens in cache for each identified account
+    tokens_received_count = 0
+    for p_id, p_tokens, a_id, a_name in tokens_to_store:
+        actual_acc_id = await token_cache.store(p_id, p_tokens, a_id, a_name)
+        tokens_received_count += len(p_tokens)
+        logger.info(f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {request.provider}")
 
     # Store local data metrics
     if local_cards:
@@ -135,6 +138,6 @@ async def ingest_metrics(
     return {
         "status": "ok",
         "provider": request.provider,
-        "tokens_received": sum(len(t) for t in tokens_by_provider.values()),
+        "tokens_received": tokens_received_count,
         "metrics_stored": len(local_cards),
     }

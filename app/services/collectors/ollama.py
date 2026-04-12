@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaCollector(BaseCollector):
-    def __init__(self):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
 

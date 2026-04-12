@@ -653,6 +653,10 @@ export function buildModalContent(item) {
                 <span class="text-sm font-bold ${sourceColor} mono">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                <span class="text-sm font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_name || 'Default')}">${escapeHTML(item.account_name || 'Default')}</span>
+            </div>
+            <div class="modal-detail-item flex flex-col gap-1">
                 <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
                 <span class="text-sm font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
