@@ -1,33 +1,5 @@
 """
 ChatGPT Codex quota collector with API and local cache fallback.
-
-Collection Strategy:
-1. Primary: ChatGPT wham/usage API endpoint
-   - Requires OAuth token from environment (CHATGPT_OAUTH_TOKEN) or ~/.codex/auth.json
-   - Falls back to Web Dashboard Scraping (Browser Cookies) if no token is found
-   - Calls https://chatgpt.com/backend-api/wham/usage (requires Bearer auth)
-   - Returns both account tier (plan_type) and utilization metrics
-
-2. Authentication Priority:
-   - Priority 1: CHATGPT_OAUTH_TOKEN environment variable
-   - Priority 2: ~/.codex/auth.json (Codex CLI auth cache)
-   - Priority 3: Browser Cookies (__Secure-next-auth.session-token)
-   - Priority 4: Sidecar cache (forwarded tokens/cookies from other hosts)
-
-3. Fallback: Codex CLI RPC (Fidelity Fallback)
-   - Launches local RPC server: codex -s read-only -a untrusted app-server
-   - Communicates via JSON-RPC over stdin/stdout
-   - Provides account identity, plan type, usage windows, and credits
-
-4. Fallback: Local session cache
-   - Parses CHATGPT_SESSIONS_DIR for .jsonl session files
-   - Uses most recently modified file (represents latest session)
-   - Reads last line of log file for cached usage snapshot
-
-5. Error Handling:
-   - No auth: Returns "No logs/auth" error
-   - API failure: Falls back to CLI RPC, then local logs
-   - All fail: Returns API error or parse error card
 """
 
 import os
@@ -50,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGPTCollector(BaseCollector):
-    def __init__(self):
-        """Initialize caching for API results and refreshed tokens."""
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        """Initialize orchestrator."""
+        super().__init__(account_id=account_id, account_name=account_name)
         self._cached_api_results = None
         self._last_api_fetch = None
         self._cache_ttl = 300  # 5 minutes cache for lighter rate limits
@@ -99,7 +72,9 @@ class ChatGPTCollector(BaseCollector):
         if not session_token:
             # Check sidecar cache for cookie
             session_token = await token_cache.get_token(
-                "chatgpt", "cookie___Secure-next-auth.session-token"
+                "chatgpt",
+                "cookie___Secure-next-auth.session-token",
+                account_id=self.account_id,
             )
 
         if session_token:
@@ -120,7 +95,9 @@ class ChatGPTCollector(BaseCollector):
                 return {"token": refreshed, "source": "cookies"}
 
         # Priority 4: Sidecar cache (direct OAuth token)
-        token = await token_cache.get_token("chatgpt", "oauth_token")
+        token = await token_cache.get_token(
+            "chatgpt", "oauth_token", account_id=self.account_id
+        )
         if token:
             logger.debug("Using OAuth token from sidecar cache")
             return {"token": token, "source": "sidecar_cache"}
@@ -226,11 +203,9 @@ class ChatGPTCollector(BaseCollector):
     async def _collect_via_cli_rpc(self, client: Optional[httpx.AsyncClient] = None) -> List[Dict[str, Any]]:
         """
         Fetch usage data from the codex CLI RPC server.
-        Mimics a robust gold standard collection strategy.
         """
         process = None
         try:
-            # Launch local RPC server in read-only, untrusted mode
             process = await asyncio.create_subprocess_exec(
                 "codex", "-s", "read-only", "-a", "untrusted", "app-server",
                 stdin=asyncio.subprocess.PIPE,
@@ -249,26 +224,21 @@ class ChatGPTCollector(BaseCollector):
                 process.stdin.write((json.dumps(request) + "\n").encode())
                 await process.stdin.drain()
                 
-                # Read response line
                 line = await process.stdout.readline()
                 if not line: return None
                 try:
                     response = json.loads(line.decode())
-                    logger.debug(f"RPC {method} response: {response}")
                     return response.get("result")
                 except json.JSONDecodeError:
                     return None
 
-            # 1. Initialize (requires clientInfo)
             init_res = await call_rpc("initialize", {"clientInfo": {"name": "Runway", "version": "1.0.0"}})
             if not init_res:
                 return []
 
-            # 2. Get Account Info
             account_data = await call_rpc("account/read")
             account = account_data.get("account") if account_data else None
             
-            # 3. Get Rate Limits
             limits_data = await call_rpc("account/rateLimits/read")
             limits = limits_data.get("rateLimits") if limits_data else None
             
@@ -278,7 +248,6 @@ class ChatGPTCollector(BaseCollector):
             cards = []
             now = datetime.now(timezone.utc)
             
-            # Process Tier
             tier = "free"
             email = "Unknown"
             if account:
@@ -287,13 +256,12 @@ class ChatGPTCollector(BaseCollector):
                 elif "team" in plan_type: tier = "team"
                 email = account.get("email", "Unknown")
                 
-                status = "Active"
                 cards.append({
                     "service": "ChatGPT Account",
                     "icon": "💬",
                     "remaining": tier.upper(),
                     "unit": "tier",
-                    "reset": status,
+                    "reset": "Active",
                     "health": "good",
                     "pace": "Active",
                     "detail": f"Account: {email} [CLI RPC]",
@@ -302,12 +270,10 @@ class ChatGPTCollector(BaseCollector):
                     "updated_at": now.isoformat(),
                 })
 
-            # Process Windows
             primary = limits.get("primary")
             if primary:
                 pct = float(primary.get("usedPercent", 0.0))
                 reset_ts = primary.get("resetsAt")
-                # Codex returns epoch seconds for resetsAt
                 reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
                 
                 cards.append({
@@ -326,38 +292,29 @@ class ChatGPTCollector(BaseCollector):
                     "data_source": "cli",
                     "tier": tier,
                     "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                    "updated_at": now.isoformat(),
                 })
 
-            # Process Credits
             credits = limits.get("credits")
-            if credits and not credits.get("unlimited", False):
-                balance = credits.get("balance")
-                if balance is not None:
-                    balance = float(balance)
-                    cards.append({
-                        "service": "ChatGPT Credits",
-                        "icon": "💰",
-                        "remaining": f"${balance:.2f}",
-                        "unit": "balance",
-                        "reset": "Prepaid",
-                        "health": "good" if balance > 5 else "warning",
-                        "pace": "Stable",
-                        "detail": f"Credits: ${balance:.2f} [CLI RPC]",
-                        "used_value": 0.0,
-                        "limit_value": balance,
-                        "is_unlimited": False,
-                        "unit_type": "currency",
-                        "currency": "USD",
-                        "data_source": "cli",
-                        "tier": tier,
-                        "updated_at": now.isoformat(),
-                    })
+            if credits:
+                balance = credits.get("balance", 0.0)
+                cards.append({
+                    "service": "ChatGPT Credits",
+                    "icon": "💰",
+                    "remaining": f"${balance:.2f}",
+                    "unit": "USD",
+                    "reset": "Prepaid",
+                    "health": "good",
+                    "pace": "N/A",
+                    "detail": f"Balance: ${balance:.2f} [CLI RPC]",
+                    "data_source": "cli",
+                    "tier": tier,
+                    "updated_at": now.isoformat(),
+                })
 
             return cards
 
         except Exception as e:
-            logger.debug(f"Codex CLI RPC failed with error: {e}", exc_info=True)
+            logger.debug(f"Codex CLI RPC failed: {e}")
             return []
         finally:
             if process:
@@ -368,15 +325,14 @@ class ChatGPTCollector(BaseCollector):
                     pass
 
     def _fallback_strategies(self) -> List[Any]:
-        """Return the fallback strategies for ChatGPT (CLI RPC, Local Logs)."""
+        """Return the fallback strategies for ChatGPT."""
         return [
             self._collect_via_cli_rpc,
             self._strategy_local_logs,
         ]
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """Web API / OAuth strategy with caching."""
-        # Check API cache
+        """Web API / OAuth strategy."""
         now = datetime.now(timezone.utc)
         if self._cached_api_results is not None and self._last_api_fetch:
             if (now - self._last_api_fetch).total_seconds() < self._cache_ttl:
@@ -391,7 +347,6 @@ class ChatGPTCollector(BaseCollector):
 
         try:
             cards = await self._fetch_api_data(client, token, account_id, auth.get("source", "oauth"))
-            # Cache results (including empty/error results) to avoid hammering API
             self._cached_api_results = cards
             self._last_api_fetch = now
             return cards
@@ -399,133 +354,78 @@ class ChatGPTCollector(BaseCollector):
             logger.debug(f"ChatGPT Web API failed: {e}")
             self._cached_api_results = []
             self._last_api_fetch = now
-            
         return []
 
     async def _error_handler(self) -> List[Dict[str, Any]]:
-        """Return final error card when all strategies fail."""
-        return [
-            error_card(
-                "ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config"
-            )
-        ]
-        
+        """Return final error card."""
+        return [error_card("ChatGPT Codex", "💬", "No logs/auth found", error_type="missing_config")]
 
     async def _fetch_api_data(
         self, client: httpx.AsyncClient, token: str, account_id: Optional[str], source: str
     ) -> List[Dict[str, Any]]:
-        """Internal helper to fetch data from ChatGPT backend APIs."""
+        """Fetch from ChatGPT backend."""
         headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": "Mozilla/5.0",
             "Referer": "https://chatgpt.com/",
             "Origin": "https://chatgpt.com",
             "oai-device-id": await self._get_device_id(),
-            "oai-language": "en-US",
         }
         if account_id:
             headers["ChatGPT-Account-Id"] = account_id
 
-        cards = []
         now = datetime.now(timezone.utc)
-
-        # Proactive backoff check
-        backoff_until = getattr(self, "_last_429_backoff_until", None)
-        if backoff_until and now < backoff_until:
-            wait_rem = (backoff_until - now).total_seconds()
-            logger.debug(f"Proactively skipping ChatGPT API call due to recent 429 (backoff for {wait_rem:.0f}s)")
-            return [error_card("ChatGPT", "💬", f"Rate Limited (429) - Backoff for {wait_rem:.0f}s", error_type="rate_limited")]
-
-        # Fetch Unified Usage & Tier Info
-        try:
-            usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+        usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
+        
+        if usage_resp.status_code == 200:
+            data = usage_resp.json()
+            tier = data.get("plan_type", "free")
+            email = data.get("email", "")
             
-            # Reactive refresh if 401/403
-            if usage_resp.status_code in (401, 403):
-                session_token = await asyncio.to_thread(get_chatgpt_session_token)
-                if session_token:
-                    refreshed = await self._refresh_access_token(client, session_token)
-                    if refreshed:
-                        self._refreshed_token = refreshed
-                        self._refreshed_token_expiry = now + timedelta(hours=1)
-                        headers["Authorization"] = f"Bearer {refreshed}"
-                        usage_resp = await http_request_with_retry(client, "GET", "https://chatgpt.com/backend-api/wham/usage", headers=headers, timeout=10)
-            
-            if usage_resp.status_code == 429:
-                # Set proactive backoff based on Retry-After or default 10m
-                retry_after = usage_resp.headers.get("Retry-After")
-                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 600
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                return [error_card("ChatGPT", "💬", f"Rate Limited (429) - Try in {wait_sec/60:.0f}m", error_type="rate_limited")]
+            # Identity Promotion
+            if email and self.account_id:
+                asyncio.create_task(token_cache.update_account_metadata("chatgpt", self.account_id, name=email))
+                self.account_name = email
 
-            if usage_resp.status_code == 200:
-                self._last_429_backoff_until = None
-                data = usage_resp.json()
-                
-                # 1. Extract Tier & Account Info
-                tier = data.get("plan_type", "free")
-                email = data.get("email", "")
-                identity_suffix = f" · {email}" if email else ""
+            primary = data.get("rate_limit", {}).get("primary_window", {})
+            if primary:
+                pct = primary.get("used_percent", 0.0)
+                reset_ts = primary.get("reset_at")
+                reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
 
-                # 2. Extract Quota
-                primary = data.get("rate_limit", {}).get("primary_window", {})
-                if primary:
-                    pct = primary.get("used_percent", 0.0)
-                    reset_ts = primary.get("reset_at")
-                    reset_at = datetime.fromtimestamp(reset_ts, tz=timezone.utc) if reset_ts else None
-
-                    cards.append({
-                        "service": "ChatGPT Codex",
-                        "icon": "💬",
-                        "remaining": f"{(100-pct):.1f}%",
-                        "unit": "remaining",
-                        "reset": human_delta(reset_at),
-                        "health": "good" if pct < 80 else "warning",
-                        "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-                        "detail": f"{tier.upper()} Account{identity_suffix} · {pct:.1f}% used",
-                        "used_value": float(pct),
-                        "limit_value": 100.0,
-                        "unit_type": "percent",
-                        "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": source,
-                        "tier": tier,
-                        "usage_url": "https://chatgpt.com/codex/settings/usage/",
-                        "updated_at": now.isoformat(),
-                    })
-            else:
-                logger.debug(f"ChatGPT usage fetch failed with status {usage_resp.status_code}")
-        except Exception as e:
-            logger.debug(f"ChatGPT usage fetch failed (non-fatal): {e}")
-
-        return cards
+                return [{
+                    "service": "ChatGPT Codex",
+                    "icon": "💬",
+                    "remaining": f"{(100-pct):.1f}%",
+                    "unit": "remaining",
+                    "reset": human_delta(reset_at),
+                    "health": "good" if pct < 80 else "warning",
+                    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                    "detail": f"{tier.upper()} Account · {email} · {pct:.1f}% used",
+                    "used_value": float(pct),
+                    "limit_value": 100.0,
+                    "unit_type": "percent",
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": source,
+                    "tier": tier,
+                    "updated_at": now.isoformat(),
+                }]
+        return []
 
     async def _strategy_local_logs(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
-        """Local log parsing strategy."""
-        if not settings.LOCAL_COLLECTOR_ENABLED:
-            return []
-
+        """Local log parsing."""
+        if not settings.LOCAL_COLLECTOR_ENABLED: return []
         path = settings.CHATGPT_SESSIONS_DIR
         try:
             files = await asyncio.to_thread(glob.glob, f"{path}/**/*.jsonl", recursive=True)
-            if not files:
-                return []
-
+            if not files: return []
             latest = await asyncio.to_thread(max, files, key=os.path.getmtime)
             
-            def read_last_line(file_path):
-                last_line = None
-                with open(file_path, "r") as f:
-                    for line in f:
-                        if line.strip(): last_line = line
-                return last_line
-
-            last_line = await asyncio.to_thread(read_last_line, latest)
-            if not last_line:
-                return []
+            with open(latest, "r") as f:
+                lines = f.readlines()
+                if not lines: return []
+                usage = json.loads(lines[-1])
             
-            usage = json.loads(last_line)
             pct = usage.get("used_percent", 0.0)
             reset_at = datetime.fromtimestamp(usage["resets_at"], tz=timezone.utc) if "resets_at" in usage else None
 
@@ -535,17 +435,8 @@ class ChatGPTCollector(BaseCollector):
                 "remaining": f"{(100-pct):.1f}%",
                 "unit": "remaining",
                 "reset": human_delta(reset_at),
-                "health": "good" if pct < 80 else "warning",
-                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
                 "detail": f"{pct:.1f}% used",
-                "used_value": float(pct),
-                "limit_value": 100.0,
-                "unit_type": "percent",
-                "reset_at": reset_at.isoformat() if reset_at else None,
                 "data_source": "cache",
-                "usage_url": "https://chatgpt.com/codex/settings/usage/",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }]
-        except Exception as e:
-            logger.debug(f"ChatGPT log strategy failed: {e}")
-            return []
+        except Exception: return []

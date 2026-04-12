@@ -29,6 +29,8 @@ from app.services.collectors.base import BaseCollector
 
 
 class KimiApiCollector(BaseCollector):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
     """Collector for Kimi API (Moonshot AI) prepaid balance and usage history."""
 
     def _fallback_strategies(self) -> List[Any]:

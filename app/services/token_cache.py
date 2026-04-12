@@ -1,17 +1,18 @@
 """
-Token Cache Service - In-memory cache for sidecar tokens.
+Token Cache Service - In-memory cache for sidecar tokens, supporting multiple accounts.
 
 Architecture:
 - Sidecar extracts tokens from local files and sends to server
-- Server stores tokens in memory (30min TTL)
+- Server stores tokens in memory (30min TTL) keyed by provider and account_id
 - Server uses tokens to make API calls
-- If token expires, sidecar will resend on next run (every 30m)
+- If account identity is discovered (email/name), the cache entry is updated ("promoted")
 """
 
 import time
 import logging
 import asyncio
-from typing import Dict, Optional, Tuple, Any
+import hashlib
+from typing import Dict, Optional, Tuple, Any, List
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -19,118 +20,181 @@ logger = logging.getLogger(__name__)
 
 class TokenCache:
     """
-    In-memory cache for tokens received from sidecars.
+    In-memory cache for tokens received from sidecars, supporting tenant isolation.
 
     Tokens expire after TTL (default 30 minutes = 1800 seconds).
-    This maintains stateless philosophy while allowing token reuse.
+    Structure: provider -> account_id -> (tokens, metadata, timestamp)
     """
 
     DEFAULT_TTL = 1800  # 30 minutes
 
     def __init__(self, ttl_seconds: int = DEFAULT_TTL):
-        self._cache: Dict[str, Tuple[Dict[str, str], float]] = {}
+        # provider_id -> {account_id: (tokens, metadata, timestamp)}
+        self._cache: Dict[str, Dict[str, Tuple[Dict[str, str], Dict[str, Any], float]]] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
-    async def store(self, provider: str, tokens: Dict[str, str]) -> None:
+    def _derive_account_id(self, tokens: Dict[str, str]) -> str:
+        """Derive a stable-ish account ID from tokens if none provided."""
+        # Try to find a reasonably unique and stable token
+        ident = (
+            tokens.get("refresh_token")
+            or tokens.get("oauth_token")
+            or tokens.get("api_key")
+            or next(iter(tokens.values()))
+        )
+        return hashlib.sha256(ident.encode()).hexdigest()[:12]
+
+    async def store(
+        self,
+        provider: str,
+        tokens: Dict[str, str],
+        account_id: Optional[str] = None,
+        account_name: Optional[str] = None,
+    ) -> str:
         """
-        Store tokens for a provider.
+        Store tokens for a provider and account.
 
         Args:
-            provider: Provider name (e.g., "anthropic", "github")
-            tokens: Dict of token type -> value (e.g., {"oauth_token": "abc123"})
-        """
-        async with self._lock:
-            self._cache[provider] = (tokens, time.time())
-            logger.info(f"Stored tokens for {provider}: {list(tokens.keys())}")
-
-    async def get(self, provider: str) -> Optional[Dict[str, str]]:
-        """
-        Get tokens if not expired.
-
-        Args:
-            provider: Provider name
+            provider: Provider name (e.g., "anthropic")
+            tokens: Dict of token type -> value
+            account_id: Explicit account ID (optional)
+            account_name: Human-readable account name (optional)
 
         Returns:
-            Tokens dict or None if expired/not found
+            str: The account_id used for storage
+        """
+        if not account_id:
+            account_id = self._derive_account_id(tokens)
+
+        async with self._lock:
+            if provider not in self._cache:
+                self._cache[provider] = {}
+
+            metadata = {"account_name": account_name}
+            self._cache[provider][account_id] = (tokens, metadata, time.time())
+            
+            logger.info(
+                f"Stored tokens for {provider} account {account_id} "
+                f"({account_name or 'unnamed'}): {list(tokens.keys())}"
+            )
+            return account_id
+
+    async def update_account_metadata(
+        self, provider: str, account_id: str, name: Optional[str] = None
+    ) -> None:
+        """Update metadata (like account name/email) for an existing cache entry."""
+        async with self._lock:
+            if provider in self._cache and account_id in self._cache[provider]:
+                tokens, metadata, timestamp = self._cache[provider][account_id]
+                if name:
+                    metadata["account_name"] = name
+                self._cache[provider][account_id] = (tokens, metadata, timestamp)
+                logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
+
+    async def get_accounts(self, provider: str) -> List[Dict[str, Any]]:
+        """
+        Get all active accounts for a provider.
+
+        Returns:
+            List of dicts with: account_id, tokens, account_name, age
         """
         async with self._lock:
             self._clear_expired_unlocked()
 
             if provider not in self._cache:
-                return None
+                return []
 
-            tokens, timestamp = self._cache[provider]
-            age = time.time() - timestamp
+            now = time.time()
+            results = []
+            for acc_id, (tokens, metadata, timestamp) in self._cache[provider].items():
+                results.append({
+                    "account_id": acc_id,
+                    "tokens": tokens,
+                    "account_name": metadata.get("account_name"),
+                    "age": now - timestamp
+                })
+            return results
 
-            if age > self._ttl:
-                del self._cache[provider]
-                logger.debug(f"Token expired for {provider}")
-                return None
-
-            logger.debug(f"Retrieved tokens for {provider} (age: {age:.0f}s)")
-            return tokens
-
-    async def get_token(self, provider: str, token_type: str) -> Optional[str]:
-        """Get specific token type for provider."""
-        tokens = await self.get(provider)
-        return tokens.get(token_type) if tokens else None
-
-    async def is_valid(self, provider: str) -> bool:
-        """Check if provider has valid (non-expired) tokens."""
-        return await self.get(provider) is not None
-
-    async def get_age(self, provider: str) -> Optional[float]:
-        """Get age of tokens in seconds."""
-        async with self._lock:
-            if provider not in self._cache:
-                return None
-            _, timestamp = self._cache[provider]
-            return time.time() - timestamp
-
-    async def get_age_formatted(self, provider: str) -> str:
-        """Get formatted age string (e.g., '5m', '2h')."""
-        age = await self.get_age(provider)
-        if age is None:
-            return "unknown"
-
-        if age < 60:
-            return f"{int(age)}s"
-        elif age < 3600:
-            return f"{int(age/60)}m"
-        else:
-            return f"{int(age/3600)}h"
-
-    def _clear_expired_unlocked(self) -> None:
-        """Clear all expired tokens (assumes lock is held)."""
-        now = time.time()
-        expired = [
-            provider
-            for provider, (_, ts) in self._cache.items()
-            if now - ts > self._ttl
-        ]
-        for provider in expired:
-            del self._cache[provider]
-            logger.debug(f"Cleared expired tokens for {provider}")
-
-    async def _clear_expired(self) -> None:
-        """Thread-safe clear all expired tokens."""
+    async def get(self, provider: str, account_id: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """
+        Get tokens for a specific account, or the first available if account_id is None.
+        """
         async with self._lock:
             self._clear_expired_unlocked()
 
-    async def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Get stats for all cached providers."""
+            if provider not in self._cache or not self._cache[provider]:
+                return None
+
+            provider_accounts = self._cache[provider]
+            
+            if account_id:
+                if account_id not in provider_accounts:
+                    return None
+                tokens, _, _ = provider_accounts[account_id]
+                return tokens
+            else:
+                # Return the most recently updated account if none specified
+                newest_acc = sorted(
+                    provider_accounts.items(),
+                    key=lambda x: x[1][2],
+                    reverse=True
+                )[0]
+                return newest_acc[1][0]
+
+    async def get_token(self, provider: str, token_type: str, account_id: Optional[str] = None) -> Optional[str]:
+        """Get specific token type for provider/account."""
+        tokens = await self.get(provider, account_id)
+        return tokens.get(token_type) if tokens else None
+
+    def _clear_expired_unlocked(self) -> None:
+        """Clear all expired accounts across all providers."""
+        now = time.time()
+        providers_to_clean = list(self._cache.keys())
+        
+        for provider in providers_to_clean:
+            expired_accs = [
+                acc_id
+                for acc_id, (_, _, ts) in self._cache[provider].items()
+                if now - ts > self._ttl
+            ]
+            for acc_id in expired_accs:
+                del self._cache[provider][acc_id]
+                logger.debug(f"Cleared expired account {acc_id} for {provider}")
+            
+            if not self._cache[provider]:
+                del self._cache[provider]
+
+    async def get_all_stats(self) -> Dict[str, Any]:
+        """Get flattened stats for all cached providers and accounts."""
         async with self._lock:
             self._clear_expired_unlocked()
             now = time.time()
-            return {
-                provider: {
-                    "tokens": list(tokens.keys()),
-                    "age_seconds": int(now - ts),
-                    "ttl_remaining": int(self._ttl - (now - ts)),
+            stats = {}
+            for provider, accounts in self._cache.items():
+                stats[provider] = {
+                    acc_id: {
+                        "tokens": list(tokens.keys()),
+                        "account_name": metadata.get("account_name"),
+                        "age_seconds": int(now - ts),
+                        "ttl_remaining": int(self._ttl - (now - ts)),
+                    }
+                    for acc_id, (tokens, metadata, ts) in accounts.items()
                 }
-                for provider, (tokens, ts) in self._cache.items()
-            }
+            return stats
+
+    async def get_all_active_accounts(self) -> List[Tuple[str, str, Optional[str]]]:
+        """
+        Get a list of all active (provider, account_id, account_name) tuples.
+        Useful for CollectorManager discovery.
+        """
+        async with self._lock:
+            self._clear_expired_unlocked()
+            results = []
+            for provider, accounts in self._cache.items():
+                for acc_id, (_, metadata, _) in accounts.items():
+                    results.append((provider, acc_id, metadata.get("account_name")))
+            return results
 
 
 # Global instance

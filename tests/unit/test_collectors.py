@@ -72,6 +72,37 @@ class TestAnthropicCollector:
         assert any("Session" in str(card.get("service", "")) for card in result)
 
     @pytest.mark.asyncio
+    async def test_refresh_token_lookup_is_scoped_to_account(self, mock_http_client):
+        """Test that Anthropic refresh token fallback uses the collector account."""
+        collector = AnthropicCollector(account_id="acc_a")
+
+        with patch.object(
+            collector,
+            "_get_credentials",
+            new_callable=AsyncMock,
+            return_value={"claudeAiOauth": {}},
+        ):
+            with patch(
+                "app.services.collectors.anthropic_oauth.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value="refresh_a",
+            ) as mock_get_token:
+                response = MagicMock(spec=httpx.Response)
+                response.status_code = 400
+                response.json.return_value = {"error": "invalid_grant"}
+
+                with patch(
+                    "app.services.collectors.anthropic_oauth.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=response,
+                ):
+                    await collector._execute_refresh(mock_http_client)
+
+        mock_get_token.assert_awaited_once_with(
+            "anthropic", "refresh_token", account_id="acc_a"
+        )
+
+    @pytest.mark.asyncio
     async def test_collect_oauth_401_fallback(self, mock_http_client):
         """Test fallback to local logs when OAuth token is invalid (401)."""
         collector = AnthropicCollector()
@@ -242,10 +273,11 @@ class TestAnthropicCollector:
             "expires_in": 28800,
         }
 
-        # Control the flow by mocking _get_claude_oauth directly
-        with patch.object(collector, "_get_claude_oauth") as mock_get_oauth:
-            # First call returns 401 error card, second (after refresh) returns success
-            mock_get_oauth.side_effect = [
+        # Control the flow by mocking _get_valid_token and _get_claude_oauth_with_cache
+        with patch.object(collector, "_get_valid_token", return_value="refreshed_token"):
+            with patch.object(collector, "_get_claude_oauth_with_cache") as mock_get_oauth:
+                # First call returns 401 error card, second (after refresh) returns success
+                mock_get_oauth.side_effect = [
                 [
                     {
                         "service": "Claude Pro",
@@ -1217,6 +1249,69 @@ class TestGitHubCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
         assert "Login required" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_collect_429_backoff_does_not_crash(self, mock_http_client):
+        """Test that GitHub 429 responses create backoff instead of crashing."""
+        collector = GitHubCollector(account_id="acc_a")
+
+        rate_limited = MagicMock(spec=httpx.Response)
+        rate_limited.status_code = 429
+        rate_limited.headers = {"Retry-After": "60"}
+
+        mock_http_client.request.return_value = rate_limited
+
+        with patch.object(
+            collector, "_get_token", new_callable=AsyncMock, return_value="github_token"
+        ):
+            result = await collector._strategy_api(mock_http_client)
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "rate_limited"
+        assert collector._last_429_backoff_until is not None
+
+    @pytest.mark.asyncio
+    async def test_github_token_lookup_uses_account_scope(self, mock_http_client):
+        """Test that dynamic GitHub collectors only read their own cached token."""
+        collector = GitHubCollector(account_id="acc_a")
+
+        with patch(
+            "app.services.collectors.github.credential_provider.get_github_token",
+            return_value=None,
+        ):
+            with patch(
+                "app.services.collectors.github.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value="scoped_token",
+            ) as mock_get_token:
+                token = await collector._get_token()
+
+        assert token == "scoped_token"
+        mock_get_token.assert_awaited_once_with(
+            "github", "api_key", account_id="acc_a"
+        )
+
+    @pytest.mark.asyncio
+    async def test_github_default_token_lookup_does_not_use_sidecar_cache(
+        self, mock_http_client
+    ):
+        """Test that the default GitHub collector does not steal a dynamic account token."""
+        collector = GitHubCollector()
+
+        with patch(
+            "app.services.collectors.github.credential_provider.get_github_token",
+            return_value=None,
+        ):
+            with patch(
+                "app.services.collectors.github.token_cache.get_token",
+                new_callable=AsyncMock,
+            ) as mock_get_token:
+                token = await collector._get_token()
+
+        assert token is None
+        mock_get_token.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_collect_api_error_caching(self, mock_http_client):

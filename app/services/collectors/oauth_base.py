@@ -18,17 +18,20 @@ class OAuthBaseCollector(BaseCollector):
     """
     Base class for collectors that use OAuth with refresh tokens.
     Handles token expiration, locking, and persistence logic.
+    Supports multi-account isolation.
     """
 
-    def __init__(self, provider_name: str, credentials_path: str):
+    def __init__(
+        self,
+        provider_name: str,
+        credentials_path: str,
+        account_id: Optional[str] = None,
+        account_name: Optional[str] = None,
+    ):
+        super().__init__(account_id=account_id, account_name=account_name)
         self.provider_name = provider_name
         self._credentials_path = credentials_path
-        self._refresh_lock = asyncio.Lock()
-
-        # Backoff and failure tracking
-        self._last_refresh_failure = None
-        self._refresh_backoff_seconds = 300  # 5 minutes default
-        self._terminal_failure = False
+        self._token_lock = asyncio.Lock()
 
     async def _get_credentials(self) -> Optional[Dict]:
         """Load credentials from file or cache."""
@@ -37,7 +40,6 @@ class OAuthBaseCollector(BaseCollector):
 
         try:
             if await asyncio.to_thread(os.path.exists, self._credentials_path):
-
                 def read_json(path):
                     with open(path, "r") as f:
                         return json.load(f)
@@ -57,80 +59,42 @@ class OAuthBaseCollector(BaseCollector):
 
         try:
             safe_write_json(self._credentials_path, creds)
-            logger.info(
-                f"Persisted {self.provider_name} refreshed tokens to {self._credentials_path}"
-            )
         except Exception as e:
-            logger.error(f"Failed to persist {self.provider_name} tokens: {e}")
-
-    def _can_attempt_refresh(self) -> bool:
-        """Check if we should attempt token refresh based on backoff."""
-        if self._terminal_failure:
-            return False
-
-        if self._last_refresh_failure:
-            elapsed = (
-                datetime.now(timezone.utc) - self._last_refresh_failure
-            ).total_seconds()
-            if elapsed < self._refresh_backoff_seconds:
-                return False
-        return True
+            logger.error(f"Failed to persist {self.provider_name} credentials: {e}")
 
     async def _get_valid_token(self, client: httpx.AsyncClient) -> Optional[str]:
-        """
-        Get a valid access token, refreshing if necessary.
-        Uses locking to ensure only one refresh happens at a time.
-        """
-        # Get current token from whichever source the subclass uses
-        token = await self._get_current_token()
-
-        if token and not await self._is_token_expired():
-            return token
-
-        async with self._refresh_lock:
-            # Re-check under lock
+        """Get a valid token, refreshing if necessary."""
+        async with self._token_lock:
+            # 1. Check if we have a valid token in the core cache first (Sidecar provided or recently refreshed)
             token = await self._get_current_token()
             if token and not await self._is_token_expired():
                 return token
 
-            if not self._can_attempt_refresh():
-                logger.debug(
-                    f"{self.provider_name} token refresh backed off or terminal failure"
-                )
-                return None
-
-            logger.info(f"Attempting {self.provider_name} OAuth token refresh")
+            # 2. Check if we can refresh
+            logger.info(f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}...")
             new_creds = await self._execute_refresh(client)
-
             if new_creds:
                 self._persist_credentials(new_creds)
-                self._last_refresh_failure = None
-                # _execute_refresh already updated credential_provider cache;
-                # use _get_current_token to get the fresh token rather than
-                # trying to extract it from the provider-specific creds structure.
-                return await self._get_current_token()
-            else:
-                self._last_refresh_failure = datetime.now(timezone.utc)
-                return None
+                return new_creds.get("access_token")
 
-    async def _store_sidecar_token(
-        self, provider_key: str, token: str, refresh_token: Optional[str] = None
-    ):
-        """Store refreshed tokens in the sidecar token cache."""
-        payload: Dict[str, str] = {"oauth_token": token}
+            return None
+
+    async def _store_sidecar_token(self, provider: str, access_token: str, refresh_token: Optional[str] = None):
+        """Update sidecar token cache with newly refreshed tokens."""
+        data = {"oauth_token": access_token}
         if refresh_token:
-            payload["refresh_token"] = refresh_token
-        await token_cache.store(provider_key, payload)
+            data["refresh_token"] = refresh_token
+            
+        await token_cache.store(
+            provider, data, account_id=self.account_id
+        )
 
-    # Methods to be implemented or customized by subclasses
+    # These must be implemented by subclasses
     async def _get_current_token(self) -> Optional[str]:
-        """Get the current access token."""
         raise NotImplementedError
 
     async def _is_token_expired(self) -> bool:
-        """Check if the current token is expired."""
         raise NotImplementedError
 
     async def _execute_refresh(self, client: httpx.AsyncClient) -> Optional[Dict]:
-        """Execute the HTTP request to refresh the token."""
         raise NotImplementedError

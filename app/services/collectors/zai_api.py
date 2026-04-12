@@ -19,7 +19,7 @@ Key Validation:
 - Checks that key is not literally "zai" (placeholder detection)
 """
 
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 import httpx
 from app.core.config import settings
 from app.core.utils import error_card
@@ -27,6 +27,8 @@ from app.services.collectors.base import BaseCollector
 
 
 class ZaiApiCollector(BaseCollector):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
     """Collector for zAI API (Zhipu AI/GLM) prepaid balance."""
 
     def _fallback_strategies(self) -> List[Any]:

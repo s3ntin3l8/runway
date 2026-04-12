@@ -34,8 +34,8 @@ class LimitCard(BaseModel):
     usage_url: Optional[str] = None
     # NEW: ISO 8601 timestamp when data was last collected/updated
     updated_at: Optional[str] = None
-    # NEW: Flexible metadata for structured data (tokens, raw metrics)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    # NEW: Arbitrary metadata for internal transport (e.g. token extraction)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
     @field_validator("service", "remaining", "unit", "reset", "pace", "detail", "tier")
     @classmethod

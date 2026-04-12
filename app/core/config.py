@@ -110,6 +110,10 @@ class Settings:
         "GEMINI_OAUTH_PATH",
         os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json"),
     )
+    ANTHROPIC_OAUTH_PATH: str = os.getenv(
+        "ANTHROPIC_OAUTH_PATH",
+        os.path.join(get_platform_config_dir("claude"), "oauth_creds.json"),
+    )
     GITHUB_OAUTH_PATH: str = os.getenv(
         "GITHUB_OAUTH_PATH",
         os.path.join(get_platform_config_dir("usage-tracker"), "github_oauth.json"),

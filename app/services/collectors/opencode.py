@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCodeCollector(BaseCollector):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
     def _fallback_strategies(self) -> List[Any]:
         """Return the fallback strategies for OpenCode (Sidecar, Local DB)."""
         return [
@@ -82,12 +84,6 @@ class OpenCodeCollector(BaseCollector):
         """
         # Check for session cookie (local Chrome or sidecar cache)
         session_cookie = await asyncio.to_thread(get_opencode_session_cookie)
-        # Check token cache from sidecar
-        if not session_cookie:
-            session_cookie = await token_cache.get_token("opencode", "cookie_session")
-            if session_cookie:
-                cookie_source = "sidecar"
-                logger.debug("Using session cookie from sidecar cache")
 
         if not session_cookie:
             return []

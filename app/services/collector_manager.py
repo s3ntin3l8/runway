@@ -3,6 +3,7 @@ Manages collection of AI provider quotas with smart differential fetching.
 
 This module orchestrates all collectors and wraps them with SmartCollector
 for intelligent caching to reduce API calls while maintaining fresh data.
+Now supports multi-account dynamic spawning based on discovered tokens.
 """
 
 import asyncio
@@ -10,9 +11,10 @@ import httpx
 import logging
 import os
 import platform
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 from app.core.config import settings
+from app.services.token_cache import token_cache
 
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.gemini import GeminiCollector
@@ -35,51 +37,43 @@ logger = logging.getLogger(__name__)
 
 class CollectorManager:
     """
-    Manages collection of all AI provider quotas with smart differential fetching.
+    Manages collection of all AI provider quotas with support for multiple accounts.
 
-    Wraps each collector with SmartCollector to implement:
-    - Per-collector TTL caching (5-30 minutes depending on provider)
-    - Error tracking and automatic retry with backoff
-    - Graceful degradation (show stale data vs errors)
-    - Reduced API calls through differential fetching
-
-    TTL Strategy:
-    - Fast-changing providers (Gemini): 5 minutes
-    - Medium providers (Anthropic, GitHub): 10-15 minutes
-    - Slow-changing providers (OpenCode): 30 minutes
+    Dynamically spawns SmartCollector instances for:
+    1. Default/Static accounts (configured via ENV)
+    2. Dynamic accounts (ingested from sidecars via token_cache)
     """
 
     def __init__(self):
-        """Initialize collector configurations for lazy loading."""
-        # Define collectors with names and TTL values (classes instead of instances)
-        self.collector_configs = [
-            (AnthropicCollector, "Claude (Anthropic)", 60),  # 60s for snappy Statusline
-            (GeminiCollector, "Gemini", 300),  # 5 min
-            (GitHubCollector, "GitHub Copilot", 900),  # 15 min
-            (ChatGPTCollector, "ChatGPT", 600),  # 10 min
-            (AntigravityCollector, "Antigravity", 900),  # 15 min
-            (OpenCodeCollector, "OpenCode", 1800),  # 30 min
-            (ZaiApiCollector, "zAI API", 900),  # 15 min
-            (ZaiPlanCollector, "zAI Plan", 900),  # 15 min
-            (KimiApiCollector, "Kimi API", 900),  # 15 min
-            (KimiCodingCollector, "Kimi Coding", 900),  # 15 min
-            (OpenRouterCollector, "OpenRouter", 900),  # 15 min
-            (MiniMaxCollector, "MiniMax", 900),  # 15 min
-            (OllamaCollector, "Ollama Cloud", 900),  # 15 min
-        ]
+        """Initialize collector registry."""
+        # Registry of available collector classes and their default settings
+        self.collector_registry = {
+            "anthropic": (AnthropicCollector, "Claude (Anthropic)", 60),
+            "gemini": (GeminiCollector, "Gemini", 300),
+            "github": (GitHubCollector, "GitHub Copilot", 900),
+            "chatgpt": (ChatGPTCollector, "ChatGPT", 600),
+            "antigravity": (AntigravityCollector, "Antigravity", 900),
+            "opencode": (OpenCodeCollector, "OpenCode", 1800),
+            "zai_api": (ZaiApiCollector, "zAI API", 900),
+            "zai_plan": (ZaiPlanCollector, "zAI Plan", 900),
+            "kimi_api": (KimiApiCollector, "Kimi API", 900),
+            "kimi_coding": (KimiCodingCollector, "Kimi Coding", 900),
+            "openrouter": (OpenRouterCollector, "OpenRouter", 900),
+            "minimax": (MiniMaxCollector, "MiniMax", 900),
+            "ollama": (OllamaCollector, "Ollama Cloud", 900),
+        }
 
-        self.smart_collectors = []
+        # Active collectors keyed by "provider_id:account_id"
+        self.smart_collectors: Dict[str, SmartCollector] = {}
         self._client = None
         self._keychain_warmed_up = False
+        
         logger.info(
-            f"CollectorManager initialized with {len(self.collector_configs)} collector configs"
+            f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
 
     async def _warmup_keychain(self):
-        """
-        Sequentially pre-fetch keychain secrets to avoid multiple prompts appearing simultaneously.
-        Only runs on macOS and if local collection is enabled.
-        """
+        """Sequentially pre-fetch keychain secrets on macOS."""
         if self._keychain_warmed_up:
             return
         if platform.system() != "Darwin" or not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
@@ -87,25 +81,17 @@ class CollectorManager:
             return
 
         from app.core.keychain import get_keychain_secret
-        
         tasks = []
 
-        # 1. Claude/Anthropic Credentials (if not set in env)
         if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
-            logger.info("Warming up keychain access for Claude (Anthropic)...")
             tasks.append(asyncio.to_thread(get_keychain_secret, "Claude Code-credentials"))
 
-        # 2. Chrome Safe Storage (for any cookie-based collectors)
         cookie_collectors = ["anthropic", "chatgpt", "opencode", "kimi", "ollama"]
         if any(os.getenv(f"{c.upper()}_SESSION_TOKEN") is None for c in cookie_collectors):
-             logger.info("Warming up keychain access for Browser Decryption (Chrome)...")
              tasks.append(asyncio.to_thread(get_keychain_secret, "Chrome Safe Storage"))
-             # Also Edge as fallback
              tasks.append(asyncio.to_thread(get_keychain_secret, "Microsoft Edge Safe Storage"))
 
         if tasks:
-            # Sequentially wait for all prompts to be dismissed (or timeout)
-            # This avoids overlapping UI prompts on macOS.
             for task in tasks:
                 try:
                     await task
@@ -114,20 +100,45 @@ class CollectorManager:
 
         self._keychain_warmed_up = True
 
-    def _lazy_load_collectors(self):
-        """Instantiate collectors only when first needed."""
-        if not self.smart_collectors:
-            self.smart_collectors = [
-                SmartCollector(
-                    collector=collector_cls(),
+    async def _sync_collectors(self):
+        """Synchronize active SmartCollectors with discovered accounts."""
+        # 1. Ensure Default/Static collectors are present
+        for p_id, (cls, name, ttl) in self.collector_registry.items():
+            key = f"{p_id}:default"
+            if key not in self.smart_collectors:
+                logger.info(f"Spawning default collector for {p_id}")
+                self.smart_collectors[key] = SmartCollector(
+                    collector=cls(),
                     collector_name=name,
-                    ttl=ttl,
-                    error_threshold=3,  # Force retry after 3 consecutive errors
-                    error_retry_delay=30.0,  # Wait 30s before retrying after error
+                    ttl=ttl
                 )
-                for collector_cls, name, ttl in self.collector_configs
-            ]
-            logger.info(f"Lazy loaded {len(self.smart_collectors)} collectors")
+
+        # 2. Discover active dynamic collectors from TokenCache
+        active_accounts = await token_cache.get_all_active_accounts()
+        active_keys = set()
+        for p_id, acc_id, acc_name in active_accounts:
+            if p_id in self.collector_registry:
+                cls, name, ttl = self.collector_registry[p_id]
+                key = f"{p_id}:{acc_id}"
+                active_keys.add(key)
+                if key not in self.smart_collectors:
+                    full_name = f"{name} ({acc_name or acc_id[:6]})"
+                    logger.info(f"Spawning dynamic collector for {p_id} account {acc_id}")
+                    self.smart_collectors[key] = SmartCollector(
+                        collector=cls(account_id=acc_id, account_name=acc_name),
+                        collector_name=full_name,
+                        ttl=ttl
+                    )
+
+        # 3. Prune collectors whose accounts disappeared from the token cache
+        stale_keys = [
+            key
+            for key in self.smart_collectors
+            if not key.endswith(":default") and key not in active_keys
+        ]
+        for key in stale_keys:
+            logger.info(f"Removing stale collector for {key}")
+            self.smart_collectors.pop(key, None)
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create a persistent httpx client."""
@@ -137,77 +148,53 @@ class CollectorManager:
 
     async def collect_all(self) -> List[Dict[str, Any]]:
         """
-        Collect all limits using smart differential fetching.
-
-        Process:
-        1. Fetch from all SmartCollectors concurrently (with timeout)
-        2. Each SmartCollector decides:
-           - Return cached data if fresh
-           - Fetch fresh data if stale
-           - Return stale data if fetch fails (graceful degradation)
-        3. Flatten results and merge external metrics
-
-        Returns:
-            List[Dict[str, Any]]: All limit cards from all sources
+        Collect all limits across all active accounts.
         """
-        self._lazy_load_collectors()
+        # Ensure we have collectors for all current accounts
+        await self._sync_collectors()
         
-        # Sequentially warm up keychain access if on macOS to avoid multi-prompt spam
-        # This is done before starting the parallel asyncio tasks.
+        # Warm up keychain access if on macOS
         await self._warmup_keychain()
 
         client = await self._get_client()
+        
+        active_keys = list(self.smart_collectors.keys())
+        tasks = [
+            asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
+            for key in active_keys
+        ]
+
         try:
-            # Run all collectors concurrently with exception handling and per-collector timeouts
-            # Each collector gets 20s to complete, with a 40s global timeout as safety
-            tasks = [
-                asyncio.wait_for(smart_collector.collect(client), timeout=20.0)
-                for smart_collector in self.smart_collectors
-            ]
-            # Wrap with global timeout to protect against I/O hangs
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=40.0
+                asyncio.gather(*tasks, return_exceptions=True), timeout=45.0
             )
         except asyncio.TimeoutError:
             logger.error("Global collector timeout reached. Collection aborted.")
             results = []
 
-        # Flatten results, handling exceptions
         flattened = []
         for i, res in enumerate(results):
             if isinstance(res, Exception):
-                # SmartCollector handles exceptions, so this shouldn't happen
-                # But log it just in case
-                smart_collector = self.smart_collectors[i]
-                # If exception has no string representation (like TimeoutError), use class name
-                err_msg = str(res) or res.__class__.__name__
-                logger.error(
-                    f"Unexpected exception from {smart_collector.collector_name}: {err_msg}"
-                )
+                logger.error(f"Unexpected error from collector {active_keys[i]}: {res}")
                 continue
-
             if isinstance(res, list):
                 flattened.extend(res)
 
-        # Merge external metrics
+        # Merge external metrics (Sidecars)
         external_results = await external_metric_service.get_all_metrics()
         flattened.extend(external_results)
 
-        logger.info(f"Collected {len(flattened)} total limit cards from all sources")
+        logger.info(f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts")
         return flattened
 
     def get_collector_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about collector cache states and error tracking.
-
-        Useful for monitoring dashboard or debugging.
-
-        Returns:
-            Dictionary with stats for each collector
-        """
-        self._lazy_load_collectors()
+        """Get flattened statistics for all active collectors."""
         return {
             "collectors": [
-                smart_collector.get_stats() for smart_collector in self.smart_collectors
+                sc.get_stats() for sc in self.smart_collectors.values()
             ]
         }
+
+
+# Global instance
+collector_manager = CollectorManager()

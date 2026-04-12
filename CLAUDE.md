@@ -26,5 +26,6 @@ Runway is a local-first, stateless monitoring tool for AI provider quotas.
 
 ## Workflow
 - **Statelessness**: Avoid persistent databases; prefer local files or ENV variables.
-- **Test Preference**: Prefer running single tests over the full suite for performance (e.g. `pytest tests/unit/test_claude.py`).
+- **Verification**: ALWAYS verify any changes by running the whole test suite (`pytest`) before concluding a task.
+- **Test Preference**: Prefer running single tests during development for performance, but the final check must be the full suite.
 - **Sidecar Focus**: Sidecars only extract/forward raw data; the main server does heavy lifting (API calls).

@@ -13,7 +13,8 @@ class MiniMaxCollector(BaseCollector):
     Uses: https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
     """
 
-    def __init__(self):
+    def __init__(self, account_id: Optional[str] = None, account_name: Optional[str] = None):
+        super().__init__(account_id=account_id, account_name=account_name)
         self.api_key = settings.MINIMAX_API_KEY
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:

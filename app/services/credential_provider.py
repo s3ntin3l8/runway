@@ -154,6 +154,36 @@ class CredentialProvider:
         return None
 
     @staticmethod
+    def get_anthropic_credentials_path() -> Optional[str]:
+        """Search for Anthropic credentials file using registry rules."""
+        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+            return None
+
+        provider_config = registry.get_provider("anthropic")
+        for rule in provider_config.get("rules", []):
+            if rule.get("type") == "file":
+                for path_str in rule.get("paths", []):
+                    path = registry.resolve_path(path_str)
+                    if os.path.exists(path):
+                        return path
+        return None
+
+    @staticmethod
+    def get_chatgpt_credentials_path() -> Optional[str]:
+        """Search for ChatGPT credentials file using registry rules."""
+        if not settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED:
+            return None
+
+        provider_config = registry.get_provider("chatgpt")
+        for rule in provider_config.get("rules", []):
+            if rule.get("type") == "file":
+                for path_str in rule.get("paths", []):
+                    path = registry.resolve_path(path_str)
+                    if os.path.exists(path):
+                        return path
+        return None
+
+    @staticmethod
     def get_chatgpt_data() -> Dict[str, str]:
         """Get full ChatGPT OAuth data using registry rules."""
         creds = CredentialProvider.get_credentials("chatgpt")
