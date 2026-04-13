@@ -1,6 +1,6 @@
 # CLAUDE.md - Runway (AI Usage Tracker)
 
-Runway is a local-first, stateless monitoring tool for AI provider quotas.
+Runway is a local-first monitoring tool for AI provider quotas with SQLite-backed history.
 
 ## Architecture
 - **Three Modes**: Standalone, Multi-Host (Sidecar), and Docker (Sidecar required).
@@ -12,9 +12,8 @@ Runway is a local-first, stateless monitoring tool for AI provider quotas.
 - **Run (Dev)**: `uvicorn app.main:app --reload --port 8765`
 - **Run (Production)**: `python3 -m app.main`
 - **Sidecar**: `python3 scripts/sidecar.py`
-- **Test (All)**: `pytest`
-- **Test (Single)**: `pytest tests/unit/test_file.py`
-- **Manual Ingest Test**: `python3 scripts/test_ingest.py`
+- **Test (All)**: `pytest --ignore=tests/unit/test_browser_cookies.py` (the ignored file has pre-existing macOS-only crypto failures on Linux/WSL)
+- **Test (Single)**: `pytest tests/path/to/test_file.py`
 
 ## Code Style & Patterns
 - **Backend**: Python 3.12+, FastAPI, Pydantic v2, `httpx` (async).
@@ -25,7 +24,5 @@ Runway is a local-first, stateless monitoring tool for AI provider quotas.
 - **Surgical Precision**: Preserve existing comments and structure during edits.
 
 ## Workflow
-- **Statelessness**: Avoid persistent databases; prefer local files or ENV variables.
-- **Verification**: ALWAYS verify any changes by running the whole test suite (`pytest`) before concluding a task.
 - **Test Preference**: Prefer running single tests during development for performance, but the final check must be the full suite.
 - **Sidecar Focus**: Sidecars only extract/forward raw data; the main server does heavy lifting (API calls).
