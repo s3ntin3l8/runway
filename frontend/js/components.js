@@ -569,10 +569,10 @@ export function buildCard(item) {
         : '';
 
     return `
-        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl overflow-hidden relative flex flex-col cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
+        <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-2xl overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
             ${sourceBadge}
-            <!-- Top zone -->
-            <div class="p-5 flex flex-col gap-3 flex-1">
+            <!-- Top zone (grid row: 1fr) -->
+            <div class="p-5 flex flex-col gap-3">
                 <!-- Header row -->
                 <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-2 min-w-0">
