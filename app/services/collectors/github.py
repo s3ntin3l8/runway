@@ -186,15 +186,37 @@ class GitHubCollector(BaseCollector):
             # Success: Clear any backoff
             self._last_429_backoff_until = None
 
-            # Try to discover identity from API or local gh config
+            # Try to discover identity — call the standard /user endpoint (not Copilot internal)
             identity = None
+            try:
+                user_std_resp = await http_request_with_retry(
+                    client,
+                    "GET",
+                    "https://api.github.com/user",
+                    headers=headers,
+                    timeout=10.0,
+                )
+                if user_std_resp.status_code == 200:
+                    std_data = user_std_resp.json()
+                    identity = std_data.get("email") or std_data.get("name") or std_data.get("login")
+                    # Also try /user/emails for private email addresses
+                    if not std_data.get("email"):
+                        emails_resp = await http_request_with_retry(
+                            client,
+                            "GET",
+                            "https://api.github.com/user/emails",
+                            headers=headers,
+                            timeout=10.0,
+                        )
+                        if emails_resp.status_code == 200:
+                            emails = emails_resp.json()
+                            primary = next((e["email"] for e in emails if e.get("primary")), None)
+                            if primary:
+                                identity = primary
+            except Exception as e:
+                logger.debug(f"GitHub /user identity fetch failed: {e}")
 
-            # 1. Try to get email from /user if we have a valid response
-            if user_resp.status_code == 200:
-                user_api_data = user_resp.json()
-                identity = user_api_data.get("email") or user_api_data.get("login")
-
-            # 2. Fallback: local gh config for promotion
+            # Fallback: local gh config
             if not identity:
                 gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
                 if os.path.exists(gh_config_path):
@@ -210,7 +232,14 @@ class GitHubCollector(BaseCollector):
                     except Exception:
                         pass
 
-            self._identity = identity
+            if identity:
+                self._identity = identity
+                self.account_label = identity
+                if self.account_id:
+                    import asyncio
+                    asyncio.create_task(
+                        token_cache.update_account_metadata("github", self.account_id, name=identity)
+                    )
             cards = self._parse_api_responses(user_resp, token_resp, user_data)
             # Cache results (including empty/error cards) to avoid hammering API
             self._cached_results = cards

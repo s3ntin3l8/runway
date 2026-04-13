@@ -692,27 +692,27 @@ export function buildModalContent(item) {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
                 <span class="text-sm font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
                 <span class="text-sm font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
                 <span class="text-sm font-semibold text-zinc-200 mono">${resetTime}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
                 <span class="text-sm font-bold ${sourceColor} mono">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
                 <span class="text-sm font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
+                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
                 <span class="text-sm font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
         </div>
@@ -722,17 +722,17 @@ export function buildModalContent(item) {
             <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-3">Diagnostic Summary</span>
             <div class="space-y-3">
                 <div class="flex flex-col gap-1">
-                    <span class="text-[9px] font-bold text-zinc-500 uppercase tracking-tighter">Backend Source</span>
+                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-tight">Backend Source</span>
                     <p class="text-xs text-zinc-300 mono leading-relaxed">${escapeHTML(item.detail)}</p>
                 </div>
                 <div class="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800/40">
                     <div class="flex flex-col gap-0.5">
-                        <span class="text-[9px] font-bold text-zinc-600 uppercase">Provider Key</span>
-                        <span class="text-[10px] text-zinc-400 mono">${escapeHTML(item.provider_id || 'unknown')}</span>
+                        <span class="text-xs font-bold text-zinc-600 uppercase">Provider Key</span>
+                        <span class="text-xs text-zinc-400 mono">${escapeHTML(item.provider_id || 'unknown')}</span>
                     </div>
                     <div class="flex flex-col gap-0.5">
-                        <span class="text-[9px] font-bold text-zinc-600 uppercase">Snapshot ID</span>
-                        <span class="text-[10px] text-zinc-400 mono">${escapeHTML(item.account_id || 'default')}</span>
+                        <span class="text-xs font-bold text-zinc-600 uppercase">Snapshot ID</span>
+                        <span class="text-xs text-zinc-400 mono">${escapeHTML(item.account_id || 'default')}</span>
                     </div>
                 </div>
                 <div class="pt-2">
@@ -773,7 +773,7 @@ export function buildModalContent(item) {
             ${STATE.githubAuth.authenticated ? `
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex flex-col">
-                        <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                        <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
                         <span class="text-sm font-semibold text-zinc-300 mono">${escapeHTML(STATE.githubAuth.account)}</span>
                     </div>
                     <button 
@@ -880,7 +880,7 @@ export function buildGitHubOAuthModal(data, error = null) {
                         <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                         <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce"></div>
                     </div>
-                    <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Waiting for authorization...</span>
+                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Waiting for authorization...</span>
                 </div>
 
                 <button id="cancel-github-login" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-all text-xs uppercase tracking-widest">CANCEL</button>
@@ -1261,42 +1261,42 @@ export function buildProviderModal(providerId, items, history) {
         const paceIcon = getPaceIcon(item.pace);
         const tierBadge = item.tier ? getTierBadge(item.tier) : '';
 
-        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-3">
-            <div class="flex justify-between items-start mb-2">
+        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
+            <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div class="text-[11px] font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span class="text-[8px] font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                    <div class="text-sm font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
+                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span class="text-[10px] font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
-                        ${sourceLabel ? `<span class="text-[8px] text-zinc-600">${sourceLabel}</span>` : ''}
-                        ${paceIcon ? `<span class="text-[10px]">${paceIcon}</span>` : ''}
-                        ${item.pace ? `<span class="text-[8px] text-zinc-600">${escapeHTML(item.pace)}</span>` : ''}
+                        ${sourceLabel ? `<span class="text-[10px] text-zinc-500">${sourceLabel}</span>` : ''}
+                        ${paceIcon ? `<span class="text-sm">${paceIcon}</span>` : ''}
+                        ${item.pace ? `<span class="text-[10px] text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
                     </div>
                 </div>
-                <div class="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                    <span class="text-[10px] text-zinc-500">${trendArrow}</span>
+                <div class="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <span class="text-sm text-zinc-400">${trendArrow}</span>
                     ${sparkSVG}
                 </div>
             </div>
-            <div class="flex justify-between text-[9px] text-zinc-500 mb-1.5">
-                <span>${usageText}</span>
+            <div class="flex justify-between text-xs text-zinc-400 mb-2">
+                <span class="font-medium">${usageText}</span>
                 <span>${resetText}</span>
             </div>
-            <div class="h-0.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
                 <div class="h-full rounded-full transition-all" style="width:${Math.min(barWidth, 100).toFixed(1)}%;background:${barColor};"></div>
             </div>
         </div>`;
     }).join('');
 
     return `<div>
-        <div class="flex justify-between items-start mb-4 pb-3 border-b border-zinc-800/50">
+        <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
             <div>
-                <div class="text-base font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
-                <div class="text-[10px] text-zinc-500 mt-0.5">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
+                <div class="text-xl font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
+                <div class="text-xs text-zinc-500 mt-1">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
             </div>
-            <button id="close-modal" class="text-zinc-500 hover:text-zinc-300 transition-colors text-lg leading-none mt-0.5">✕</button>
+            <button id="close-modal" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none mt-0.5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
         </div>
-        <div class="space-y-3 max-h-[60vh] overflow-y-auto pr-1">${serviceRows}</div>
+        <div class="space-y-3 max-h-[65vh] overflow-y-auto pr-1">${serviceRows}</div>
     </div>`;
 }
 

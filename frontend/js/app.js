@@ -311,7 +311,7 @@ function renderGrid() {
     }
 
     // Provider cards use a responsive grid (not provider sections)
-    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 gap-5">${html}</div>`;
+    grid.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">${html}</div>`;
     document.getElementById('footer-count').textContent = count;
 }
 
@@ -741,6 +741,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initUI();
     loadData();
+    // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
+    refreshTimer = setInterval(() => loadData(), 5 * 60 * 1000);
 });
 
 window.handleResetProvider = async function(provider, accountId) {

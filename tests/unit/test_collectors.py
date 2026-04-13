@@ -387,9 +387,9 @@ class TestAnthropicCollector:
             ):
                 result = await collector.collect(mock_http_client)
 
-        # Should return Web API results (error card removed)
+        # Should return Web API results — all 4 core windows are always emitted
         assert isinstance(result, list)
-        assert len(result) == 3
+        assert len(result) == 4
         services = [r["service_name"] for r in result]
         assert "Claude (Session Window)" in services
         assert "Claude (Weekly Window)" in services
@@ -818,7 +818,7 @@ class TestAnthropicCollector:
                 result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert len(result) == 3
+        assert len(result) == 4  # all 4 core windows always emitted
         assert any(card.get("data_source") == "web_api" for card in result)
 
         # Identity should be included in detail

@@ -65,6 +65,7 @@ async def force_collect(request: Request) -> dict[str, Any]:
     """Trigger an immediate collection cycle and update the registry."""
     from app.services.poller import poller
     try:
+        poller.wake()  # reset dormancy before polling
         await poller.poll_now()
         cards = manager.get_registry_snapshot()
         return {"ok": True, "cards": len(cards)}

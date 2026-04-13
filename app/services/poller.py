@@ -103,6 +103,13 @@ class BackgroundPoller:
             logger.info("No quota activity detected — entering sleep mode (2h interval)")
             self._interval = _SLEEP_INTERVAL
 
+    def wake(self):
+        """Reset dormancy state and restore normal polling interval."""
+        if self._interval != self._base_interval:
+            logger.info("Manual wake: restoring normal poll interval")
+            self._interval = self._base_interval
+        self._snapshot_hashes.clear()
+
     async def poll_now(self):
         """Execute a single collection and snapshot cycle."""
         logger.info("Starting scheduled background collection...")
