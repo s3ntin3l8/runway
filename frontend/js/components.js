@@ -75,7 +75,7 @@ function getTierBadge(tier) {
         classes = 'bg-zinc-800/50 text-zinc-500 border-zinc-700/50';
     }
 
-    return `<span class="text-[8px] font-bold px-1 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
+    return `<span class="text-xs font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-tighter ${classes}">${escapeHTML(tier)}</span>`;
 }
 
 /**
@@ -272,7 +272,7 @@ function formatResetDisplay(resetAt) {
             return formatHumanDelta(date);
         }
 
-        // If <= 24h, show local time (like "Resets at 10:43 UTC")
+        // If <= 24h, show local time (e.g., "Resets at 10:43 PM")
         const timeStr = date.toLocaleTimeString(undefined, {
             hour: '2-digit',
             minute: '2-digit',
@@ -628,6 +628,14 @@ export function buildModalContent(item) {
         h = { ...h, badge: errConfig.color, label: errConfig.label };
     }
 
+    const healthBoxClasses = {
+        good:      'bg-emerald-500/10 border-emerald-500/20',
+        warning:   'bg-amber-500/10 border-amber-500/20',
+        critical:  'bg-red-500/10 border-red-500/20',
+        unknown:   'bg-zinc-800/50 border-zinc-700/50',
+        unlimited: 'bg-violet-500/10 border-violet-500/20',
+    };
+
     const usedPct = calculateUsedPct(item);
     const isDisabled = STATE.disabledServices.includes(item.service_name);
 
@@ -665,7 +673,7 @@ export function buildModalContent(item) {
                     <div>
                         <h2 class="text-xl font-black text-zinc-50 tracking-tight">${escapeHTML(item.service_name)}</h2>
                         <div class="flex items-center gap-2 mt-0.5">
-                            <span class="text-xs font-bold ${h.badge} mono uppercase tracking-widest">${h.label}</span>
+                            <span class="text-xs font-bold px-1.5 py-0.5 rounded border leading-none uppercase tracking-widest mono ${h.badge} ${healthBoxClasses[item.health] || healthBoxClasses.unknown}">${h.label}</span>
                             ${getTierBadge(item.tier)}
                         </div>
                     </div>
@@ -696,28 +704,28 @@ export function buildModalContent(item) {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
-                <span class="text-base font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Usage Value</span>
+                <span class="text-lg font-semibold text-zinc-200 mono">${escapeHTML(formatted.used)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
-                <span class="text-base font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Service Limit</span>
+                <span class="text-lg font-semibold text-zinc-200 mono">${isUnlimited ? '∞' : escapeHTML(formatted.limit)} ${escapeHTML(formatted.unit)}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
-                <span class="text-base font-semibold text-zinc-200 mono">${resetTime}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Resets At</span>
+                <span class="text-lg font-semibold text-zinc-200 mono">${resetTime}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
-                <span class="text-base font-bold ${sourceColor} mono">● ${sourceLabel}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Data Source</span>
+                <span class="text-lg font-bold ${sourceColor} mono">● ${sourceLabel}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</span>
-                <span class="text-base font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Account</span>
+                <span class="text-lg font-semibold text-zinc-200 mono truncate" title="${escapeHTML(item.account_label || 'Default')}">${escapeHTML(item.account_label || 'Default')}</span>
             </div>
             <div class="modal-detail-item flex flex-col gap-1">
-                <span class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
-                <span class="text-base font-semibold text-zinc-200 mono">${updatedTime}</span>
+                <span class="text-sm font-bold text-zinc-500 uppercase tracking-widest">Last Updated</span>
+                <span class="text-lg font-semibold text-zinc-200 mono">${updatedTime}</span>
             </div>
         </div>
 
