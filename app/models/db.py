@@ -70,3 +70,16 @@ class SidecarRegistry(SQLModel, table=True):
     @tags.setter
     def tags(self, value: List[str]):
         self.tags_json = json.dumps(value)
+
+
+class WebhookConfig(SQLModel, table=True):
+    """Per-provider webhook alert configuration."""
+    __tablename__ = "webhook_configs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    provider_id: str  # provider name e.g. "anthropic", or "*" for global
+    threshold_pct: float  # 0.0–100.0, e.g. 90.0
+    url: str  # Discord or Slack incoming webhook URL
+    channel: str  # "discord" or "slack"
+    active: bool = Field(default=True)
+    last_fired_at: Optional[datetime] = Field(default=None)  # None = reset/ready to fire
