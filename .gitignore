@@ -70,6 +70,9 @@ tasks.md
 task.md
 diagnose.py
 
+# --- SUPERPOWERS ---
+.superpowers/
+
 # --- MISC ---
 docs/comparison/
 docs/sidecar_implementation.md
