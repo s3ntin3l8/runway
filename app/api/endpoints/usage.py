@@ -1,7 +1,11 @@
-from fastapi import APIRouter, Depends, Query, Request, HTTPException
-from sqlmodel import Session, select, desc
-from typing import List, Optional, Dict, Any
+import csv
+import io
 from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Dict, Any
+
+from fastapi import APIRouter, Depends, Query, Request, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlmodel import Session, select, desc
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -10,6 +14,12 @@ from app.models.schemas import LimitsResponse, LimitCard
 from app.services.collector_manager import manager
 
 router = APIRouter()
+
+_CSV_COLUMNS = [
+    "timestamp", "provider_id", "account_id", "account_label", "service_name",
+    "used_value", "limit_value", "unit_type", "currency", "tier", "model_id",
+    "window_type", "health",
+]
 
 
 @router.get("/limits")
@@ -38,9 +48,10 @@ async def get_usage_history(
     account_id: Optional[str] = None,
     days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=50, ge=1, le=500),
+    export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
-) -> List[Dict[str, Any]]:
-    """Fetch usage history snapshots."""
+):
+    """Fetch usage history snapshots. Use format=csv for a downloadable CSV."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
     statement = select(UsageSnapshot).where(UsageSnapshot.timestamp >= since)
@@ -54,33 +65,62 @@ async def get_usage_history(
 
     results = session.exec(statement).all()
 
-    # Process snapshots to include decrypted metadata and flat structure for UI
-    history = []
-    for s in results:
-        history.append(
-            {
-                "id": s.id,
-                "timestamp": s.timestamp.isoformat(),
-                "provider_id": s.provider_id,
-                "account_id": s.account_id,
-                "account_label": s.account_label,
-                "service_name": s.service_name,
-                "used_value": s.used_value,
-                "limit_value": s.limit_value,
-                "unit_type": s.unit_type,
-                "currency": s.currency,
-                "tier": s.tier,
-                "model_id": s.model_id,
-                "window_type": s.window_type,
-                "health": s.health,
-                "sidecar_id": s.sidecar_id,
-                "is_unlimited": s.is_unlimited,
-                "data_source": s.data_source,
-                "metadata": s.raw_metadata,
-            }
-        )
+    if export_format == "csv":
+        return _history_as_csv(results)
 
-    return history
+    # Process snapshots to include decrypted metadata and flat structure for UI
+    return [_snapshot_to_dict(s) for s in results]
+
+
+def _snapshot_to_dict(s: UsageSnapshot) -> dict:
+    return {
+        "id": s.id,
+        "timestamp": s.timestamp.isoformat(),
+        "provider_id": s.provider_id,
+        "account_id": s.account_id,
+        "account_label": s.account_label,
+        "service_name": s.service_name,
+        "used_value": s.used_value,
+        "limit_value": s.limit_value,
+        "unit_type": s.unit_type,
+        "currency": s.currency,
+        "tier": s.tier,
+        "model_id": s.model_id,
+        "window_type": s.window_type,
+        "health": s.health,
+        "sidecar_id": s.sidecar_id,
+        "is_unlimited": s.is_unlimited,
+        "data_source": s.data_source,
+        "metadata": s.raw_metadata,
+    }
+
+
+def _history_as_csv(results: list) -> StreamingResponse:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for s in results:
+        writer.writerow({
+            "timestamp": s.timestamp.isoformat(),
+            "provider_id": s.provider_id,
+            "account_id": s.account_id,
+            "account_label": s.account_label or "",
+            "service_name": s.service_name,
+            "used_value": s.used_value,
+            "limit_value": s.limit_value,
+            "unit_type": s.unit_type,
+            "currency": s.currency or "",
+            "tier": s.tier or "",
+            "model_id": s.model_id or "",
+            "window_type": s.window_type,
+            "health": s.health,
+        })
+    filename = f"runway-history-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/reset/{provider}")
