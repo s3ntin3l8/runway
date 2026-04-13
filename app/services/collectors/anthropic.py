@@ -30,7 +30,7 @@ class AnthropicCollector(
     """
 
     PROVIDER_ID = "anthropic"
-    DEFAULT_WINDOW_TYPE = "rolling"  # Free tier; Pro/paid windows are tagged per-card
+    DEFAULT_WINDOW_TYPE = "weekly"  # Free tier; Pro/paid windows are tagged per-card
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""

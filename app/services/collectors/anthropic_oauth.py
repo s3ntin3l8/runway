@@ -31,7 +31,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
     """
 
     PROVIDER_ID = "anthropic"
-    DEFAULT_WINDOW_TYPE = "rolling"
+    DEFAULT_WINDOW_TYPE = "weekly"
 
     # ──────────────────────────────── Token lifecycle ────────────────────────
 

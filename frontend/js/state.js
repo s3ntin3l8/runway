@@ -14,7 +14,6 @@ export const STATE = {
     remaining: localStorage.getItem('runway_remaining') === 'true',
     showHidden: localStorage.getItem('runway_show_hidden') === 'true',
     disabledServices: JSON.parse(localStorage.getItem('runway_disabled_services') || '[]'),
-    refreshInterval: localStorage.getItem('runway_refresh_interval') || 'off',
     brightMode: localStorage.getItem('runway_bright_mode') === 'true',
     githubAuth: { authenticated: false, account: null },
     data: [],
@@ -22,25 +21,6 @@ export const STATE = {
     activeFilter: JSON.parse(localStorage.getItem('runway_active_filter') || 'null'),
     // { dimension: 'sidecar_id'|'account_label'|'window_type', value: 'string' } | null
     filterDimension: localStorage.getItem('runway_filter_dimension') || 'sidecar_id'
-};
-
-/**
- * Auto-refresh interval configuration
- */
-export const REFRESH_CONFIG = {
-    intervals: ['off', '30s', '60s', '5m'],
-    ms: {
-        'off': null,
-        '30s': 30000,
-        '60s': 60000,
-        '5m': 300000
-    },
-    labels: {
-        'off': '🔄 OFF',
-        '30s': '🔄 ● 30s',
-        '60s': '🔄 ● 60s',
-        '5m': '🔄 ● 5m'
-    }
 };
 
 /**

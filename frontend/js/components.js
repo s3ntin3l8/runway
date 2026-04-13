@@ -719,8 +719,26 @@ export function buildModalContent(item) {
 
         ${item.detail ? `
         <div class="mt-6 p-4 rounded-2xl bg-black/40 border border-zinc-800/60">
-            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-2">Technical Summary</span>
-            <p class="text-xs text-zinc-400 mono leading-relaxed break-all">${escapeHTML(item.detail)}</p>
+            <span class="text-[10px] font-bold text-zinc-600 uppercase tracking-widest block mb-3">Diagnostic Summary</span>
+            <div class="space-y-3">
+                <div class="flex flex-col gap-1">
+                    <span class="text-[9px] font-bold text-zinc-500 uppercase tracking-tighter">Backend Source</span>
+                    <p class="text-xs text-zinc-300 mono leading-relaxed">${escapeHTML(item.detail)}</p>
+                </div>
+                <div class="grid grid-cols-2 gap-3 pt-2 border-t border-zinc-800/40">
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[9px] font-bold text-zinc-600 uppercase">Provider Key</span>
+                        <span class="text-[10px] text-zinc-400 mono">${escapeHTML(item.provider_id || 'unknown')}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[9px] font-bold text-zinc-600 uppercase">Snapshot ID</span>
+                        <span class="text-[10px] text-zinc-400 mono">${escapeHTML(item.account_id || 'default')}</span>
+                    </div>
+                </div>
+                <div class="pt-2">
+                    <p class="text-[9px] text-zinc-600 italic leading-snug">This data is cached in the local SQLite database and synchronized with the in-memory registry for instant delivery.</p>
+                </div>
+            </div>
             ${item.detail.includes('App-Bound Encryption') ? `
                 <div class="mt-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                     <p class="text-[10px] text-blue-300">💡 <strong>Tip:</strong> Chrome 127+ uses App-Bound Encryption. Try using <strong>Safari</strong> or set credentials via environment variables.</p>
