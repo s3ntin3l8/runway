@@ -1241,7 +1241,7 @@ export function buildProviderModal(providerId, items, history) {
 
         // Sparkline — filter history for this service
         const svcHistory = (history || [])
-            .filter(s => s.provider_id === providerId && s.service_name === item.service_name && s.used_value != null)
+            .filter(s => s.provider_id === providerId && s.service_name === item.service_name && typeof s.used_value === 'number' && isFinite(s.used_value))
             .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
             .map(s => ({ value: s.used_value }));
         const sparkColor = item.is_unlimited ? '#8b5cf6' : barColor;
@@ -1256,7 +1256,7 @@ export function buildProviderModal(providerId, items, history) {
             ? `${fmt.used} / ${fmt.limit}${fmt.unit ? ' ' + fmt.unit : ''}`
             : escapeHTML(String(item.remaining ?? '—'));
 
-        const resetText = item.reset_at ? formatResetDisplay(item.reset_at) : escapeHTML(String(item.reset ?? '—'));
+        const resetText = item.reset_at ? escapeHTML(formatResetDisplay(item.reset_at)) : escapeHTML(String(item.reset ?? '—'));
         const sourceLabel = MODAL_SOURCE_LABELS[item.data_source] || escapeHTML(item.data_source || '');
         const paceIcon = getPaceIcon(item.pace);
         const tierBadge = item.tier ? getTierBadge(item.tier) : '';
