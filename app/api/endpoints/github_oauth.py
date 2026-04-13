@@ -49,7 +49,7 @@ async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
                 "https://github.com/login/device/code",
                 data={
                     "client_id": settings.GITHUB_CLIENT_ID,
-                    "scope": "read:user",
+                    "scope": "read:user user:email",
                 },
                 headers={
                     "Accept": "application/json",

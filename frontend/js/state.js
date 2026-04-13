@@ -19,8 +19,11 @@ export const STATE = {
     data: [],
     // Dashboard context filter
     activeFilter: JSON.parse(localStorage.getItem('runway_active_filter') || 'null'),
-    // { dimension: 'sidecar_id'|'account_label'|'window_type', value: 'string' } | null
-    filterDimension: localStorage.getItem('runway_filter_dimension') || 'sidecar_id'
+    // { dimension: 'sidecar_id'|'account_label', value: 'string' } | null
+    filterDimension: (() => {
+        const stored = localStorage.getItem('runway_filter_dimension');
+        return ['account_label', 'sidecar_id'].includes(stored) ? stored : 'account_label';
+    })()
 };
 
 /**
