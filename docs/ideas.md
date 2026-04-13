@@ -245,7 +245,7 @@ The ingest endpoint silently rejects payloads where `|server_time - sidecar_time
 
 ---
 
-## Phase 3 — Architecture Health ✅ Complete (2026-04-12)
+## Phase 3 — Architecture Health ✅ Complete (2026-04-13) ✅ Complete (2026-04-12)
 
 Refactoring and cleanup to reduce technical debt before building advanced features on top.
 
@@ -268,7 +268,7 @@ Collectors currently have duplicated logic for extracting emails from JWT `id_to
 *   **Consistent Account Naming:** Ensure all collectors promote the same level of identity (e.g., `email @ org`) to the `account_label` field.
 
 ### 3C. API Restructuring & v1 Pathing
-**Effort:** Medium | **Status:** Planned
+**Effort:** Medium | **Status:** ✅ Complete (2026-04-13)
 
 Move all existing routes under a `/api/v1/` prefix to establish a stable integration point before the 1.0 release.
 
