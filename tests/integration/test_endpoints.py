@@ -20,7 +20,7 @@ import time
 from app.core.config import settings
 
 from app.main import app
-from app.api.routes import manager
+from app.services.collector_manager import manager
 from app.models.schemas import LimitCard
 
 
@@ -66,7 +66,7 @@ class TestLimitsEndpoint:
                 },
             ]
 
-            response = test_client.get("/api/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
             assert response.status_code == 200
             data = response.json()
@@ -105,7 +105,7 @@ class TestLimitsEndpoint:
                 },
             ]
 
-            response = test_client.get("/api/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
             # Should still return 200 with mixed results
             assert response.status_code == 200
@@ -125,7 +125,7 @@ class TestLimitsEndpoint:
         with patch.object(manager, "collect_all") as mock_collect:
             mock_collect.return_value = []
 
-            response = test_client.get("/api/limits")
+            response = test_client.get("/api/v1/usage/limits")
 
             # Should still return 200 with empty limits
             assert response.status_code == 200
@@ -135,7 +135,7 @@ class TestLimitsEndpoint:
 
 @pytest.mark.asyncio
 class TestIngestEndpoint:
-    """Integration tests for /api/ingest endpoint."""
+    """Integration tests for /api/v1/fleet/ingest endpoint."""
 
     def _get_hmac_headers(self, body: str, api_key: str = None) -> dict:
         """Generate HMAC headers for testing."""
@@ -188,18 +188,18 @@ class TestIngestEndpoint:
         headers = self._get_hmac_headers(body, api_key=test_key)
 
         # Mock external_metric_service to avoid writing to real file
-        with patch("app.api.endpoints.ingest.external_metric_service") as mock_service:
+        with patch("app.api.endpoints.fleet.external_metric_service") as mock_service:
             mock_service.metrics_update_from_ingest = AsyncMock()
 
-            with patch("app.api.endpoints.ingest.settings") as mock_settings:
+            with patch("app.api.endpoints.fleet.settings") as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                with patch("app.api.endpoints.ingest.token_cache") as mock_cache:
+                with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
                     mock_cache.store = AsyncMock()
 
                     response = test_client.post(
-                        "/api/ingest", content=body, headers=headers
+                        "/api/v1/fleet/ingest", content=body, headers=headers
                     )
 
             # Should accept valid ingest
@@ -223,11 +223,11 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.ingest.settings") as mock_settings:
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = "test-key"
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            response = test_client.post("/api/ingest", content=body, headers=headers)
+            response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
         assert response.status_code == 401
         assert "Invalid HMAC signature" in response.json()["detail"]
@@ -262,17 +262,17 @@ class TestIngestEndpoint:
         body = json.dumps(payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.ingest.external_metric_service") as mock_service:
+        with patch("app.api.endpoints.fleet.external_metric_service") as mock_service:
             mock_service.metrics_update_from_ingest = AsyncMock()
 
-            with patch("app.api.endpoints.ingest.settings") as mock_settings:
+            with patch("app.api.endpoints.fleet.settings") as mock_settings:
                 mock_settings.INGEST_API_KEY = test_key
                 mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-                with patch("app.api.endpoints.ingest.token_cache") as mock_cache:
+                with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
                     mock_cache.store = AsyncMock()
                     response = test_client.post(
-                        "/api/ingest", content=body, headers=headers
+                        "/api/v1/fleet/ingest", content=body, headers=headers
                     )
 
                     # Verify token was stored in cache
@@ -297,11 +297,11 @@ class TestIngestEndpoint:
         body = json.dumps(invalid_payload)
         headers = self._get_hmac_headers(body, api_key=test_key)
 
-        with patch("app.api.endpoints.ingest.settings") as mock_settings:
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            response = test_client.post("/api/ingest", content=body, headers=headers)
+            response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
         # Should reject invalid payload with 400 (per current implementation), NOT 401
         assert response.status_code == 400
@@ -322,9 +322,9 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.ingest.settings") as mock_settings:
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = ""
-            response = test_client.post("/api/ingest", content=body, headers=headers)
+            response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
         assert response.status_code == 503
         assert "not configured" in response.json().get("detail", "").lower()
@@ -348,10 +348,10 @@ class TestIngestEndpoint:
             "Content-Type": "application/json",
         }
 
-        with patch("app.api.endpoints.ingest.settings") as mock_settings:
+        with patch("app.api.endpoints.fleet.settings") as mock_settings:
             mock_settings.INGEST_API_KEY = DEFAULT_INGEST_API_KEY
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = True
-            response = test_client.post("/api/ingest", content=body, headers=headers)
+            response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
         assert response.status_code == 503
         assert "default" in response.json().get("detail", "").lower()

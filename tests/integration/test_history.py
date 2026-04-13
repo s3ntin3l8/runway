@@ -34,7 +34,7 @@ def client_fixture(session: Session):
     app.dependency_overrides.clear()
 
 def test_get_history_empty(client: TestClient):
-    response = client.get("/api/history/")
+    response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -61,7 +61,7 @@ def test_get_history_with_data(client: TestClient, session: Session):
     session.add(s2)
     session.commit()
     
-    response = client.get("/api/history/")
+    response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
@@ -90,7 +90,7 @@ def test_get_history_filtering(client: TestClient, session: Session):
     session.add(s2)
     session.commit()
     
-    response = client.get("/api/history/?provider_id=anthropic")
+    response = client.get("/api/v1/usage/history?provider_id=anthropic")
     assert len(response.json()) == 1
     assert response.json()[0]["provider_id"] == "anthropic"
 
@@ -108,5 +108,5 @@ def test_get_history_limit(client: TestClient, session: Session):
         session.add(s)
     session.commit()
     
-    response = client.get("/api/history/?limit=5")
+    response = client.get("/api/v1/usage/history?limit=5")
     assert len(response.json()) == 5

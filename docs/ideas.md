@@ -267,6 +267,18 @@ Collectors currently have duplicated logic for extracting emails from JWT `id_to
 *   **`IdentityExtractor` Utility:** A shared helper in `app/core/utils.py` that handles standard JWT decoding (with padding fixes) and regex-based string cleaning.
 *   **Consistent Account Naming:** Ensure all collectors promote the same level of identity (e.g., `email @ org`) to the `account_label` field.
 
+### 3C. API Restructuring & v1 Pathing
+**Effort:** Medium | **Status:** Planned
+
+Move all existing routes under a `/api/v1/` prefix to establish a stable integration point before the 1.0 release.
+
+*   **Modular Routers:** Split the current monolithic `routes.py` into domain-specific routers (e.g., `usage.py`, `settings.py`, `fleet.py`) using FastAPI's `APIRouter`.
+*   **Path Mapping:**
+    *   `/api/limits` → `/api/v1/usage/limits`
+    *   `/api/history` → `/api/v1/usage/history`
+    *   `/api/ingest` → `/api/v1/fleet/ingest`
+*   **Benefit:** Enables future versioning (v2, v3) without breaking existing sidecar deployments or external integrations, and improves backend code navigate-ability.
+
 ---
 
 ## Phase 4 — Platform Evolution

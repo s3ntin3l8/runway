@@ -5,7 +5,7 @@
  */
 export async function fetchLimits() {
     try {
-        const resp = await fetch('/api/limits');
+        const resp = await fetch('/api/v1/usage/limits');
         
         if (!resp.ok) {
             // Provide specific error messages for different HTTP status codes
@@ -44,13 +44,13 @@ export async function fetchLimits() {
  */
 
 export async function initGitHubOAuth() {
-    const resp = await fetch('/api/github/oauth/init');
+    const resp = await fetch('/api/v1/auth/github/init');
     if (!resp.ok) throw new Error('Failed to initiate GitHub login');
     return await resp.json();
 }
 
 export async function pollGitHubOAuth(deviceCode) {
-    const resp = await fetch('/api/github/oauth/poll', {
+    const resp = await fetch('/api/v1/auth/github/poll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_code: deviceCode })
@@ -60,30 +60,36 @@ export async function pollGitHubOAuth(deviceCode) {
 }
 
 export async function getGitHubOAuthStatus() {
-    const resp = await fetch('/api/github/oauth/status');
+    const resp = await fetch('/api/v1/auth/github/status');
     if (!resp.ok) return { authenticated: false };
     return await resp.json();
 }
 
 export async function logoutGitHub() {
-    const resp = await fetch('/api/github/oauth/logout', { method: 'POST' });
+    const resp = await fetch('/api/v1/auth/github/logout', { method: 'POST' });
     if (!resp.ok) throw new Error('Logout failed');
     return await resp.json();
 }
 
 /**
- * History & Settings
+ * History, Settings & Status
  */
 
 export async function fetchHistory(params = {}) {
     const query = new URLSearchParams(params).toString();
-    const resp = await fetch(`/api/history/?${query}`);
+    const resp = await fetch(`/api/v1/usage/history?${query}`);
     if (!resp.ok) throw new Error('Failed to fetch history');
     return await resp.json();
 }
 
 export async function fetchSettings() {
-    const resp = await fetch('/api/settings/');
+    const resp = await fetch('/api/v1/system/settings');
     if (!resp.ok) throw new Error('Failed to fetch settings');
+    return await resp.json();
+}
+
+export async function fetchStatus() {
+    const resp = await fetch('/api/v1/system/status');
+    if (!resp.ok) throw new Error('Failed to fetch collector status');
     return await resp.json();
 }
