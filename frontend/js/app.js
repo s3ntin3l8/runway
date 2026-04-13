@@ -105,7 +105,7 @@ function renderHistoryFromCache() {
     let html = `<table class="w-full text-left mono text-[11px]">
         <thead class="text-zinc-600 border-b border-zinc-800/50">
             <tr>
-                <th class="py-2 px-2">Time (UTC)</th>
+                <th class="py-2 px-2">Time</th>
                 <th class="py-2 px-2">Provider</th>
                 <th class="py-2 px-2">Service</th>
                 <th class="py-2 px-2 text-right">Usage</th>
@@ -353,7 +353,17 @@ function renderFilterPills() {
     if (!container) return;
 
     const dim = STATE.filterDimension;
-    const values = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))].sort();
+    const WINDOW_ORDER = ['session', 'weekly', 'biweekly', 'monthly', 'prepaid', 'unknown'];
+    const rawValues = [...new Set(STATE.data.map(i => i[dim]).filter(Boolean))];
+    const values = dim === 'window_type'
+        ? rawValues.sort((a, b) => {
+            const ai = WINDOW_ORDER.indexOf(a), bi = WINDOW_ORDER.indexOf(b);
+            if (ai === -1 && bi === -1) return a.localeCompare(b);
+            if (ai === -1) return 1;
+            if (bi === -1) return -1;
+            return ai - bi;
+          })
+        : rawValues.sort();
     const active = STATE.activeFilter?.value;
 
     const pills = [`<button class="pill${!active ? ' pill-active' : ''}" onclick="setFilter(null)">All</button>`];
