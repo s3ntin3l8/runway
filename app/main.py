@@ -29,6 +29,12 @@ logging.basicConfig(
 )
 # Silence noisy httpx logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# Apply JSON formatter when LOG_FORMAT=json
+if settings.LOG_FORMAT == "json":
+    from app.core.logging import JsonFormatter
+    _json_fmt = JsonFormatter()
+    for _handler in logging.root.handlers:
+        _handler.setFormatter(_json_fmt)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
