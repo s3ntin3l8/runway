@@ -550,7 +550,7 @@ window.handleResetProvider = async function(provider, accountId) {
     
     try {
         const query = accountId && accountId !== 'default' ? `?account_id=${accountId}` : '';
-        const resp = await fetch(`/api/reset/${provider}${query}`, { method: 'POST' });
+        const resp = await fetch(`/api/v1/usage/reset/${provider}${query}`, { method: 'POST' });
         if (!resp.ok) throw new Error('Reset failed');
         
         if (btn) btn.innerText = 'SUCCESS!';

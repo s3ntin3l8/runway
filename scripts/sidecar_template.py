@@ -6,7 +6,7 @@ Architecture:
 - Data-driven collection based on a central registry.
 - Extracts tokens/cookies from local files, keychain, and Credential Manager.
 - Reads local data files (SQLite DBs, JSON logs).
-- Sends data to Runway server via /api/ingest.
+- Sends data to Runway server via /api/v1/fleet/ingest.
 
 IMPORTANT: This sidecar does NOT make API calls directly.
 All API calls are done by the server using tokens we provide.
@@ -315,7 +315,7 @@ def queue_flush(api_url: str, api_key: str) -> int:
         return 0
 
     count = 0
-    target_url = f"{api_url.rstrip('/')}/api/ingest"
+    target_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
 
     for queue_file in queue_files:
         try:
@@ -1215,7 +1215,7 @@ def main():
                 
                 # Send fresh metrics
                 success, result, code = http_post_signed_with_retry(
-                    f"{api_url.rstrip('/')}/api/ingest",
+                    f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
                     payload,
                     api_key,
                     max_attempts=config.get("retry_attempts", 3),
