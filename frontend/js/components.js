@@ -1158,3 +1158,144 @@ export function buildProviderSummaryCard(providerId, items) {
         </div>
     </div>`;
 }
+
+/**
+ * Build a minimal SVG sparkline from a series of {value} points.
+ * @param {Array<{value: number}>} points - ordered oldest→newest
+ * @param {string} color - hex color
+ * @param {number} [width=64]
+ * @param {number} [height=28]
+ * @returns {string} SVG HTML string
+ */
+function buildSparklineSVG(points, color, width = 64, height = 28) {
+    if (!points || points.length < 2) {
+        return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"></svg>`;
+    }
+    const values = points.map(p => p.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const pad = 3;
+
+    const svgPoints = points.map((p, i) => {
+        const x = ((i / (points.length - 1)) * (width - pad * 2) + pad).toFixed(1);
+        const y = (height - pad - ((p.value - min) / range) * (height - pad * 2)).toFixed(1);
+        return `${x},${y}`;
+    }).join(' ');
+
+    const [lastX, lastY] = svgPoints.split(' ').pop().split(',');
+
+    return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;">
+        <polyline points="${svgPoints}" fill="none" stroke="${color}" stroke-width="1.5"
+            stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${lastX}" cy="${lastY}" r="2.5" fill="${color}"/>
+    </svg>`;
+}
+
+/**
+ * Derive trend arrow from a points series.
+ * @param {Array<{value: number}>} points
+ * @returns {'↑'|'↓'|'→'}
+ */
+function getTrendArrow(points) {
+    if (!points || points.length < 2) return '→';
+    const delta = points[points.length - 1].value - points[0].value;
+    if (delta > 3) return '↑';
+    if (delta < -3) return '↓';
+    return '→';
+}
+
+/**
+ * Build the provider drill-down modal.
+ * @param {string} providerId
+ * @param {Array} items - LimitCard items for this provider (sorted worst-first)
+ * @param {Array} history - raw history snapshots from /api/v1/usage/history
+ * @returns {string} HTML string
+ */
+export function buildProviderModal(providerId, items, history) {
+    const icon = PROVIDER_ICONS[providerId] || '🔧';
+    const accounts = [...new Set(items.map(i => i.account_label).filter(Boolean))];
+    const accountText = accounts.join(' · ') || '';
+    const windowType = items[0]?.window_type || '';
+    const serviceCount = items.length;
+
+    const HEALTH_SEVERITY_LOCAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
+    const sorted = [...items].sort((a, b) =>
+        (HEALTH_SEVERITY_LOCAL[b.health] || 0) - (HEALTH_SEVERITY_LOCAL[a.health] || 0)
+    );
+
+    const BAR_HEX = { critical: '#ef4444', warning: '#eab308', good: '#22c55e', unlimited: '#8b5cf6', unknown: '#3f3f46' };
+    const MODAL_SOURCE_LABELS = { oauth: 'OAuth', web_api: 'Web API', local: 'Local', cache: 'Cache', fallback: 'Fallback', api: 'API', sidecar: 'Sidecar' };
+
+    const serviceRows = sorted.map(item => {
+        const h = HEALTH_CONFIG[item.health] || HEALTH_CONFIG.unknown;
+        const barColor = BAR_HEX[item.health] || '#3f3f46';
+        const badgeLabels = { critical: 'CRIT', warning: 'WARN', good: 'GOOD', unlimited: 'UNLM', unknown: '——' };
+
+        // Percentage
+        let pct = null;
+        if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
+            pct = (item.used_value / item.limit_value) * 100;
+        }
+        const barWidth = item.is_unlimited ? 100 : (pct ?? 0);
+
+        // Sparkline — filter history for this service
+        const svcHistory = (history || [])
+            .filter(s => s.provider_id === providerId && s.service_name === item.service_name && s.used_value != null)
+            .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+            .map(s => ({ value: s.used_value }));
+        const sparkColor = item.is_unlimited ? '#8b5cf6' : barColor;
+        const sparkSVG = buildSparklineSVG(svcHistory, sparkColor);
+        const trendArrow = getTrendArrow(svcHistory);
+
+        // Used / limit display
+        const fmt = formatUsageValues(item.used_value, item.limit_value, item.unit_type, item.currency);
+        const usageText = item.is_unlimited
+            ? 'Unlimited'
+            : (fmt.used !== '—' && fmt.limit !== '—')
+            ? `${fmt.used} / ${fmt.limit}${fmt.unit ? ' ' + fmt.unit : ''}`
+            : escapeHTML(String(item.remaining ?? '—'));
+
+        const resetText = item.reset_at ? formatResetDisplay(item.reset_at) : escapeHTML(String(item.reset ?? '—'));
+        const sourceLabel = MODAL_SOURCE_LABELS[item.data_source] || escapeHTML(item.data_source || '');
+        const paceIcon = getPaceIcon(item.pace);
+        const tierBadge = item.tier ? getTierBadge(item.tier) : '';
+
+        return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-3">
+            <div class="flex justify-between items-start mb-2">
+                <div class="flex-1 min-w-0">
+                    <div class="text-[11px] font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
+                    <div class="flex flex-wrap items-center gap-1.5 mt-1">
+                        <span class="text-[8px] font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                        ${tierBadge}
+                        ${sourceLabel ? `<span class="text-[8px] text-zinc-600">${sourceLabel}</span>` : ''}
+                        ${paceIcon ? `<span class="text-[10px]">${paceIcon}</span>` : ''}
+                        ${item.pace ? `<span class="text-[8px] text-zinc-600">${escapeHTML(item.pace)}</span>` : ''}
+                    </div>
+                </div>
+                <div class="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                    <span class="text-[10px] text-zinc-500">${trendArrow}</span>
+                    ${sparkSVG}
+                </div>
+            </div>
+            <div class="flex justify-between text-[9px] text-zinc-500 mb-1.5">
+                <span>${usageText}</span>
+                <span>${resetText}</span>
+            </div>
+            <div class="h-0.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all" style="width:${Math.min(barWidth, 100).toFixed(1)}%;background:${barColor};"></div>
+            </div>
+        </div>`;
+    }).join('');
+
+    return `<div>
+        <div class="flex justify-between items-start mb-4 pb-3 border-b border-zinc-800/50">
+            <div>
+                <div class="text-base font-black text-zinc-100">${icon} ${escapeHTML(providerId)}</div>
+                <div class="text-[10px] text-zinc-500 mt-0.5">${escapeHTML(accountText)}${windowType ? ' · ' + escapeHTML(windowType) : ''} · ${serviceCount} service${serviceCount !== 1 ? 's' : ''}</div>
+            </div>
+            <button id="close-modal" class="text-zinc-500 hover:text-zinc-300 transition-colors text-lg leading-none mt-0.5">✕</button>
+        </div>
+        <div class="space-y-3 max-h-[60vh] overflow-y-auto pr-1">${serviceRows}</div>
+    </div>`;
+}
