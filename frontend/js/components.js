@@ -483,7 +483,7 @@ export function buildCard(item) {
     // Handle Compact Mode
     if (STATE.compact) {
         const mainDisplay = buildMainDisplay(isUnlimited, hasPercentage, displayPct, item.remaining, isPlaceholder, 'text-2xl leading-none');
-        const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track h-1 mt-auto overflow-hidden rounded-full bg-zinc-800/50');
+        const progressBar = buildProgressBar(isUnlimited, barWidth, h.bar, 'progress-track mt-auto overflow-hidden rounded-full bg-zinc-800/50');
 
         return `
             <div class="glass-panel ${h.card} ${isDisabled ? 'disabled-card' : ''} rounded-xl p-3 relative flex flex-col gap-2 cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}">
@@ -1276,21 +1276,21 @@ export function buildProviderModal(providerId, items, history) {
         return `<div class="bg-zinc-950 border border-zinc-800/60 rounded-xl p-4">
             <div class="flex justify-between items-start mb-2.5">
                 <div class="flex-1 min-w-0">
-                    <div class="text-base font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
+                    <div class="text-2xl font-bold text-zinc-100">${escapeHTML(item.service_name)}</div>
                     <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        <span class="text-xs font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
+                        <span class="text-sm font-bold px-1.5 py-px rounded border ${h.badge} border-current/30">${badgeLabels[item.health] || '——'}</span>
                         ${tierBadge}
-                        ${sourceLabel ? `<span class="text-xs text-zinc-500">${sourceLabel}</span>` : ''}
-                        ${paceIcon ? `<span class="text-base">${paceIcon}</span>` : ''}
-                        ${item.pace ? `<span class="text-xs text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
+                        ${sourceLabel ? `<span class="text-sm text-zinc-500">${sourceLabel}</span>` : ''}
+                        ${paceIcon ? `<span class="text-2xl">${paceIcon}</span>` : ''}
+                        ${item.pace ? `<span class="text-sm text-zinc-500">${escapeHTML(item.pace)}</span>` : ''}
                     </div>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <span class="text-base text-zinc-400">${trendArrow}</span>
+                    <span class="text-2xl text-zinc-400">${trendArrow}</span>
                     ${sparkSVG}
                 </div>
             </div>
-            <div class="flex justify-between text-sm text-zinc-400 mb-2">
+            <div class="flex justify-between text-xl text-zinc-400 mb-2">
                 <span class="font-medium">${usageText}</span>
                 <span>${resetText}</span>
             </div>
