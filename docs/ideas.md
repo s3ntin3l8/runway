@@ -441,9 +441,9 @@ These items must be completed before tagging v1.0, regardless of which phase the
 - [x] **API Versioning:** All routes under `/api/v1/` ✅ (Phase 3C)
 - [x] **Single-Flight Collection (P1):** Request coalescing via `_collect_future` + instant registry ✅ (Phase 4C)
 - [x] All 🔴 High severity audit items resolved (S1, S2, T1) ✅
-- [ ] **Structured Logging:** Add JSON logging formatter option (`LOG_FORMAT=json`) for Docker/production deployments
-- [ ] **Pydantic Settings (A1):** Refactor `Settings` to extend `pydantic_settings.BaseSettings` for type-safe env var handling
-- [ ] **Data Retention Compaction:** Background job to downsample snapshots older than 30 days (see Phase 1A retention policy)
+- [x] **Structured Logging:** Add JSON logging formatter option (`LOG_FORMAT=json`) for Docker/production deployments
+- [x] **Pydantic Settings (A1):** Refactor `Settings` to extend `pydantic_settings.BaseSettings` for type-safe env var handling
+- [x] **Data Retention Compaction:** Background job to downsample snapshots older than 30 days (see Phase 1A retention policy)
 
 ---
 
