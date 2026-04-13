@@ -91,10 +91,11 @@ class BaseCollector(ABC):
         if not results:
             return []
 
-        # 1. Try to discover account_label if missing
-        if not self.account_label:
+        # 1. Try to discover account_label if missing or currently "default"
+        if not self.account_label or self.account_label.lower() == "default":
             import re
 
+            discovered_label = None
             for card in results:
                 detail = card.get("detail", "")
                 if not detail:
@@ -103,31 +104,32 @@ class BaseCollector(ABC):
                 # Looks for email-like strings or "org: ..." patterns
                 match = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", detail)
                 if match:
-                    self.account_label = match.group(1)
+                    discovered_label = match.group(1)
                     break
 
-                # Fallback to org pattern or standalone username after separator (·)
+                # Fallback to org pattern or standalone username after separator (· or |)
                 org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
                 if org_match:
-                    self.account_label = f"org: {org_match.group(1)}"
+                    discovered_label = f"org: {org_match.group(1)}"
                     break
 
-                # Standalone username after a dot/separator e.g. "· username"
-                user_match = re.search(r"·\s*([a-zA-Z0-9_-]+)$", detail)
+                # Standalone username after a dot/separator e.g. "· username" or "| username"
+                user_match = re.search(r"[·|]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_-]+)$", detail)
                 if user_match:
-                    self.account_label = user_match.group(1)
+                    discovered_label = user_match.group(1)
                     break
+
+            if discovered_label:
+                self.account_label = discovered_label
 
         # 2. Tag cards
         for card in results:
             if "account_id" not in card or not card.get("account_id"):
                 card["account_id"] = self.account_id or "default"
-            if "account_label" not in card or not card.get("account_label"):
+            
+            # Use self.account_label if set, otherwise try to use card's existing label, fallback to "Default"
+            if "account_label" not in card or not card.get("account_label") or card.get("account_label").lower() == "default":
                 card["account_label"] = self.account_label or "Default"
-
-            # Final fallback: if account_label is still None/empty, set to "Default"
-            if not card["account_label"]:
-                card["account_label"] = "Default"
 
             # Phase 0B: inject provider_id and window_type from class constants
             if "provider_id" not in card or not card.get("provider_id"):

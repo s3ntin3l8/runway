@@ -46,44 +46,37 @@ async function loadHistory() {
         }
         
         let html = `
-            <table class="w-full text-left mono text-xs">
-                <thead class="text-zinc-500 border-b border-zinc-800">
+            <table class="w-full text-left mono text-[11px]">
+                <thead class="text-zinc-600 border-b border-zinc-800/50">
                     <tr>
-                        <th class="py-3 px-2">Time (UTC)</th>
-                        <th class="py-3 px-2">Service</th>
-                        <th class="py-3 px-2">Usage</th>
-                        <th class="py-3 px-2">Source</th>
+                        <th class="py-2 px-2">Time (UTC)</th>
+                        <th class="py-2 px-2">Service</th>
+                        <th class="py-2 px-2 text-right">Usage</th>
                     </tr>
                 </thead>
-                <tbody class="text-zinc-300">
+                <tbody class="text-zinc-400">
         `;
         
-        history.slice(0, 100).forEach(s => {
-            const date = new Date(s.timestamp).toLocaleString();
-            const usage = s.used_value !== null ? `${s.used_value.toLocaleString()} / ${s.limit_value?.toLocaleString() || '∞'} ${s.unit_type}` : '—';
+        history.slice(0, 50).forEach(s => {
+            const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const usage = s.used_value !== null ? `${s.used_value.toLocaleString()}${s.unit_type === 'percent' ? '%' : ''}` : '—';
             html += `
-                <tr class="border-b border-zinc-900/50 hover:bg-zinc-800/20">
-                    <td class="py-3 px-2 text-zinc-500">${date}</td>
-                    <td class="py-3 px-2 font-bold">${s.service_name} <span class="text-[10px] opacity-50 font-normal">(${s.provider_id})</span></td>
-                    <td class="py-3 px-2">${usage}</td>
-                    <td class="py-3 px-2 opacity-60">${s.data_source}</td>
+                <tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
+                    <td class="py-2 px-2 text-zinc-600">${date}</td>
+                    <td class="py-2 px-2 font-medium text-zinc-300">${s.service_name}</td>
+                    <td class="py-2 px-2 text-right font-bold text-zinc-400">${usage}</td>
                 </tr>
             `;
         });
         
         html += '</tbody></table>';
         container.innerHTML = html;
-        updateCharts(history, STATE.chartView || 'bar');
+        updateCharts(history);
     } catch (err) {
         destroyCharts();
         container.innerHTML = `<p class="text-red-400">Failed to load history: ${err.message}</p>`;
     }
 }
-
-window.setChartView = function(view) {
-    STATE.chartView = view;
-    _setChartView(view);
-};
 
 async function loadSettings() {
     const container = document.getElementById('settings-content');
@@ -309,52 +302,6 @@ window.toggleConfig = function (key) {
 }
 
 /**
- * Cycle through auto-refresh intervals
- * OFF → 30s → 60s → 5m → OFF
- */
-window.cycleRefreshInterval = function () {
-    const intervals = REFRESH_CONFIG.intervals;
-    const currentIndex = intervals.indexOf(STATE.refreshInterval);
-    const nextIndex = (currentIndex + 1) % intervals.length;
-    const nextInterval = intervals[nextIndex];
-
-    setRefreshInterval(nextInterval);
-}
-
-/**
- * Set auto-refresh interval
- * @param {string} interval - Interval key ('off', '30s', '60s', '5m')
- */
-function setRefreshInterval(interval) {
-    STATE.refreshInterval = interval;
-    localStorage.setItem('runway_refresh_interval', interval);
-
-    // Clear existing timer
-    if (refreshTimer) {
-        clearInterval(refreshTimer);
-        refreshTimer = null;
-    }
-
-    // Update button UI
-    const btn = document.getElementById('toggle-refresh');
-    if (btn) {
-        btn.innerHTML = REFRESH_CONFIG.labels[interval];
-        btn.classList.toggle('refresh-active', interval !== 'off');
-    }
-
-    // Set new timer if not off
-    if (interval !== 'off' && REFRESH_CONFIG.ms[interval]) {
-        refreshTimer = setInterval(() => {
-            console.log(`Auto-refresh triggered (${interval})`);
-            loadData();
-        }, REFRESH_CONFIG.ms[interval]);
-        console.log(`Auto-refresh enabled: ${interval}`);
-    } else {
-        console.log('Auto-refresh disabled');
-    }
-}
-
-/**
  * Toggle bright/dark mode
  */
 window.toggleTheme = function () {
@@ -398,16 +345,6 @@ function initUI() {
 
     if (STATE.compact) {
         document.body.classList.add('compact-mode');
-    }
-
-    // Initialize refresh interval
-    const refreshBtn = document.getElementById('toggle-refresh');
-    if (refreshBtn) {
-        refreshBtn.innerHTML = REFRESH_CONFIG.labels[STATE.refreshInterval];
-        refreshBtn.classList.toggle('refresh-active', STATE.refreshInterval !== 'off');
-    }
-    if (STATE.refreshInterval !== 'off') {
-        setRefreshInterval(STATE.refreshInterval);
     }
 
     // Initialize theme
@@ -561,17 +498,12 @@ async function loadData() {
     const grid = document.getElementById('grid');
     const loading = document.getElementById('loading');
     const errorBanner = document.getElementById('error-banner');
-    const refreshBtn = document.getElementById('refresh-btn');
-    const refreshIcon = document.getElementById('refresh-icon');
     const lastUpdated = document.getElementById('last-updated');
 
     grid.innerHTML = '';
     grid.classList.add('hidden');
     loading.classList.remove('hidden');
     errorBanner.classList.add('hidden');
-    refreshBtn.disabled = true;
-    refreshIcon.style.animation = 'spin 1s linear infinite';
-    refreshIcon.style.transformOrigin = 'center';
 
     try {
         const json = await fetchLimits();
@@ -608,8 +540,6 @@ async function loadData() {
     } finally {
         loading.classList.add('hidden');
         grid.classList.remove('hidden');
-        refreshBtn.disabled = false;
-        refreshIcon.style.animation = 'none';
     }
 }
 
@@ -663,10 +593,7 @@ window.addEventListener('beforeunload', () => {
 // Initial load
 document.addEventListener('DOMContentLoaded', () => {
     const grid = document.getElementById('grid');
-    const refreshBtn = document.getElementById('refresh-btn');
     const modalBackdrop = document.getElementById('modal-backdrop');
-
-    refreshBtn.addEventListener('click', loadData);
 
     // Grid click delegation for cards
     grid.addEventListener('click', (e) => {

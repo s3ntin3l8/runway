@@ -186,21 +186,29 @@ class GitHubCollector(BaseCollector):
             # Success: Clear any backoff
             self._last_429_backoff_until = None
 
-            # Try to discover identity from local gh config for promotion
+            # Try to discover identity from API or local gh config
             identity = None
-            gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
-            if os.path.exists(gh_config_path):
-                try:
-                    import yaml
 
-                    with open(gh_config_path) as f:
-                        config = yaml.safe_load(f)
-                        host_config = config.get("github.com", {})
-                        identity = (
-                            host_config.get("user") or list(host_config.get("users", {}).keys())[0]
-                        )
-                except Exception:
-                    pass
+            # 1. Try to get email from /user if we have a valid response
+            if user_resp.status_code == 200:
+                user_api_data = user_resp.json()
+                identity = user_api_data.get("email") or user_api_data.get("login")
+
+            # 2. Fallback: local gh config for promotion
+            if not identity:
+                gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
+                if os.path.exists(gh_config_path):
+                    try:
+                        import yaml
+
+                        with open(gh_config_path) as f:
+                            config = yaml.safe_load(f)
+                            host_config = config.get("github.com", {})
+                            identity = (
+                                host_config.get("user") or list(host_config.get("users", {}).keys())[0]
+                            )
+                    except Exception:
+                        pass
 
             self._identity = identity
             cards = self._parse_api_responses(user_resp, token_resp, user_data)

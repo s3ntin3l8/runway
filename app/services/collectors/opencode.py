@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
-    DEFAULT_WINDOW_TYPE = "rolling"
+    DEFAULT_WINDOW_TYPE = "weekly"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)

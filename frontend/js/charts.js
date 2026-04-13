@@ -1,22 +1,32 @@
 // frontend/js/charts.js
-// Chart.js wrapper for the History tab token volume panel.
+// Chart.js wrapper for the History tab usage panel.
 // Depends on Chart.js being loaded globally (CDN in index.html).
 
-let _barChart = null;
-let _lineChart = null;
+let _chart = null;
 
 const PROVIDER_COLORS = {
     anthropic: "#f59e0b",
-    openai: "#10b981",
-    google: "#3b82f6",
+    gemini: "#3b82f6",
     github: "#8b5cf6",
-    ollama: "#06b6d4",
+    chatgpt: "#10b981",
+    opencode: "#06b6d4",
     openrouter: "#ec4899",
     minimax: "#14b8a6",
+    ollama: "#94a3b8",
 };
 
 function colorFor(providerId) {
-    return PROVIDER_COLORS[providerId] || "#6b7280";
+    return PROVIDER_COLORS[providerId] || "#64748b";
+}
+
+function extractLabelsAndProviders(snapshots) {
+    const days = new Set();
+    const providers = new Set();
+    for (const s of snapshots) {
+        days.add(s.timestamp.slice(0, 10));
+        if (s.provider_id) providers.add(s.provider_id);
+    }
+    return { labels: Array.from(days).sort(), providers: Array.from(providers) };
 }
 
 function bucketByDay(snapshots) {
@@ -34,38 +44,16 @@ function bucketByDay(snapshots) {
     return buckets;
 }
 
-function extractLabelsAndProviders(snapshots) {
-    const days = new Set();
-    const providers = new Set();
-    for (const s of snapshots) {
-        days.add(s.timestamp.slice(0, 10));
-        if (s.provider_id) providers.add(s.provider_id);
-    }
-    return { labels: Array.from(days).sort(), providers: Array.from(providers) };
-}
-
-function latestLimitPerProvider(snapshots) {
-    const limits = {};
-    for (const s of snapshots) {
-        if (s.provider_id && s.limit_value != null) {
-            limits[s.provider_id] = s.limit_value;
-        }
-    }
-    return limits;
-}
-
 export function destroyCharts() {
-    if (_barChart) { _barChart.destroy(); _barChart = null; }
-    if (_lineChart) { _lineChart.destroy(); _lineChart = null; }
+    if (_chart) { _chart.destroy(); _chart = null; }
 }
 
-export function updateCharts(snapshots, activeView = "bar") {
+export function updateCharts(snapshots) {
     destroyCharts();
 
-    const barCanvas = document.getElementById("chart-bar");
-    const lineCanvas = document.getElementById("chart-line");
+    const canvas = document.getElementById("chart-usage");
     const emptyEl = document.getElementById("chart-empty");
-    if (!barCanvas || !lineCanvas) return;
+    if (!canvas) return;
 
     if (!snapshots || snapshots.length === 0) {
         emptyEl?.classList.remove("hidden");
@@ -75,116 +63,70 @@ export function updateCharts(snapshots, activeView = "bar") {
 
     const { labels, providers } = extractLabelsAndProviders(snapshots);
     const buckets = bucketByDay(snapshots);
-    const limits = latestLimitPerProvider(snapshots);
 
-    // --- Bar chart (stacked by provider) ---
-    const barDatasets = providers.map(provider => ({
-        label: provider,
-        data: labels.map(day => {
-            const b = buckets[day]?.[provider];
-            return b ? Math.round(b.sum / b.count) : 0;
-        }),
-        backgroundColor: colorFor(provider),
-        stack: "combined",
-        borderRadius: 2,
-    }));
-
-    const chartDefaults = {
-        responsive: true,
-        animation: false,
-        plugins: {
-            legend: { labels: { color: "#a1a1aa", font: { size: 11 } } },
-            tooltip: { mode: "index", intersect: false },
-        },
-        scales: {
-            x: {
-                stacked: true,
-                ticks: { color: "#71717a", maxTicksLimit: 10 },
-                grid: { color: "#27272a" },
-            },
-            y: {
-                stacked: true,
-                ticks: { color: "#71717a" },
-                grid: { color: "#27272a" },
-            },
-        },
-    };
-
-    _barChart = new Chart(barCanvas.getContext("2d"), {
-        type: "bar",
-        data: { labels, datasets: barDatasets },
-        options: { ...chartDefaults },
-    });
-
-    // --- Line chart (per provider + limit reference line) ---
-    const lineDatasets = providers.flatMap(provider => {
+    // Line chart (per provider)
+    const datasets = providers.map(provider => {
         const color = colorFor(provider);
-        const datasets = [{
-            label: provider,
+        return {
+            label: provider.toUpperCase(),
             data: labels.map(day => {
                 const b = buckets[day]?.[provider];
+                // Average usage per day for this provider
                 return b ? Math.round(b.sum / b.count) : null;
             }),
             borderColor: color,
-            backgroundColor: color + "22",
+            backgroundColor: color + "15",
+            borderWidth: 2,
             tension: 0.3,
             spanGaps: true,
-            pointRadius: 3,
-        }];
-        if (limits[provider]) {
-            datasets.push({
-                label: `${provider} limit`,
-                data: labels.map(() => limits[provider]),
-                borderColor: color,
-                borderDash: [6, 3],
-                pointRadius: 0,
-                tension: 0,
-                fill: false,
-            });
-        }
-        return datasets;
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            fill: true,
+        };
     });
 
-    const lineOptions = {
+    const options = {
         responsive: true,
-        animation: false,
+        maintainAspectRatio: false,
+        animation: { duration: 500 },
         plugins: {
-            legend: { labels: { color: "#a1a1aa", font: { size: 11 } } },
+            legend: { 
+                position: 'top',
+                align: 'end',
+                labels: { color: "#71717a", font: { size: 10, weight: 'bold' }, usePointStyle: true, boxWidth: 6 } 
+            },
+            tooltip: { 
+                mode: "index", 
+                intersect: false,
+                backgroundColor: 'rgba(24, 24, 27, 0.95)',
+                titleColor: '#f4f4f5',
+                bodyColor: '#a1a1aa',
+                borderColor: 'rgba(63, 63, 70, 0.5)',
+                borderWidth: 1,
+                padding: 10,
+                bodyFont: { family: 'JetBrains Mono' }
+            },
         },
         scales: {
-            x: { ticks: { color: "#71717a", maxTicksLimit: 10 }, grid: { color: "#27272a" } },
-            y: { ticks: { color: "#71717a" }, grid: { color: "#27272a" } },
+            x: { 
+                ticks: { color: "#52525b", font: { size: 9 }, maxTicksLimit: 7 }, 
+                grid: { display: false } 
+            },
+            y: { 
+                beginAtZero: true,
+                ticks: { color: "#52525b", font: { size: 9 }, maxTicksLimit: 5 }, 
+                grid: { color: "rgba(39, 39, 42, 0.5)" } 
+            },
         },
     };
 
-    _lineChart = new Chart(lineCanvas.getContext("2d"), {
+    _chart = new Chart(canvas.getContext("2d"), {
         type: "line",
-        data: { labels, datasets: lineDatasets },
-        options: lineOptions,
+        data: { labels, datasets },
+        options: options,
     });
-
-    // Show the active view
-    setChartViewVisibility(activeView);
-}
-
-function setChartViewVisibility(view) {
-    const barWrap = document.getElementById("chart-bar-wrap");
-    const lineWrap = document.getElementById("chart-line-wrap");
-    const barBtn = document.getElementById("chart-view-bar");
-    const lineBtn = document.getElementById("chart-view-line");
-    if (view === "bar") {
-        barWrap?.classList.remove("hidden");
-        lineWrap?.classList.add("hidden");
-        barBtn?.classList.add("active");
-        lineBtn?.classList.remove("active");
-    } else {
-        barWrap?.classList.add("hidden");
-        lineWrap?.classList.remove("hidden");
-        barBtn?.classList.remove("active");
-        lineBtn?.classList.add("active");
-    }
 }
 
 export function setChartView(view) {
-    setChartViewVisibility(view);
+    // Legacy support for app.js calls
 }
