@@ -1,6 +1,6 @@
 import { fetchLimits, getGitHubOAuthStatus, initGitHubOAuth, pollGitHubOAuth, logoutGitHub, fetchHistory, fetchSettings, fetchFleet, patchSidecar, deleteSidecarAPI, fetchTokenHealth, postTokenRefresh } from './api.js';
 import { STATE, HEALTH_CONFIG, REFRESH_CONFIG } from './state.js';
-import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar } from './components.js';
+import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSection, buildProviderSummaryCard, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildHealthBar, buildProviderModal } from './components.js';
 import { updateCharts, setChartView as _setChartView, destroyCharts } from './charts.js';
 
 function escapeHTML(str) {
@@ -254,7 +254,6 @@ function renderGrid() {
 
 /**
  * Open the provider drill-down modal. Fetches 7d history for sparklines.
- * Full implementation added in Task 4.
  * @param {string} providerId
  */
 window.openProviderModal = async function(providerId) {
@@ -264,20 +263,25 @@ window.openProviderModal = async function(providerId) {
     const container = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
 
-    // Show loading state immediately
     content.innerHTML = `<div class="p-8 text-center text-zinc-500 text-sm animate-pulse">Loading ${escapeHTML(providerId)}…</div>`;
     container.classList.add('active');
     document.body.style.overflow = 'hidden';
     document.getElementById('modal-backdrop').onclick = closeModal;
 
-    // Placeholder — full implementation in Task 4
-    content.innerHTML = `<div class="p-6">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-lg font-bold text-zinc-100">${escapeHTML(providerId)}</h2>
-            <button id="close-modal" onclick="closeModal()" class="text-zinc-500 hover:text-zinc-300">✕</button>
-        </div>
-        <p class="text-zinc-500 text-sm">${items.length} service(s) — full modal in Task 4</p>
-    </div>`;
+    let history = [];
+    try {
+        history = await fetchHistory({ provider_id: providerId, days: 7, limit: 500 });
+    } catch (e) {
+        console.warn('Could not fetch history for modal sparklines:', e.message);
+    }
+
+    // Sort items worst-first
+    const HEALTH_SEVERITY_MODAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
+    const sorted = [...items].sort((a, b) =>
+        (HEALTH_SEVERITY_MODAL[b.health] || 0) - (HEALTH_SEVERITY_MODAL[a.health] || 0)
+    );
+
+    content.innerHTML = buildProviderModal(providerId, sorted, history);
     document.getElementById('close-modal').onclick = closeModal;
 };
 
