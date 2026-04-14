@@ -48,8 +48,7 @@ def _open_in_editor(path: pathlib.Path) -> None:
     elif sys.platform == "win32":
         subprocess.Popen(["notepad.exe", str(path)])  # noqa: S603 S607
     else:
-        editor = pathlib.Path("/usr/bin/xdg-open")
-        subprocess.Popen([str(editor), str(path)])  # noqa: S603
+        subprocess.Popen(["xdg-open", str(path)])  # noqa: S603 S607
 
 
 class SidecarTray:
