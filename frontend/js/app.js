@@ -4,6 +4,7 @@ import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSecti
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView } from './views/history.js';
 import { loadSettingsView } from './views/settings.js';
+import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar } from './views/fleet.js';
 
 function escapeHTML(str) {
     if (!str) return '';
@@ -41,7 +42,7 @@ window.switchView = function(viewId) {
     if (viewId === 'dashboard' && STATE.data.length === 0) loadData();
     if (viewId === 'history') loadHistoryView();
     if (viewId === 'settings') loadSettingsView();
-    if (viewId === 'fleet') loadFleet();
+    if (viewId === 'fleet') loadFleetView();
 }
 
 window.toggleHistoryProvider = function(pid) {
@@ -666,54 +667,6 @@ async function renderSystemSection(pane) {
         pane.innerHTML = `<p class="text-red-400 text-sm">Failed to load system info: ${escapeHTML(err.message)}</p>`;
     }
 }
-
-async function loadFleet() {
-    const container = document.getElementById('fleet-content');
-    if (!container) return;
-    container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading fleet...</p>';
-    try {
-        const data = await fetchFleet();
-        container.innerHTML = buildFleetView(data.sidecars);
-    } catch (err) {
-        container.innerHTML = `<p class="text-red-400">Failed to load fleet: ${escapeHTML(err.message)}</p>`;
-    }
-}
-
-window.editSidecarName = async function(sidecarId) {
-    const newName = prompt('Enter a custom name for this sidecar:', '');
-    if (newName === null) return; // cancelled
-    try {
-        await patchSidecar(sidecarId, { custom_name: newName.trim() || null });
-        loadFleet();
-    } catch (err) {
-        alert('Failed to rename: ' + err.message);
-    }
-};
-
-window.addSidecarTag = async function(sidecarId) {
-    const tag = prompt('Enter a tag for this sidecar:');
-    if (!tag || !tag.trim()) return;
-    try {
-        // Fetch current tags first, then append
-        const fleet = await fetchFleet();
-        const sidecar = fleet.sidecars.find(s => s.sidecar_id === sidecarId);
-        const tags = [...(sidecar?.tags || []), tag.trim()];
-        await patchSidecar(sidecarId, { tags });
-        loadFleet();
-    } catch (err) {
-        alert('Failed to add tag: ' + err.message);
-    }
-};
-
-window.deleteSidecar = async function(sidecarId) {
-    if (!confirm(`Remove sidecar "${sidecarId}" from the registry?`)) return;
-    try {
-        await deleteSidecarAPI(sidecarId);
-        loadFleet();
-    } catch (err) {
-        alert('Failed to delete: ' + err.message);
-    }
-};
 
 /**
  * Render quota cards to the grid
@@ -1354,4 +1307,7 @@ window.viewRawProviderData = async function(providerId) {
 
 // Expose functions needed by inline onclick handlers in HTML
 window.switchView = switchView;
+window.editSidecarName = editSidecarName;
+window.addSidecarTag = addSidecarTag;
+window.deleteSidecar = deleteSidecar;
 
