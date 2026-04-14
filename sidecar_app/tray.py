@@ -9,6 +9,7 @@ from collections.abc import Callable
 import pystray
 from PIL import Image
 
+from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
 
 RELEASES_URL = "https://github.com/bjoernf73/runway/releases"
@@ -139,6 +140,13 @@ class SidecarTray:
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             webbrowser.open(RELEASES_URL)
 
+        def on_launch_at_login(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            if is_login_item_installed():
+                remove_login_item()
+            else:
+                install_login_item()
+            icon.update_menu()
+
         def on_quit(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             icon.stop()
             self._daemon.stop()
@@ -150,7 +158,7 @@ class SidecarTray:
             pystray.MenuItem("Run Now", on_run_now),
             pystray.MenuItem(pause_resume_text, on_pause_resume),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Launch at Login", None, checked=lambda _: False),
+            pystray.MenuItem("Launch at Login", on_launch_at_login, checked=lambda item: is_login_item_installed()),
             pystray.MenuItem("Edit Config…", on_edit_config),
             pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,
