@@ -86,7 +86,11 @@ __REGISTRY__ = {
             "icon": "\ud83d\ude80",
             "rules": [
                 {"type": "env", "variable": "OPENROUTER_API_KEY", "mapping": {"value": "api_key"}},
-                {"type": "env", "variable": "OPENROUTER_HTTP_REFERER", "mapping": {"value": "http_referer"}},
+                {
+                    "type": "env",
+                    "variable": "OPENROUTER_HTTP_REFERER",
+                    "mapping": {"value": "http_referer"},
+                },
                 {"type": "env", "variable": "OPENROUTER_X_TITLE", "mapping": {"value": "x_title"}},
             ],
         },

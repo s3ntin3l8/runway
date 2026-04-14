@@ -52,12 +52,14 @@ def main() -> None:
 
     # 7. Run tray — blocks main thread
     if needs_setup_notification:
+
         def notify_setup() -> None:
             if tray._icon is not None:
                 tray._icon.notify(
                     "Edit config.json to connect to your Runway server, then restart.",
                     "Runway Sidecar — Setup Required",
                 )
+
         tray.run(after_start=notify_setup)
     else:
         tray.run()

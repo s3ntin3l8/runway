@@ -24,9 +24,7 @@ if _SYSTEM == "Windows":
 # macOS constants
 # ---------------------------------------------------------------------------
 
-_MACOS_PLIST_PATH = (
-    pathlib.Path.home() / "Library" / "LaunchAgents" / "com.runway.sidecar.plist"
-)
+_MACOS_PLIST_PATH = pathlib.Path.home() / "Library" / "LaunchAgents" / "com.runway.sidecar.plist"
 _MACOS_LOG_DIR = pathlib.Path.home() / "Library" / "Logs" / "RunwaySidecar"
 
 _PLIST_TEMPLATE = """\
@@ -124,7 +122,11 @@ def _windows_install() -> None:
             winreg.KEY_SET_VALUE,  # type: ignore[name-defined]
         ) as key:
             winreg.SetValueEx(  # type: ignore[name-defined]
-                key, _WIN_REG_KEY, 0, winreg.REG_SZ, sys.executable  # type: ignore[name-defined]
+                key,
+                _WIN_REG_KEY,
+                0,
+                winreg.REG_SZ,
+                sys.executable,  # type: ignore[name-defined]
             )
     except OSError:
         pass  # registry is locked or inaccessible

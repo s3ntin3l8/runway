@@ -1,4 +1,5 @@
 """GitHub Releases update checker for the Runway sidecar desktop app."""
+
 from __future__ import annotations
 
 import json
