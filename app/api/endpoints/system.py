@@ -476,9 +476,7 @@ async def upsert_app_config(
 
 @router.get("/dashboard-layout")
 @limiter.limit("30/minute")
-async def get_dashboard_layout(
-    request: Request, session: Session = Depends(get_session)
-) -> dict:
+async def get_dashboard_layout(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return the persisted dashboard layout. Empty default if unset."""
     import json
 

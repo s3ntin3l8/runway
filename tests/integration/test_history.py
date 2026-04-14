@@ -121,9 +121,7 @@ def test_get_history_limit(client: TestClient, session: Session):
     assert len(response.json()) == 5
 
 
-def test_get_history_multi_day_not_truncated_by_limit(
-    client: TestClient, session: Session
-):
+def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, session: Session):
     """Regression: high-volume today must not push older days out of the response.
 
     With a flat `ORDER BY timestamp DESC LIMIT N`, a day with >N snapshots consumes
@@ -163,9 +161,7 @@ def test_get_history_multi_day_not_truncated_by_limit(
     )
 
 
-def test_get_history_bucket_size_adapts_to_window(
-    client: TestClient, session: Session
-):
+def test_get_history_bucket_size_adapts_to_window(client: TestClient, session: Session):
     """Short windows must return sub-hour resolution.
 
     Inserts minute-spaced snapshots for the past hour. A 1h window (days=0.042)

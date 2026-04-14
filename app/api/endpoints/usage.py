@@ -100,9 +100,7 @@ def _pick_bucket_seconds(days: float) -> int:
     return 60  # 1h → 1 min (≤60 points)
 
 
-def _dedupe_by_bucket(
-    rows: Sequence[UsageSnapshot], bucket_seconds: int
-) -> list[UsageSnapshot]:
+def _dedupe_by_bucket(rows: Sequence[UsageSnapshot], bucket_seconds: int) -> list[UsageSnapshot]:
     """Keep the most recent row per (provider, account, model, window, unit, bucket).
 
     Assumes `rows` is already sorted by timestamp descending — the first row seen
