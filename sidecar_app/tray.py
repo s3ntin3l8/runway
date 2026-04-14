@@ -149,6 +149,7 @@ class SidecarTray:
 
         def on_view_logs(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             from sidecar_app.config import get_log_path
+
             _open_in_editor(get_log_path())
 
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
@@ -172,7 +173,11 @@ class SidecarTray:
             pystray.MenuItem("Run Now", on_run_now),
             pystray.MenuItem(pause_resume_text, on_pause_resume),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Launch at Login", on_launch_at_login, checked=lambda item: is_login_item_installed()),  # noqa: ARG005
+            pystray.MenuItem(
+                "Launch at Login",
+                on_launch_at_login,
+                checked=lambda item: is_login_item_installed(),  # noqa: ARG005
+            ),
             pystray.MenuItem("Edit Config…", on_edit_config),
             pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,
