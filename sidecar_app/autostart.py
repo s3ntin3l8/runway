@@ -116,15 +116,18 @@ def _windows_is_installed() -> bool:
 
 
 def _windows_install() -> None:
-    with winreg.OpenKey(  # type: ignore[name-defined]
-        winreg.HKEY_CURRENT_USER,  # type: ignore[name-defined]
-        _WIN_REG_PATH,
-        0,
-        winreg.KEY_SET_VALUE,  # type: ignore[name-defined]
-    ) as key:
-        winreg.SetValueEx(  # type: ignore[name-defined]
-            key, _WIN_REG_KEY, 0, winreg.REG_SZ, sys.executable  # type: ignore[name-defined]
-        )
+    try:
+        with winreg.OpenKey(  # type: ignore[name-defined]
+            winreg.HKEY_CURRENT_USER,  # type: ignore[name-defined]
+            _WIN_REG_PATH,
+            0,
+            winreg.KEY_SET_VALUE,  # type: ignore[name-defined]
+        ) as key:
+            winreg.SetValueEx(  # type: ignore[name-defined]
+                key, _WIN_REG_KEY, 0, winreg.REG_SZ, sys.executable  # type: ignore[name-defined]
+            )
+    except OSError:
+        pass  # registry is locked or inaccessible
 
 
 def _windows_remove() -> None:
