@@ -507,7 +507,7 @@ export function buildCard(item) {
                         </div>
                         <span class="text-[8px] mono truncate opacity-50 uppercase">${item.data_source || ''}</span>
                     </div>
-                    <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[80px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
+                    <span class="text-[9px] text-zinc-500 mono leading-none mb-0.5 truncate max-w-[160px]" title="${escapeHTML(item.reset)}">${escapeHTML(item.reset)}</span>
                 </div>
 
                 ${progressBar}
@@ -654,7 +654,7 @@ export function buildModalContent(item) {
 
     const sourceLabel = SOURCE_LABELS[item.data_source] || item.data_source;
     const sourceColor = SOURCE_COLORS[item.data_source] || 'text-zinc-400';
-    const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString() : 'Never';
+    const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
     const updatedTime = formatRelativeTime(item.updated_at);
 
     const isAuthFailed = item.error_type === 'auth_failed';
@@ -1143,7 +1143,7 @@ export function buildProviderSummaryCard(providerId, items) {
             pct = (item.used_value / item.limit_value) * 100;
         }
         const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
-        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 flex-shrink-0">${escapeHTML(item.tier.toUpperCase().slice(0,3))}</span>` : '';
+        const rowTier = item.tier ? `<span class="text-[8px] font-bold px-1 py-px rounded border ${getTierTextClass(item.tier)} border-current/30 flex-shrink-0">${escapeHTML(item.tier.toUpperCase())}</span>` : '';
         return `<div class="flex justify-between items-center text-xs py-0.5">
             <span class="flex items-center gap-1.5 min-w-0">
                 <span class="dot ${dot} flex-shrink-0" style="width:6px;height:6px;"></span>
