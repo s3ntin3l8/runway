@@ -765,11 +765,9 @@ window.openProviderModal = async function(providerId) {
     const container = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
 
-    // Sort items worst-first
-    const HEALTH_SEVERITY_MODAL = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const sorted = [...items].sort((a, b) =>
-        (HEALTH_SEVERITY_MODAL[b.health] || 0) - (HEALTH_SEVERITY_MODAL[a.health] || 0)
-    );
+    // Keep order already applied by applyOrder (pinned first, then unpinned).
+    // For unpinned items, preserve API order; user can reorder via edit mode.
+    const sorted = items;
 
     // Render immediately without history so modal opens instantly
     content.innerHTML = buildProviderModal(providerId, sorted, []);
