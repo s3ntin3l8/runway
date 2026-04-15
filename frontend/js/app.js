@@ -6,7 +6,7 @@ import { buildCard, buildModalContent, buildGitHubOAuthModal, buildProviderSecti
 import { updateCharts, destroyCharts } from './charts.js';
 import { loadHistoryView, initHistoryView, setHistoryDays, setHistoryMetric, toggleHistoryProvider } from './views/history.js';
 import { loadSettingsView } from './views/settings.js';
-import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar } from './views/fleet.js';
+import { loadFleetView, editSidecarName, addSidecarTag, deleteSidecar, triggerSidecarCollect } from './views/fleet.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
 
 // Alias for backwards compatibility
@@ -1372,6 +1372,7 @@ window.switchView = switchView;
 window.editSidecarName = editSidecarName;
 window.addSidecarTag = addSidecarTag;
 window.deleteSidecar = deleteSidecar;
+window.triggerSidecarCollect = triggerSidecarCollect;
 window.setFilterDimension = setFilterDimension;
 window.setFilter = setFilter;
 window.setHistoryDays = setHistoryDays;

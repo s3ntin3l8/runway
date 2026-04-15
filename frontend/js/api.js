@@ -129,6 +129,14 @@ export async function deleteSidecarAPI(sidecarId) {
     return await resp.json();
 }
 
+export async function triggerSidecarCollectAPI(sidecarId) {
+    const resp = await fetch(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/trigger`, {
+        method: 'POST',
+    });
+    if (!resp.ok) throw new Error(`Failed to trigger sidecar: HTTP ${resp.status}`);
+    return await resp.json();
+}
+
 /**
  * Token Health
  */

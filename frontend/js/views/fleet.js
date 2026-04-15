@@ -1,4 +1,4 @@
-import { fetchFleet, patchSidecar, deleteSidecarAPI } from '../api.js';
+import { fetchFleet, patchSidecar, deleteSidecarAPI, triggerSidecarCollectAPI } from '../api.js';
 import { buildFleetView } from '../components.js';
 
 function escapeHTML(str) {
@@ -51,6 +51,25 @@ export async function deleteSidecar(sidecarId) {
         await loadFleetView();
     } catch (err) {
         alert('Failed to delete: ' + err.message);
+    }
+}
+
+export async function triggerSidecarCollect(sidecarId) {
+    try {
+        await triggerSidecarCollectAPI(sidecarId);
+        // Brief visual feedback — no full reload needed
+        const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
+        if (card) {
+            const btn = card.querySelector('button[title^="Run Now"]');
+            if (btn) {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                btn.classList.add('text-green-400');
+                setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('text-green-400'); }, 2000);
+            }
+        }
+    } catch (err) {
+        alert('Failed to trigger collection: ' + err.message);
     }
 }
 
