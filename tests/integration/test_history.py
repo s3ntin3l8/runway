@@ -132,6 +132,8 @@ def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, sessio
     now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     # 3 days × 600 rows/day, all same group key within each hour — real pollers
     # produce many rows per hour for the same card (different values, same key).
+    # Use seconds (not minutes) so 600 rows span ~10 minutes, never crossing into
+    # a neighbouring calendar day regardless of what hour the test runs.
     for day in range(3):
         for i in range(600):
             s = UsageSnapshot(
@@ -144,7 +146,7 @@ def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, sessio
                 service_name="Claude",
                 health="good",
                 data_source="api",
-                timestamp=now - timedelta(days=day, minutes=i),
+                timestamp=now - timedelta(days=day, seconds=i),
             )
             session.add(s)
     session.commit()
