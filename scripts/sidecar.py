@@ -1670,9 +1670,14 @@ def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
 # --- Main Loop ---
 
 
-def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Run collection for all enabled providers."""
-    all_metrics = []
+def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """Run collection for all enabled providers.
+
+    Returns (metrics, error_count) where error_count is the number of providers
+    that raised an exception during collection.
+    """
+    all_metrics: list[dict[str, Any]] = []
+    error_count = 0
     enabled_providers = config.get("providers", ["all"])
 
     registry_providers = __REGISTRY__.get("providers", {})
@@ -1689,8 +1694,9 @@ def run_collection(config: dict[str, Any]) -> list[dict[str, Any]]:
                 all_metrics.extend(metrics)
             except Exception as e:
                 logging.error(f"  [{provider_id}] error: {e}")
+                error_count += 1
 
-    return all_metrics
+    return all_metrics, error_count
 
 
 class DaemonRunner:
@@ -1715,6 +1721,7 @@ class DaemonRunner:
         self._status_reason: str = "starting"  # "starting"|"success"|"queued"|"error"|"paused"
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._trigger_event = threading.Event()  # set to skip the inter-cycle sleep
         self._paused = False
         self._cycle_running = False  # guard against concurrent run_once() calls
         self._thread: threading.Thread | None = None
@@ -1769,13 +1776,19 @@ class DaemonRunner:
 
         try:
             logging.info("Starting collection cycle...")
-            metrics = run_collection(self._config)
+            metrics, collection_errors = run_collection(self._config)
+
+            os_platform = f"{platform.system()}/{platform.release()}"
+            sidecar_version = self._config.get("sidecar_version", "unknown")
 
             if metrics:
                 payload = {
                     "provider": f"sidecar-{get_hostname()}",
                     "metrics": metrics,
                     "sidecar_id": get_hostname(),
+                    "sidecar_version": sidecar_version,
+                    "os_platform": os_platform,
+                    "collection_errors": collection_errors,
                 }
 
                 # Try to flush queue first
@@ -1802,6 +1815,12 @@ class DaemonRunner:
                         self.last_error = None
                         self._status_reason = "success"
                     self._fire_status_change()
+                    # Server may request an immediate follow-up cycle (remote trigger)
+                    if isinstance(result, dict) and result.get("trigger"):
+                        logging.info(
+                            "Remote trigger received — scheduling immediate follow-up cycle"
+                        )
+                        self._trigger_event.set()
                     return True
                 # Check for clock skew error (400 timestamp_expired)
                 if (
@@ -1826,6 +1845,27 @@ class DaemonRunner:
                 self._fire_status_change()
                 return False
             logging.info("No metrics collected in this cycle")
+            # Send a heartbeat payload so the server updates last_seen and version info
+            heartbeat = {
+                "provider": f"sidecar-{get_hostname()}",
+                "metrics": [],
+                "sidecar_id": get_hostname(),
+                "sidecar_version": sidecar_version,
+                "os_platform": os_platform,
+                "collection_errors": collection_errors,
+            }
+            hb_success, hb_result, _ = http_post_signed_with_retry(
+                f"{api_url.rstrip('/')}/api/v1/fleet/ingest",
+                heartbeat,
+                api_key,
+                max_attempts=1,
+                stop_event=self._stop_event,
+            )
+            if hb_success and isinstance(hb_result, dict) and hb_result.get("trigger"):
+                logging.info(
+                    "Remote trigger received via heartbeat — scheduling immediate follow-up cycle"
+                )
+                self._trigger_event.set()
             with self._lock:
                 self.last_cycle_at = time.time()
                 self.last_metrics_count = 0
@@ -1887,6 +1927,16 @@ class DaemonRunner:
         if self.on_status_change is not None:
             self.on_status_change(self.status)
 
+    def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep for up to *seconds*, but wake immediately on stop or trigger."""
+        deadline = time.time() + seconds
+        while not self._stop_event.is_set() and not self._trigger_event.is_set():
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            self._stop_event.wait(timeout=min(remaining, 1.0))
+        self._trigger_event.clear()
+
     def _loop(self) -> None:
         """Background thread: run collection cycles until stopped."""
         while not self._stop_event.is_set():
@@ -1900,8 +1950,8 @@ class DaemonRunner:
             if self._stop_event.is_set():
                 break
 
-            # Wait for the next interval, waking early if stopped
-            self._stop_event.wait(timeout=self._interval)
+            # Wait for the next interval, waking early on stop or remote trigger
+            self._interruptible_sleep(self._interval)
 
         logging.info("DaemonRunner loop exited.")
 

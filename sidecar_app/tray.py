@@ -119,6 +119,7 @@ class SidecarTray:
         self._paused = False
         self._update_available = False
         self._after_start: Callable[[], None] | None = None
+        self._on_reload_config: Callable[[], None] | None = None
         # Queue for icon/title updates from background threads; drained on the
         # pystray thread to avoid AppKit/Win32 cross-thread mutation.
         self._update_queue: queue.Queue[str] = queue.Queue()
@@ -174,11 +175,12 @@ class SidecarTray:
             self._icon.update_menu()
 
     def _build_title(self, status: str) -> str:
-        """Return the tray tooltip title, appending an update notice when available."""
+        """Return the tray tooltip title with live stats and optional update notice."""
         base = _STATUS_TITLE.get(status, "Runway Sidecar")
         if self._update_available:
-            return f"{base} (update available)"
-        return base
+            base = f"{base} (update available)"
+        stats = self._daemon.stats_summary
+        return f"{base}\n{stats}"
 
     def _update_icon(self, status: str) -> None:
         """Enqueue a status change; the drain thread applies it on the pystray thread."""
@@ -213,6 +215,10 @@ class SidecarTray:
                 self._daemon.pause()
                 self._paused = True
             icon.update_menu()
+
+        def on_reload_config(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            if self._on_reload_config is not None:
+                self._on_reload_config()
 
         def on_edit_config(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             _open_in_editor(self._config_path)
@@ -257,6 +263,7 @@ class SidecarTray:
                 checked=lambda item: is_login_item_installed(),  # noqa: ARG005
             ),
             pystray.MenuItem("Edit Config…", on_edit_config),
+            pystray.MenuItem("Reload Config", on_reload_config),
             pystray.MenuItem("View Logs…", on_view_logs),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check for Updates…", on_check_updates),

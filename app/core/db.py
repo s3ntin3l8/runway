@@ -56,6 +56,9 @@ def _run_migrations():
         "ALTER TABLE provider_configs ADD COLUMN session_cookie_encrypted TEXT",
         # SystemConfig gained dashboard_layout_json (user-reorder persistence)
         "ALTER TABLE system_config ADD COLUMN dashboard_layout_json TEXT",
+        # SidecarRegistry: sidecar app version + host OS reported on each ingest
+        "ALTER TABLE sidecar_registry ADD COLUMN sidecar_version TEXT",
+        "ALTER TABLE sidecar_registry ADD COLUMN os_platform TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:

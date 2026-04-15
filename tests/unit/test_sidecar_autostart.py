@@ -192,19 +192,78 @@ class TestWindowsAutostart:
 
 
 # ---------------------------------------------------------------------------
-# Unsupported platform
+# Linux tests
+# ---------------------------------------------------------------------------
+
+
+class TestLinuxAutostart:
+    """Tests for the Linux XDG autostart .desktop file path."""
+
+    def _get_mod(self) -> types.ModuleType:
+        return _reload_autostart("Linux")
+
+    def test_is_installed_when_desktop_file_exists(self) -> None:
+        mod = self._get_mod()
+        with patch("pathlib.Path.exists", return_value=True):
+            assert mod.is_login_item_installed() is True
+
+    def test_is_not_installed_when_desktop_file_absent(self) -> None:
+        mod = self._get_mod()
+        with patch("pathlib.Path.exists", return_value=False):
+            assert mod.is_login_item_installed() is False
+
+    def test_install_creates_desktop_file(self) -> None:
+        mod = self._get_mod()
+        with (
+            patch("pathlib.Path.mkdir") as mock_mkdir,
+            patch("pathlib.Path.write_text") as mock_write,
+            patch.object(sys, "executable", "/usr/bin/runway-sidecar"),
+        ):
+            mod.install_login_item()
+
+        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        mock_write.assert_called_once()
+        written_content: str = mock_write.call_args[0][0]
+        assert "/usr/bin/runway-sidecar" in written_content
+        assert "[Desktop Entry]" in written_content
+        assert "Type=Application" in written_content
+        assert "X-GNOME-Autostart-enabled=true" in written_content
+
+    def test_remove_deletes_desktop_file(self) -> None:
+        mod = self._get_mod()
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.unlink") as mock_unlink,
+        ):
+            mod.remove_login_item()
+
+        mock_unlink.assert_called_once()
+
+    def test_remove_is_idempotent_when_not_installed(self) -> None:
+        mod = self._get_mod()
+        with (
+            patch("pathlib.Path.exists", return_value=False),
+            patch("pathlib.Path.unlink") as mock_unlink,
+        ):
+            mod.remove_login_item()  # must not raise
+
+        mock_unlink.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Unsupported platform (FreeBSD, etc.)
 # ---------------------------------------------------------------------------
 
 
 class TestUnsupportedPlatform:
     def test_is_installed_returns_false(self) -> None:
-        mod = _reload_autostart("Linux")
+        mod = _reload_autostart("FreeBSD")
         assert mod.is_login_item_installed() is False
 
     def test_install_is_noop(self) -> None:
-        mod = _reload_autostart("Linux")
+        mod = _reload_autostart("FreeBSD")
         mod.install_login_item()  # must not raise
 
     def test_remove_is_noop(self) -> None:
-        mod = _reload_autostart("Linux")
+        mod = _reload_autostart("FreeBSD")
         mod.remove_login_item()  # must not raise

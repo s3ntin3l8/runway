@@ -5,9 +5,9 @@ Provides three idempotent public functions:
   - install_login_item() -> None
   - remove_login_item() -> None
 
-macOS: LaunchAgent plist at ~/Library/LaunchAgents/com.runway.sidecar.plist
+macOS:   LaunchAgent plist at ~/Library/LaunchAgents/com.runway.sidecar.plist
 Windows: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run registry key
-Other platforms: no-ops (install/remove) / always returns False (is_installed)
+Linux:   XDG autostart .desktop at ~/.config/autostart/runway-sidecar.desktop
 """
 
 import pathlib
@@ -146,6 +146,48 @@ def _windows_remove() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Linux constants
+# ---------------------------------------------------------------------------
+
+_LINUX_DESKTOP_PATH = pathlib.Path.home() / ".config" / "autostart" / "runway-sidecar.desktop"
+
+_DESKTOP_TEMPLATE = """\
+[Desktop Entry]
+Type=Application
+Name=Runway Sidecar
+Comment=Runway AI usage tracker sidecar
+Exec={executable_path}
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+"""
+
+
+# ---------------------------------------------------------------------------
+# Linux implementation
+# ---------------------------------------------------------------------------
+
+
+def _linux_is_installed() -> bool:
+    return _LINUX_DESKTOP_PATH.exists()
+
+
+def _linux_install() -> None:
+    """Write the XDG autostart .desktop file."""
+    _LINUX_DESKTOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _LINUX_DESKTOP_PATH.write_text(
+        _DESKTOP_TEMPLATE.format(executable_path=sys.executable),
+        encoding="utf-8",
+    )
+
+
+def _linux_remove() -> None:
+    """Remove the XDG autostart .desktop file if present."""
+    if _LINUX_DESKTOP_PATH.exists():
+        _LINUX_DESKTOP_PATH.unlink()
+
+
+# ---------------------------------------------------------------------------
 # Public API — platform dispatch
 # ---------------------------------------------------------------------------
 
@@ -156,6 +198,8 @@ def is_login_item_installed() -> bool:
         return _macos_is_installed()
     if _SYSTEM == "Windows":
         return _windows_is_installed()
+    if _SYSTEM == "Linux":
+        return _linux_is_installed()
     return False  # unsupported platform
 
 
@@ -165,7 +209,8 @@ def install_login_item() -> None:
         _macos_install()
     elif _SYSTEM == "Windows":
         _windows_install()
-    # else: no-op on unsupported platforms
+    elif _SYSTEM == "Linux":
+        _linux_install()
 
 
 def remove_login_item() -> None:
@@ -174,4 +219,5 @@ def remove_login_item() -> None:
         _macos_remove()
     elif _SYSTEM == "Windows":
         _windows_remove()
-    # else: no-op on unsupported platforms
+    elif _SYSTEM == "Linux":
+        _linux_remove()

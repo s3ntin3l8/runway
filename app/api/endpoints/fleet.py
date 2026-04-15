@@ -155,7 +155,14 @@ async def ingest_metrics(
     if request.sidecar_id:
         source_ip = raw_request.client.host if raw_request.client else "unknown"
         try:
-            fleet_registry.upsert_sidecar(request.sidecar_id, source_ip, session)
+            fleet_registry.upsert_sidecar(
+                request.sidecar_id,
+                source_ip,
+                session,
+                sidecar_version=request.sidecar_version,
+                os_platform=request.os_platform,
+                collection_errors=request.collection_errors,
+            )
         except Exception as _e:
             logger.warning(f"Fleet registry upsert failed for '{request.sidecar_id}': {_e}")
 
@@ -175,11 +182,17 @@ async def ingest_metrics(
         await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
         logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
 
+    # Check if a remote trigger is pending for this sidecar
+    trigger = (
+        fleet_registry.consume_pending_trigger(request.sidecar_id) if request.sidecar_id else False
+    )
+
     return {
         "status": "ok",
         "provider": request.provider,
         "tokens_received": tokens_received_count,
         "metrics_stored": len(local_cards),
+        "trigger": trigger,
     }
 
 
@@ -239,3 +252,23 @@ async def delete_sidecar(
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     return {"status": "deleted", "sidecar_id": sidecar_id}
+
+
+@router.post("/sidecars/{sidecar_id}/trigger")
+@limiter.limit("10/minute")
+async def trigger_sidecar_collect(
+    request: Request,
+    sidecar_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Request an immediate collection cycle on the named sidecar.
+
+    The trigger is delivered the next time the sidecar posts an ingest request.
+    Returns 404 if the sidecar is not registered.
+    """
+    row = session.get(SidecarRegistry, sidecar_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    fleet_registry.set_pending_trigger(sidecar_id)
+    return {"status": "trigger_queued", "sidecar_id": sidecar_id}

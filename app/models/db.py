@@ -60,6 +60,8 @@ class SidecarRegistry(SQLModel, table=True):
     last_ip: str | None = None
     error_count: int = Field(default=0)
     ingest_count: int = Field(default=0)
+    sidecar_version: str | None = None  # App version reported by the sidecar
+    os_platform: str | None = None  # OS/platform string (e.g. "Windows/10", "Darwin/24")
 
     @property
     def tags(self) -> list[str]:

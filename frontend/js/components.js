@@ -1000,6 +1000,12 @@ export function buildFleetView(sidecars) {
         const displayName = s.custom_name || s.hostname || s.sidecar_id;
         const tags = (s.tags || []).map(t => `<span class="tag-pill">${escapeHTML(t)}</span>`).join('');
         const lastSeenStr = lastSeen ? lastSeen.toLocaleString() : '—';
+        const staleBanner = s.stale
+            ? `<div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px]">
+                   <span class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
+                   No check-in for over ${s.stale_threshold_minutes ?? 60} minutes
+               </div>`
+            : '';
 
         return `
         <div class="glass-panel rounded-2xl p-5 flex flex-col gap-3" data-sidecar="${escapeHTML(s.sidecar_id)}">
@@ -1013,12 +1019,20 @@ export function buildFleetView(sidecars) {
                         <span class="text-[10px] text-zinc-600 mono truncate">${escapeHTML(s.sidecar_id)}</span>
                     </div>
                 </div>
-                <button onclick="window.deleteSidecar('${escapeHTMLAttr(s.sidecar_id)}')"
-                        class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
-                        title="Remove sidecar">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
-                </button>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button onclick="window.triggerSidecarCollect('${escapeHTMLAttr(s.sidecar_id)}')"
+                            class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-green-400 hover:bg-green-500/10 transition-all"
+                            title="Run Now — trigger immediate collection">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    </button>
+                    <button onclick="window.deleteSidecar('${escapeHTMLAttr(s.sidecar_id)}')"
+                            class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                            title="Remove sidecar">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
+                    </button>
+                </div>
             </div>
+            ${staleBanner}
             <div class="flex flex-wrap gap-1 items-center">
                 ${tags}
                 <button onclick="window.addSidecarTag('${escapeHTMLAttr(s.sidecar_id)}')"
@@ -1029,6 +1043,8 @@ export function buildFleetView(sidecars) {
                 <div><span class="text-zinc-600">INGESTS</span><br/>${s.ingest_count ?? 0}</div>
                 <div><span class="text-zinc-600">IP</span><br/>${escapeHTML(s.last_ip || '—')}</div>
                 <div><span class="text-zinc-600">ERRORS</span><br/>${s.error_count ?? 0}</div>
+                <div><span class="text-zinc-600">VERSION</span><br/>${escapeHTML(s.sidecar_version || '—')}</div>
+                <div><span class="text-zinc-600">OS</span><br/>${escapeHTML(s.os_platform || '—')}</div>
             </div>
         </div>`;
     }).join('');
