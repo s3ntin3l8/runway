@@ -1,8 +1,10 @@
 """pystray-based system tray icon for the Runway sidecar."""
 
 import pathlib
+import queue
 import subprocess
 import sys
+import threading
 import webbrowser
 from collections.abc import Callable
 
@@ -68,6 +70,9 @@ class SidecarTray:
         self._paused = False
         self._update_available = False
         self._after_start: Callable[[], None] | None = None
+        # Queue for icon/title updates from background threads; drained on the
+        # pystray thread to avoid AppKit/Win32 cross-thread mutation.
+        self._update_queue: queue.Queue[str] = queue.Queue()
 
     # ------------------------------------------------------------------
     # Public
@@ -99,6 +104,7 @@ class SidecarTray:
         )
         print("[DIAG] pystray.Icon created, calling run()...", flush=True)
         self._icon.run(setup=self._on_tray_ready)
+        self._icon = None  # signal _drain_updates to exit
         print("[DIAG] pystray.Icon.run() returned (tray exited)", flush=True)
 
     def _on_tray_ready(self, icon: pystray.Icon) -> None:
@@ -108,6 +114,24 @@ class SidecarTray:
         print(f"[DIAG] _on_tray_ready: icon.visible after={icon.visible}", flush=True)
         if self._after_start:
             self._after_start()
+        # Drain any status updates that arrived before the icon was ready, then
+        # keep draining on a background thread so all pystray mutations happen
+        # from the pystray-owned thread (required by AppKit / Win32).
+        threading.Thread(target=self._drain_updates, daemon=True).start()
+
+    def _drain_updates(self) -> None:
+        """Consume status updates from the queue and apply them to the icon."""
+        while self._icon is not None:
+            try:
+                status = self._update_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            if self._icon is None:
+                break
+            icon_name = _STATUS_ICON.get(status, "icon_warn")
+            self._icon.icon = _load_image(icon_name)
+            self._icon.title = self._build_title(status)
+            self._icon.update_menu()
 
     def _build_title(self, status: str) -> str:
         """Return the tray tooltip title, appending an update notice when available."""
@@ -117,13 +141,10 @@ class SidecarTray:
         return base
 
     def _update_icon(self, status: str) -> None:
-        """Swap the tray icon image and title to reflect the new status."""
+        """Enqueue a status change; the drain thread applies it on the pystray thread."""
         if self._icon is None:
             return
-        icon_name = _STATUS_ICON.get(status, "icon_warn")
-        self._icon.icon = _load_image(icon_name)
-        self._icon.title = self._build_title(status)
-        self._icon.update_menu()
+        self._update_queue.put(status)
 
     # ------------------------------------------------------------------
     # Menu helpers

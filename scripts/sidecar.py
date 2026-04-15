@@ -577,7 +577,7 @@ def queue_flush(api_url: str, api_key: str) -> int:
                     entry = json.loads(line)
                     payload = entry.get("payload", {})
 
-                    success, _ = http_post_signed_with_retry(target_url, payload, api_key)
+                    success, _, _ = http_post_signed_with_retry(target_url, payload, api_key)
 
                     if success:
                         count += 1
@@ -652,8 +652,13 @@ def http_post_signed_with_retry(
     api_key: str,
     max_attempts: int = 3,
     backoff_seconds: int = 5,
+    stop_event: threading.Event | None = None,
 ) -> tuple[bool, Any, int]:
-    """POST with exponential backoff retry."""
+    """POST with exponential backoff retry.
+
+    If *stop_event* is provided the inter-attempt sleep is interruptible: the
+    function returns early with a failure result as soon as the event is set.
+    """
     last_error = None
     last_code = 500
 
@@ -674,7 +679,12 @@ def http_post_signed_with_retry(
         if attempt < max_attempts - 1:
             wait = backoff_seconds * (2**attempt)
             logging.warning(f"Attempt {attempt + 1} failed, retrying in {wait}s...")
-            time.sleep(wait)
+            if stop_event is not None:
+                if stop_event.wait(timeout=wait):
+                    # Stop was requested during the backoff sleep
+                    return False, last_error, last_code
+            else:
+                time.sleep(wait)
 
     return False, last_error, last_code
 
@@ -1518,6 +1528,7 @@ class DaemonRunner:
                     api_key,
                     max_attempts=self._config.get("retry_attempts", 3),
                     backoff_seconds=self._config.get("retry_backoff_seconds", 5),
+                    stop_event=self._stop_event,
                 )
 
                 with self._lock:
@@ -1582,7 +1593,9 @@ class DaemonRunner:
         """Signal the loop to exit and join the background thread."""
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join()
+            self._thread.join(timeout=30)
+            if self._thread.is_alive():
+                logging.warning("DaemonRunner thread did not exit within 30s")
             self._thread = None
 
     def pause(self) -> None:

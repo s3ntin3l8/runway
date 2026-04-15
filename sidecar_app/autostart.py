@@ -109,7 +109,7 @@ def _windows_is_installed() -> bool:
         ) as key:
             winreg.QueryValueEx(key, _WIN_REG_KEY)  # type: ignore[name-defined]
             return True
-    except FileNotFoundError:
+    except OSError:
         return False
 
 
