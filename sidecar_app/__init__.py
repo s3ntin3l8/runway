@@ -13,4 +13,5 @@ def _read_version() -> str:
     except Exception:
         return "0.0.0"
 
+
 __version__ = _read_version()
