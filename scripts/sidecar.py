@@ -234,8 +234,10 @@ __REGISTRY__ = {
                 {
                     "type": "file_json_data",
                     "paths": [
-                        "~/.antigravity/state/quota.json",
                         "{{DATA_DIR:antigravity}}/state/quota.json",
+                        # Linux: ~/.local/share/antigravity/state/quota.json
+                        # macOS: ~/Library/Application Support/antigravity/state/quota.json
+                        # Windows: path unconfirmed — LSP probing is primary on Windows
                     ],
                 }
             ],
@@ -1376,7 +1378,7 @@ class GenericCollector:
                                 )
                                 results.append(
                                     {
-                                        "service_name": f"AG: {m_name}",
+                                        "service_name": m_name,
                                         "icon": icon,
                                         "remaining": f"{rem:.1f}%",
                                         "unit": "remaining",
@@ -1385,6 +1387,14 @@ class GenericCollector:
                                         "pace": "Stable",
                                         "detail": f"{m_name} [Sidecar]",
                                         "data_source": "local",
+                                        "provider_id": "antigravity",
+                                        "account_label": None,
+                                        "model_id": m_name,
+                                        "used_value": round(100.0 - rem, 4),
+                                        "limit_value": 100.0,
+                                        "unit_type": "percent",
+                                        "window_type": "session",
+                                        "reset_at": reset_at.isoformat() if reset_at else None,
                                         "metadata": {
                                             "name": m_name,
                                             "remaining_percent": rem,
@@ -1639,18 +1649,34 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         if rem_frac is None:
             continue
         label = cfg.get("label", "Model")
+        model_id = cfg.get("modelOrAlias", label)
         rem_pct = float(rem_frac) * 100
+        reset_ts = quota.get("resetTime")
+        reset_dt = (
+            datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
+            if reset_ts is not None
+            else None
+        )
+        reset_at = reset_dt.isoformat() if reset_dt else None
         results.append(
             {
-                "service_name": f"AG: {label}",
+                "service_name": label,
                 "icon": icon,
                 "remaining": f"{rem_pct:.1f}%",
                 "unit": "capacity",
-                "reset": "Dynamic",
+                "reset": human_delta(reset_dt),
                 "pace": "Continuous",
                 "health": "good" if rem_pct > 30 else "warning",
                 "detail": f"{plan} | {email} [LSP]",
                 "data_source": "lsp",
+                "provider_id": "antigravity",
+                "account_label": email or None,
+                "model_id": model_id,
+                "used_value": round(100.0 - rem_pct, 4),
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "window_type": "session",
+                "reset_at": reset_at,
             }
         )
 
@@ -1665,7 +1691,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
             health = "good"
         results.append(
             {
-                "service_name": f"AG: {display}",
+                "service_name": display,
                 "icon": "💰",
                 "remaining": amount,
                 "unit": "credits",
@@ -1674,6 +1700,14 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "health": health,
                 "detail": f"{display} | {email} [LSP]",
                 "data_source": "lsp",
+                "provider_id": "antigravity",
+                "account_label": email or None,
+                "model_id": None,
+                "used_value": None,
+                "limit_value": None,
+                "unit_type": "credits",
+                "window_type": "session",
+                "reset_at": None,
             }
         )
     return results
