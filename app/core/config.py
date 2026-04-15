@@ -159,6 +159,9 @@ class Settings(BaseSettings):
         origins = os.getenv("CORS_ORIGINS")
         if origins:
             return [o.strip() for o in origins.split(",")]
+        if self.APP_HOST not in ("127.0.0.1", "localhost"):
+            # Bound to all interfaces — allow all origins
+            return ["*"]
         return [
             f"http://localhost:{self.APP_PORT}",
             f"http://127.0.0.1:{self.APP_PORT}",
