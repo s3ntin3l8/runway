@@ -396,6 +396,33 @@ def test_ag_parse_lsp_response_model_card():
     assert card["reset_at"] is not None
 
 
+def test_ag_parse_lsp_response_survives_bad_reset_time():
+    """_ag_parse_lsp_response returns cards even when resetTime is not numeric."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "claude-sonnet-4-5",
+                        "modelOrAlias": "claude-sonnet-4-5-20251001",
+                        "quotaInfo": {"remainingFraction": 0.6, "resetTime": "not-a-number"},
+                    }
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 1, "Should return 1 card even with bad resetTime"
+    assert cards[0]["reset_at"] is None
+    assert cards[0]["provider_id"] == "antigravity"
+
+
 def test_ag_parse_lsp_response_credit_card():
     """Sidecar _ag_parse_lsp_response produces correct fields for credit card."""
     mod = _load_sidecar_module()
