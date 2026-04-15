@@ -115,7 +115,11 @@ __REGISTRY__ = {
                 },
                 {
                     "type": "file",
-                    "paths": ["~/.config/gh/hosts.yml", "{{CONFIG_DIR:gh}}/hosts.yml"],
+                    "paths": [
+                        "~/.config/gh/hosts.yml",
+                        "{{CONFIG_DIR:gh}}/hosts.yml",
+                        "{{CONFIG_DIR:GitHub CLI}}/hosts.yml",  # Windows: %APPDATA%\GitHub CLI\
+                    ],
                     "format": "yaml",
                     "mapping": {"oauth_token": "api_key"},
                 },
