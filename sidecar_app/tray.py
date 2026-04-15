@@ -120,6 +120,7 @@ class SidecarTray:
         self._update_available = False
         self._after_start: Callable[[], None] | None = None
         self._on_reload_config: Callable[[], None] | None = None
+        self._settings_server: object | None = None  # SettingsServer, set by __main__
         # Queue for icon/title updates from background threads; drained on the
         # pystray thread to avoid AppKit/Win32 cross-thread mutation.
         self._update_queue: queue.Queue[str] = queue.Queue()
@@ -201,6 +202,10 @@ class SidecarTray:
         def pause_resume_text(item: pystray.MenuItem) -> str:
             return "Resume" if self._paused else "Pause"
 
+        def on_open_settings(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+            if self._settings_server is not None:
+                self._settings_server.open()  # type: ignore[attr-defined]
+
         def on_open_dashboard(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             webbrowser.open(self._config.get("api_url", "http://localhost:8765"))
 
@@ -253,6 +258,7 @@ class SidecarTray:
         return pystray.Menu(
             pystray.MenuItem(title_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings…", on_open_settings),
             pystray.MenuItem("Open Dashboard", on_open_dashboard),
             pystray.MenuItem("Run Now", on_run_now),
             pystray.MenuItem(pause_resume_text, on_pause_resume),
