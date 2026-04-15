@@ -22,7 +22,10 @@ install: install-hooks ## Set up venv, install Python and Node dependencies
 	npm ci
 
 dev: ## Run development server (hot reload, port 8765)
-	$(VENV)/bin/uvicorn app.main:app --reload --port 8765
+	set -a; [ -f .env ] && . .env; set +a; \
+	$(VENV)/bin/uvicorn app.main:app --reload \
+	  --host "$${APP_HOST:-127.0.0.1}" \
+	  --port "$${APP_PORT:-8765}"
 
 run: ## Run production server
 	$(PYTHON) -m app.main

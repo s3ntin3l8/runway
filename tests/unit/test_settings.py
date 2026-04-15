@@ -66,14 +66,26 @@ def test_cors_origins_parses_env_var():
 
 
 def test_cors_origins_default_uses_app_port():
-    """When CORS_ORIGINS env var not set, defaults use APP_PORT."""
+    """When CORS_ORIGINS env var not set and host is localhost, defaults use APP_PORT."""
     with pytest.MonkeyPatch().context() as mp:
         mp.delenv("CORS_ORIGINS", raising=False)
+        mp.setenv("APP_HOST", "127.0.0.1")
         mp.setenv("APP_PORT", "9999")
         from app.core.config import Settings
 
         s = Settings()
         assert "http://localhost:9999" in s.CORS_ORIGINS
+
+
+def test_cors_origins_wildcard_when_bound_to_all_interfaces():
+    """When APP_HOST=0.0.0.0 and CORS_ORIGINS not set, allow all origins."""
+    with pytest.MonkeyPatch().context() as mp:
+        mp.delenv("CORS_ORIGINS", raising=False)
+        mp.setenv("APP_HOST", "0.0.0.0")
+        from app.core.config import Settings
+
+        s = Settings()
+        assert s.CORS_ORIGINS == ["*"]
 
 
 def test_log_format_defaults_to_plain():

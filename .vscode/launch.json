@@ -33,13 +33,7 @@
             "name": "FastAPI: Run App",
             "type": "debugpy",
             "request": "launch",
-            "module": "uvicorn",
-            "args": [
-                "app.main:app",
-                "--reload",
-                "--port",
-                "8765"
-            ],
+            "module": "app.main",
             "jinja": true,
             "justMyCode": true,
             "envFile": "${workspaceFolder}/.env"
