@@ -97,7 +97,7 @@ class SidecarTray:
             title=title,
             menu=self._build_menu(),
         )
-        print(f"[DIAG] pystray.Icon created, calling run()...", flush=True)
+        print("[DIAG] pystray.Icon created, calling run()...", flush=True)
         self._icon.run(setup=self._on_tray_ready)
         print("[DIAG] pystray.Icon.run() returned (tray exited)", flush=True)
 
