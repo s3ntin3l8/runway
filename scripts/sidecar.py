@@ -1373,7 +1373,7 @@ class GenericCollector:
                                 reset_ts = usage.get("resets_at")
                                 reset_at = (
                                     datetime.datetime.fromtimestamp(reset_ts, tz=datetime.UTC)
-                                    if reset_ts
+                                    if reset_ts is not None
                                     else None
                                 )
                                 results.append(
@@ -1652,11 +1652,14 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         model_id = cfg.get("modelOrAlias", label)
         rem_pct = float(rem_frac) * 100
         reset_ts = quota.get("resetTime")
-        reset_dt = (
-            datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
-            if reset_ts is not None
-            else None
-        )
+        try:
+            reset_dt = (
+                datetime.datetime.fromtimestamp(float(reset_ts), tz=datetime.UTC)
+                if reset_ts is not None
+                else None
+            )
+        except Exception:
+            reset_dt = None
         reset_at = reset_dt.isoformat() if reset_dt else None
         results.append(
             {
@@ -1688,7 +1691,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         try:
             health = "good" if int(amount) > 100 else "warning"
         except ValueError:
-            health = "good"
+            health = "warning"
         results.append(
             {
                 "service_name": display,
