@@ -344,3 +344,82 @@ class TestDaemonRunnerOnStatusChange:
             runner.run_once()
 
         assert "warn" in statuses
+
+
+def _load_sidecar_module():
+    """Load scripts/sidecar.py as a module for testing."""
+    import importlib.util
+    import os
+
+    spec = importlib.util.spec_from_file_location(
+        "sidecar_mod",
+        os.path.join(os.path.dirname(__file__), "../../scripts/sidecar.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_ag_parse_lsp_response_model_card():
+    """Sidecar _ag_parse_lsp_response produces correct fields for model quota card."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    {
+                        "label": "claude-sonnet-4-5",
+                        "modelOrAlias": "claude-sonnet-4-5-20251001",
+                        "quotaInfo": {"remainingFraction": 0.6, "resetTime": 9999999999},
+                    }
+                ]
+            },
+            "userTier": {"availableCredits": []},
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["service_name"] == "claude-sonnet-4-5"
+    assert "AG:" not in card["service_name"]
+    assert card["provider_id"] == "antigravity"
+    assert card["account_label"] == "user@test.com"
+    assert card["model_id"] == "claude-sonnet-4-5-20251001"
+    assert card["used_value"] == pytest.approx(40.0, abs=0.1)
+    assert card["limit_value"] == 100.0
+    assert card["unit_type"] == "percent"
+    assert card["window_type"] == "session"
+    assert card["reset_at"] is not None
+
+
+def test_ag_parse_lsp_response_credit_card():
+    """Sidecar _ag_parse_lsp_response produces correct fields for credit card."""
+    mod = _load_sidecar_module()
+
+    data = {
+        "userStatus": {
+            "email": "user@test.com",
+            "planStatus": {"planInfo": {"planName": "Pro"}},
+            "cascadeModelConfigData": {"clientModelConfigs": []},
+            "userTier": {
+                "availableCredits": [{"creditType": "ANTHROPIC_CREDIT", "creditAmount": "500"}]
+            },
+        }
+    }
+
+    cards = mod._ag_parse_lsp_response(data, "🛸")
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["service_name"] == "Anthropic Credits"
+    assert card["provider_id"] == "antigravity"
+    assert card["account_label"] == "user@test.com"
+    assert card["used_value"] is None
+    assert card["limit_value"] is None
+    assert card["unit_type"] == "credits"
+    assert card["remaining"] == "500"
+    assert card["model_id"] is None
+    assert card["reset_at"] is None
