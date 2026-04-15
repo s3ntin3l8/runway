@@ -73,7 +73,7 @@ body {
   padding: 2.5rem 1rem 4rem;
 }
 
-.page { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 1.25rem; }
+.page { width: 100%; max-width: 600px; display: flex; flex-direction: column; gap: 1.25rem; }
 
 .header { display: flex; align-items: center; gap: 0.75rem; padding: 0 0.25rem; }
 .header-hex { font-size: 1.5rem; color: #a78bfa; }
