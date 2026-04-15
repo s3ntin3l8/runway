@@ -332,8 +332,8 @@ class ExternalMetricService:
                             None,
                         )
                         for card in sidecar_ag:
+                            card = card.copy()
                             if not card.get("account_label") and known_label:
-                                card = card.copy()
                                 card["account_label"] = known_label
                             antigravity_candidates.append((ts, time_str, card))
 
