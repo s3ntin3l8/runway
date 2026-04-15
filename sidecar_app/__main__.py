@@ -1,8 +1,11 @@
 """Bootstrap entry point for the Runway sidecar desktop app."""
 
+import json
 import logging
+import socket
 import threading
 import traceback
+import webbrowser
 
 from sidecar_app import __version__
 from sidecar_app.config import (
@@ -13,7 +16,8 @@ from sidecar_app.config import (
     write_template_config,
 )
 from sidecar_app.daemon import TrayDaemon
-from sidecar_app.tray import SidecarTray
+from sidecar_app.settings_server import SettingsServer
+from sidecar_app.tray import SidecarTray, _open_in_editor
 from sidecar_app.updater import UpdateChecker
 
 _FALLBACK_CONFIG: dict = {
@@ -101,12 +105,52 @@ def main() -> None:
     tray._on_reload_config = _manual_reload
     watch_config(config_path, _on_config_change, _watcher_stop)
 
-    # 8. Start daemon only when credentials are present
+    # 8. Start settings server (opens in browser from tray menu)
+    from sidecar_app.config import get_log_path
+
+    def _settings_get_status() -> dict:
+        return {
+            "status": daemon.status,
+            "stats": daemon.stats_summary,
+            "version": __version__,
+            "sidecar_id": socket.gethostname(),
+        }
+
+    def _settings_save_config(new_config: dict) -> None:
+        config_path.write_text(
+            json.dumps(
+                {k: v for k, v in new_config.items() if not k.startswith("sidecar_")},
+                indent=2,
+            )
+        )
+        _on_config_change(new_config)
+
+    def _open_dashboard() -> None:
+        webbrowser.open(config.get("api_url", "http://localhost:8765"))
+
+    def _open_logs() -> None:
+        _open_in_editor(get_log_path())
+
+    def _open_config_file() -> None:
+        _open_in_editor(config_path)
+
+    settings_server = SettingsServer(
+        get_config=lambda: config,
+        get_status=_settings_get_status,
+        save_config=_settings_save_config,
+        open_dashboard=_open_dashboard,
+        open_logs=_open_logs,
+        open_config=_open_config_file,
+    )
+    settings_server.start()
+    tray._settings_server = settings_server
+
+    # 9. Start daemon only when credentials are present
     api_key = config.get("api_key", "")
     if api_key and api_key != "REPLACE_ME":
         daemon.start()
 
-    # 9. Run tray — blocks main thread
+    # 10. Run tray — blocks main thread
     if needs_setup_notification:
 
         def notify_setup() -> None:
@@ -123,9 +167,10 @@ def main() -> None:
     else:
         tray.run()
 
-    # 10. Tray exited — stop background threads
+    # 11. Tray exited — stop background threads
     checker.stop()
     _watcher_stop.set()
+    settings_server.stop()
 
 
 if __name__ == "__main__":
