@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.12.2...v0.13.0) (2026-04-19)
+
+
+### Features
+
+* **antigravity:** enrich card fields with provider_id, account_label, model_id, used_value, reset_at ([c57ce6a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/c57ce6a31e883cd6ed928ba972accf6574fd5602))
+* **config, docs:** Unify config dir to 'runway-tracker' and enhance collector docs ([6fd2c10](https://github.com/s3ntin3l8/ai-usage-tracker/commit/6fd2c10343b480ed483bdc21ee66d729dd78e639))
+* **external_metrics:** deduplicate antigravity cards across sidecars, keep latest per account ([d4e4110](https://github.com/s3ntin3l8/ai-usage-tracker/commit/d4e4110d577b993b8e6221e988df28646f221ea0))
+* **sidecar:** add circle outline to macOS menubar icon ([d77fb3a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/d77fb3a426d20f70fc627f4eaddccadfbe12df6c))
+* **sidecar:** browser-based settings UI ([85857c5](https://github.com/s3ntin3l8/ai-usage-tracker/commit/85857c519ae5fac504e23dc842038704f3ddc06d))
+* **sidecar:** clean white template icon for macOS menubar ([c4a1e8c](https://github.com/s3ntin3l8/ai-usage-tracker/commit/c4a1e8c5f7d73bcf4c3fe7b7db9dc9f6af70c2cd))
+* **sidecar:** detailed per-provider logging + antigravity LSP probing ([7ab206a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/7ab206aa045a82cd2acd902c4cb814edf1196e3f))
+* **sidecar:** enrich antigravity cards with structured fields, fix file paths ([7dc98e8](https://github.com/s3ntin3l8/ai-usage-tracker/commit/7dc98e821742f2e2aa06a082b0346b5f18877f99))
+* **sidecar:** fleet management features — version reporting, stale alerts, remote trigger, hot reload, Linux autostart ([0fd11b2](https://github.com/s3ntin3l8/ai-usage-tracker/commit/0fd11b22e7806773ca2676f4cb078e4af5e2074d))
+* **sidecar:** increase settings page width from 480px to 600px ([5132e96](https://github.com/s3ntin3l8/ai-usage-tracker/commit/5132e96003edbc15e2bbc052a8eafe64578d20aa))
+* **sidecar:** logging, fleet registration, about dialog, logo icon with status dot ([99e0c26](https://github.com/s3ntin3l8/ai-usage-tracker/commit/99e0c266b390c7738e8b79ee03f7d903cd56ffd1))
+* **sidecar:** settings improvements, log viewer, provider toggles, fleet logs ([e43d174](https://github.com/s3ntin3l8/ai-usage-tracker/commit/e43d1742ffdd08ea3c2777cb88984f0fb5a04c8a))
+* **token-health:** show token source (sidecar vs local) in Token Health panel ([4986f99](https://github.com/s3ntin3l8/ai-usage-tracker/commit/4986f9920fba6e33a2fd9368b91316e73a941d86))
+* **token-health:** surface ProviderConfig API keys and session cookies ([a323772](https://github.com/s3ntin3l8/ai-usage-tracker/commit/a3237725579b5c4c68fe2e5d3975f9f8747ee3f7))
+
+
+### Bug Fixes
+
+* **antigravity:** fix _format_reset guard, add missing credit card keys, add sub-minute display ([4d34154](https://github.com/s3ntin3l8/ai-usage-tracker/commit/4d341546b279c5f0d3fda57cf66f2ca04805aa41))
+* **external_metrics:** always copy card before appending to candidates ([b01173c](https://github.com/s3ntin3l8/ai-usage-tracker/commit/b01173c80ac675150817a05b71fe6f4df6de0343))
+* **gemini:** reverse token priority to avoid picking up sidecar tokens in local mode ([057e50e](https://github.com/s3ntin3l8/ai-usage-tracker/commit/057e50e938a8e97a026c7e9c2f1cb5940509f971))
+* **networking:** allow remote access when APP_HOST=0.0.0.0 ([68671db](https://github.com/s3ntin3l8/ai-usage-tracker/commit/68671db274fb5917d6249f8a87a8b0fbeee711e9))
+* **sidecar:** 5 security/correctness bugs from code review ([286d497](https://github.com/s3ntin3l8/ai-usage-tracker/commit/286d4975ecbbefb3d001c3929f2c7c74a9a74d40))
+* **sidecar:** 6 bugs + cleanup from code review ([f9d1b58](https://github.com/s3ntin3l8/ai-usage-tracker/commit/f9d1b588afc2b6135d58bc6e6842e3db79b7cabb))
+* **sidecar:** add pystray-level diagnostics to tray.run() ([e240bec](https://github.com/s3ntin3l8/ai-usage-tracker/commit/e240bec5ee4553779978dd684804bc81a75a2eb8))
+* **sidecar:** add Windows GitHub CLI path for hosts.yml token extraction ([a2106f1](https://github.com/s3ntin3l8/ai-usage-tracker/commit/a2106f13cc3e1c6548d09e19fc40a7fdf7c05f32))
+* **sidecar:** address five bugs found in code review ([ccfaf25](https://github.com/s3ntin3l8/ai-usage-tracker/commit/ccfaf25ee4b1eb87f9f3764b555bee33d622a7cd))
+* **sidecar:** enable console=True + add startup diagnostics for tray debugging ([f46e38b](https://github.com/s3ntin3l8/ai-usage-tracker/commit/f46e38bf828fae968051cde03a73eb499e82e262))
+* **sidecar:** explicitly set icon.visible=True in setup callback ([5c89a4a](https://github.com/s3ntin3l8/ai-usage-tracker/commit/5c89a4a89049e543fcc806d75d8b1e79a52a2c23))
+* **sidecar:** fix f-string lint in tray diagnostics ([f530ed3](https://github.com/s3ntin3l8/ai-usage-tracker/commit/f530ed3e697aef1b6532ab2b550556a696da71bf))
+* **sidecar:** guard notify() call against Windows notification failures ([8f37cd6](https://github.com/s3ntin3l8/ai-usage-tracker/commit/8f37cd64cc20bc1b5724c667249a09225cc03a90))
+* **sidecar:** guard reset_ts parsing, align credit health fallback, use is-None check ([44dba60](https://github.com/s3ntin3l8/ai-usage-tracker/commit/44dba604d35de5add162a04855b4114d1baba7e4))
+* **sidecar:** remove unused sys import in __main__.py ([d882cd3](https://github.com/s3ntin3l8/ai-usage-tracker/commit/d882cd358b8864145f18444a3b82b89465bf2de4))
+* **sidecar:** use PowerShell for Antigravity LSP process/port detection ([c655699](https://github.com/s3ntin3l8/ai-usage-tracker/commit/c65569971c040988d75bd433407a65d2e9ef3eb1))
+* stabilize brittle history test and add pip-audit ([77be7db](https://github.com/s3ntin3l8/ai-usage-tracker/commit/77be7dbd332be7d15fd74b9d997d2361a07ddad9))
+* **tests:** isolate test_ingest_key_default_detection from .env file ([b106d62](https://github.com/s3ntin3l8/ai-usage-tracker/commit/b106d62a65064378743243df29212b86b58af46b))
+* **tests:** prevent flaky multi-day history test from spilling into a 4th day ([d156f20](https://github.com/s3ntin3l8/ai-usage-tracker/commit/d156f20dd22c23dea6a35d77d57c161cc81f82e1))
+* **tray:** transparent icon background + larger icon size ([efc2df3](https://github.com/s3ntin3l8/ai-usage-tracker/commit/efc2df353ace3f52fc934012b52b4978540a742d))
+* update .env file path in dev makefile target ([b146f18](https://github.com/s3ntin3l8/ai-usage-tracker/commit/b146f18ac5af5f4e69ea3a6b4cb0cb0b139b5e0e))
+
 ## [0.12.2](https://github.com/s3ntin3l8/ai-usage-tracker/compare/v0.12.1...v0.12.2) (2026-04-14)
 
 
