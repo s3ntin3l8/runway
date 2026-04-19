@@ -4,7 +4,10 @@ import os
 import platform
 from typing import Any
 
-from app.core.config import is_local_credential_scraping_enabled
+from app.core.config import (
+    get_platform_config_dir,
+    is_local_credential_scraping_enabled,
+)
 from app.core.keychain import get_keychain_secret
 from app.core.registry import registry
 
@@ -39,10 +42,9 @@ class CredentialProvider:
     @staticmethod
     def get_credentials(provider_id: str) -> dict[str, str]:
         """Generic extraction based on registry rules for a provider."""
-        if not is_local_credential_scraping_enabled():
-            return {}
-
         results: dict[str, str] = {}
+        is_scraping_enabled = is_local_credential_scraping_enabled()
+        runway_config_dir = get_platform_config_dir("runway-tracker")
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
@@ -83,6 +85,11 @@ class CredentialProvider:
             elif rule_type == "file":
                 for path_str in rule.get("paths", []):
                     path = registry.resolve_path(path_str)
+
+                    # Bypassing the scraping gate for runway-internal files
+                    if not is_scraping_enabled and not path.startswith(runway_config_dir):
+                        continue
+
                     if os.path.exists(path):
                         try:
                             fmt = rule.get("format", "json")
@@ -107,6 +114,8 @@ class CredentialProvider:
 
             # 3. macOS Keychain
             elif rule_type == "keychain" and platform.system() == "Darwin":
+                if not is_scraping_enabled:
+                    continue
                 try:
                     needs_extraction = any(t not in results for t in mapping.values())
                     if not needs_extraction and mapping:

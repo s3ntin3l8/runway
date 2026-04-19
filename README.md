@@ -24,28 +24,50 @@
 
 ## Quick Start
 
-- **Python 3.12+** is required.
+- **Python 3.12+** and **Node.js 18+** (for UI styling) are required.
 
 ```bash
-# 1. Clone and setup
+# 1. Clone and setup (installs venv, dependencies, and git hooks)
 git clone <repository-url> && cd runway
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+make install
 
 # 2. Configure (add your API keys)
 cp .env.example .env
 
-# 3. Run
-python3 -m app.main
+# 3. Run (port 8765)
+make dev
 ```
 
 Access at `http://localhost:8765`
+
+> [!TIP]
+> Facing issues with cookie collection or setup? Check the [Troubleshooting Guide](docs/troubleshooting.md).
+
+## Development Shortcuts
+
+Runway includes a `Makefile` to automate common tasks. Run `make help` for the full list.
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Setup venv, install Python/Node dependencies, and wire up git hooks |
+| `make dev` | Start the development server with hot-reload (port 8765) |
+| `make run` | Start the production server |
+| `make sidecar` | Run the standalone sidecar agent script |
+| `make test` | Run the test suite (standard pytest; automatically ignores macOS-only cookie tests on Linux/WSL) |
+| `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
+| `make format` | Automatically fix linting and formatting issues |
+| `make clean` | Remove virtual environments and build artifacts |
 
 ### Docker (Headless/Server)
 
 ```bash
 docker run -p 8765:8765 -e INGEST_API_KEY=secret ghcr.io/s3ntin3l8/ai-usage-tracker:latest
 ```
+
+> [!IMPORTANT]
+> **Docker & Headless Rule**: Containerized environments have no access to native desktop keychains. 
+> 1. Collectors requiring browser cookies (Claude, ChatGPT, Ollama, etc.) **must** be configured via Environment Variables or provided via a [sidecar](docs/sidecar.md).
+> 2. Use `DB_ENCRYPTION_KEY` to protect sensitive metadata in your persistent volume.
 
 Run [sidecar scripts](docs/sidecar.md) on workstations to send file-based metrics.
 
@@ -171,7 +193,7 @@ interface LimitCard {
 
 **`RUNWAY_CONFIG_DIR`** — Override the default platform-specific configuration directory. This controls where Runway stores its database (`runway.db`), external metrics, and OAuth tokens. This is especially useful for Docker deployments or when you need to store configuration in a non-default location.
 
-**`ADMIN_API_KEY`** — When set, mutation endpoints (`PATCH`/`DELETE` sidecars, token refresh) require an `X-Admin-Key` header. Unset by default (local-first, single-user).
+**`ADMIN_API_KEY`** — When set, the dashboard and admin API endpoints are protected. Unset by default (local-first, single-user). Remote access triggers a Login Screen.
 
 **`DB_ENCRYPTION_KEY`** — Fernet key for encrypting sensitive metadata in SQLite. Unset = plaintext (acceptable for local deployments). Back up this key alongside the database file.
 
@@ -183,7 +205,15 @@ By default, Runway binds to `127.0.0.1` (local only). To access from other devic
 2. Restart Runway
 3. Access via `http://<your-ip>:8765`
 
-⚠️ **Security**: `0.0.0.0` exposes the dashboard to your entire local network. Ensure `INGEST_API_KEY` is strong. For production, use a reverse proxy with HTTPS.
+## Authentication & Security
+
+Runway provides a flexible, multi-layered security model:
+
+- **Local Trust**: When accessing Runway from `127.0.0.1` (localhost), authentication is automated. You will jump straight to the dashboard even if an `ADMIN_API_KEY` is set.
+- **Login Screen**: For remote access or Docker deployments, setting `ADMIN_API_KEY` in your `.env` triggers a dedicated **Login Portal**. Enter the key once, and it is persisted in your browser's secure storage.
+- **Headless Auth (Proxy)**: If you offload authentication to a reverse proxy (e.g., Authelia, Cloudflare Access, Nginx Auth), Runway will automatically trust and bypass the login screen if `X-Forwarded-User` or `Remote-User` headers are present.
+
+⚠️ **Public Internet**: Never expose Runway directly to the public internet without a reverse proxy (Nginx/Traefik) and HTTPS.
 
 ## License
 

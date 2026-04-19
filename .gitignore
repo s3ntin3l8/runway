@@ -28,6 +28,7 @@ coverage.xml
 htmlcov/
 .tox/
 .nox/
+.python-version
 
 # --- FRONTEND ---
 node_modules/

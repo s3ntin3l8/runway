@@ -146,6 +146,62 @@ function renderHistoryFromCache() {
     container.innerHTML = html;
 }
 
+/**
+ * Authentication Management
+ */
+async function checkAuth() {
+    try {
+        const settings = await fetchSettings();
+        
+        if (settings.is_authenticated) {
+            // Authorized (local, proxy, or valid key already in localStorage)
+            document.querySelector('nav').style.display = 'flex';
+            return true;
+        }
+
+        // Locked - show Auth Portal
+        document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+        document.getElementById('view-auth').classList.remove('hidden');
+        document.querySelector('nav').style.display = 'none';
+        
+        // Initializing Auth Form
+        const authForm = document.getElementById('auth-form');
+        const authError = document.getElementById('auth-error');
+        const keyInput = document.getElementById('admin-key-input');
+        
+        if (authForm && !authForm.dataset.initialized) {
+            authForm.dataset.initialized = 'true';
+            authForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const key = keyInput.value.trim();
+                if (!key) return;
+
+                localStorage.setItem('runway_admin_key', key);
+                authError.classList.add('hidden');
+
+                try {
+                    const check = await fetchSettings();
+                    if (check.is_authenticated) {
+                        // Success! Reload to boot the app with the new session
+                        location.reload();
+                    } else {
+                        throw new Error('Invalid key');
+                    }
+                } catch (err) {
+                    authError.classList.remove('hidden');
+                    localStorage.removeItem('runway_admin_key');
+                    keyInput.value = '';
+                }
+            });
+        }
+        
+        return false;
+    } catch (err) {
+        console.error('Auth verification failed:', err);
+        return false;
+    }
+}
+
 async function loadHistory() {
     updateCsvHref();
     const container = document.getElementById('history-content');
@@ -1260,9 +1316,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initUI();
     initHistoryView();
-    loadDashboard();
-    // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
-    refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
+    
+    // Check auth before loading dashboard data
+    checkAuth().then(authorized => {
+        if (authorized) {
+            loadDashboard();
+            // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
+            refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
+        }
+    });
 });
 
 window.handleResetProvider = async function(provider, accountId) {

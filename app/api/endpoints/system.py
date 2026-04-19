@@ -40,6 +40,21 @@ async def health_check(request: Request) -> dict[str, Any]:
 @limiter.limit("30/minute")
 async def get_app_settings(request: Request) -> dict[str, Any]:
     """Return the current non-sensitive configuration."""
+    # Check if request is authenticated via proxy or local trust
+    x_forwarded_user = request.headers.get("X-Forwarded-User")
+    remote_user = request.headers.get("Remote-User")
+    user_context = x_forwarded_user or remote_user
+
+    is_local_trust = (
+        request.client
+        and request.client.host == "127.0.0.1"
+        and settings.APP_HOST in ("127.0.0.1", "localhost")
+    )
+
+    auth_methods = []
+    if settings.ADMIN_API_KEY:
+        auth_methods.append("admin_key")
+
     return {
         "project_name": settings.PROJECT_NAME,
         "run_mode": settings.RUN_MODE,
@@ -49,6 +64,10 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "local_collector_enabled": is_local_collector_enabled(),
         "local_credential_scraping": is_local_credential_scraping_enabled(),
         "ingest_api_key_is_default": settings.INGEST_API_KEY_IS_INSECURE_DEFAULT,
+        "admin_auth_required": settings.ADMIN_API_KEY is not None,
+        "auth_methods": auth_methods,
+        "user_context": user_context,
+        "is_authenticated": bool(user_context or is_local_trust or not settings.ADMIN_API_KEY),
     }
 
 

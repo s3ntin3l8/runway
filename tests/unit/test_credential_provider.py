@@ -40,6 +40,10 @@ def test_github_token_gh_cli():
         return False
 
     with (
+        patch(
+            "app.services.credential_provider.is_local_credential_scraping_enabled",
+            return_value=True,
+        ),
         patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
         patch("os.path.exists", side_effect=exists_side_effect),
         patch("builtins.open", mock_open(read_data=mock_yaml)),
@@ -61,6 +65,10 @@ def test_gemini_path_discovery():
         return False
 
     with (
+        patch(
+            "app.services.credential_provider.is_local_credential_scraping_enabled",
+            return_value=True,
+        ),
         patch("os.path.exists", side_effect=exists_side_effect),
         patch("os.path.expanduser", side_effect=lambda p: p.replace("~", "/home/user")),
     ):
@@ -102,6 +110,10 @@ def test_claude_token_file():
         }
     )
     with (
+        patch(
+            "app.services.credential_provider.is_local_credential_scraping_enabled",
+            return_value=True,
+        ),
         patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
         patch("os.path.exists", side_effect=lambda p: ".credentials.json" in str(p)),
         patch("builtins.open", mock_open(read_data=mock_data)),
