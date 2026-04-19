@@ -707,3 +707,21 @@ body.bright-mode .settings-nav-item.settings-nav-active {
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+
+/* ============================================
+   AUTH PORTAL
+   ============================================ */
+#view-auth code {
+    background: rgba(39, 39, 42, 0.6);
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: #a1a1aa;
+}
+
+#admin-key-input {
+    letter-spacing: 0.2em;
+}
+
+#admin-key-input::placeholder {
+    letter-spacing: normal;
+}

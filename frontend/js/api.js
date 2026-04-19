@@ -1,11 +1,25 @@
 /**
+ * Centralized fetch wrapper that injects authentication headers
+ */
+async function fetchWithAuth(url, options = {}) {
+    const adminKey = localStorage.getItem('runway_admin_key');
+    const headers = options.headers || {};
+    
+    if (adminKey) {
+        headers['X-Admin-Key'] = adminKey;
+    }
+    
+    return fetch(url, { ...options, headers });
+}
+
+/**
  * Fetch all limits from the backend
  * @returns {Promise<{limits: Array<LimitCard>}>} Limits response
  * @throws {Error} Network, HTTP, or parsing errors with descriptive messages
  */
 export async function fetchLimits() {
     try {
-        const resp = await fetch('/api/v1/usage/limits');
+        const resp = await fetchWithAuth('/api/v1/usage/limits');
         
         if (!resp.ok) {
             // Provide specific error messages for different HTTP status codes

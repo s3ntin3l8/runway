@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.main import app
 from tests.fixtures.mock_data import (
     ANTHROPIC_OAUTH_RESPONSE,
@@ -28,6 +29,14 @@ from tests.fixtures.mock_data import (
     KIMI_RESPONSE,
     OPENCODE_GO_RESPONSE,
 )
+
+
+@pytest.fixture(autouse=True)
+def setup_test_settings(monkeypatch):
+    """Ensure consistent settings for all tests, isolating them from the local .env."""
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_SCRAPING_ENABLED", True)
+    monkeypatch.setattr(settings, "LOCAL_COLLECTOR_ENABLED", True)
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
 
 
 @pytest.fixture

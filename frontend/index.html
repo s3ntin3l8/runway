@@ -162,6 +162,32 @@
                 </div>
             </section>
 
+            <!-- Auth View -->
+            <section id="view-auth" class="view hidden">
+                <div class="flex items-center justify-center min-h-[60vh]">
+                    <div class="w-full max-w-md glass-panel rounded-3xl p-10 text-center">
+                        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 mx-auto mb-8 flex items-center justify-center shadow-lg shadow-blue-900/20">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            </svg>
+                        </div>
+                        <h2 class="text-2xl font-bold text-zinc-50 mb-2">Admin Access</h2>
+                        <p class="text-zinc-500 text-sm mb-8">Enter your <code>ADMIN_API_KEY</code> to continue.</p>
+                        
+                        <form id="auth-form" class="space-y-4">
+                            <div class="relative">
+                                <input type="password" id="admin-key-input" placeholder="e1t3MtTjm..." 
+                                    class="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-xl px-4 py-3 text-zinc-100 placeholder:text-zinc-700 focus:outline-none focus:border-violet-500/50 transition-all text-center tracking-widest">
+                            </div>
+                            <button type="submit" class="w-full bg-zinc-100 hover:bg-white text-zinc-950 font-bold py-3 rounded-xl transition-all active:scale-[0.98]">
+                                Unlock Dashboard
+                            </button>
+                        </form>
+                        <div id="auth-error" class="mt-4 text-red-500 text-xs font-semibold hidden">Invalid Admin Key</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Settings View -->
             <section id="view-settings" class="view hidden">
                 <div class="flex gap-0 min-h-[560px]">

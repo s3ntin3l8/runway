@@ -1,5 +1,6 @@
 from cryptography.fernet import Fernet
 
+from app.core.config import settings
 from app.core.encryption import EncryptionService
 
 
@@ -27,8 +28,9 @@ def test_encryption_json_roundtrip():
     assert decrypted == original
 
 
-def test_encryption_plaintext_fallback():
+def test_encryption_plaintext_fallback(monkeypatch):
     # No key provided
+    monkeypatch.setattr(settings, "DB_ENCRYPTION_KEY", None)
     service = EncryptionService(key=None)
     assert service.is_enabled is False
 
