@@ -83,7 +83,13 @@ export async function renderProvidersSection(pane) {
 
             pane.querySelector('#provider-save-btn')?.addEventListener('click', () => saveProviderConfig(pane, form, _settingsSelectedProvider));
             pane.querySelector('#provider-discard-btn')?.addEventListener('click', () => renderProvidersSection(pane));
-            pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => viewRawProviderData(_settingsSelectedProvider));
+            pane.querySelector('#provider-raw-data-btn')?.addEventListener('click', () => {
+                if (typeof window.viewRawProviderData === 'function') {
+                    window.viewRawProviderData(_settingsSelectedProvider);
+                } else {
+                    console.error('viewRawProviderData is not defined');
+                }
+            });
             pane.querySelector('#field-enabled-toggle')?.addEventListener('click', function() {
                 const next = this.dataset.enabled !== 'true';
                 this.dataset.enabled = String(next);
@@ -212,18 +218,6 @@ async function saveProviderConfig(pane, form, providerId) {
     } catch (err) {
         if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
         alert(`Save failed: ${err.message}`);
-    }
-}
-
-async function viewRawProviderData(providerId) {
-    try {
-        const { providers } = await fetchProviderConfigs();
-        const provider = providers.find(p => p.provider_id === providerId);
-        if (provider) {
-            alert('Raw provider data:\n' + JSON.stringify(provider, null, 2));
-        }
-    } catch (err) {
-        alert('Failed to fetch raw data: ' + err.message);
     }
 }
 
