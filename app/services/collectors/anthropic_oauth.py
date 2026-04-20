@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -144,6 +145,14 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     error_type="rate_limited",
                 )
             ]
+
+        # Safety guard: Browser session keys or bundles will 100% fail here with 401.
+        # Yield to the Web API scraper strategy instead.
+        if token.startswith("sk-ant-sid") or "sessionKey=" in token:
+            logger.debug(
+                "Skipping Anthropic OAuth API call: provided token is a browser session key or bundle."
+            )
+            return []
 
         url = "https://api.anthropic.com/api/oauth/usage"
         headers = {
@@ -305,16 +314,23 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if raw_sub:
                 tier = str(raw_sub).capitalize()
             elif raw_tier:
-                tier_map = {
-                    "tier_0": "Free",
-                    "tier_1": "Pro",
-                    "tier_2": "Max",
-                    "tier_3": "Team",
-                    "tier_4": "Enterprise",
-                    "tier_5": "Enterprise",
-                    "default_claude_ai": "Pro",
-                }
-                tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+                # Match pro/max/team/free followed by optional multiplier like 5x or 20x
+                match = re.search(r"(pro|max|team|free)[\s_]*(\d+x)?", raw_tier.lower())
+                if match:
+                    base = match.group(1).capitalize()
+                    mult = match.group(2)
+                    tier = f"{base} {mult}" if mult else base
+                else:
+                    tier_map = {
+                        "tier_0": "Free",
+                        "tier_1": "Pro",
+                        "tier_2": "Max",
+                        "tier_3": "Team",
+                        "tier_4": "Enterprise",
+                        "tier_5": "Enterprise",
+                        "default_claude_ai": "Pro",
+                    }
+                    tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
 
         if not tier:
             local_tier = local_hints.get("billing_tier") or local_hints.get("tier")

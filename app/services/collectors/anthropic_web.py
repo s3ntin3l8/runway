@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -106,15 +107,22 @@ class AnthropicWebMixin:
         if creds:
             raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
             if raw_tier:
-                tier_map = {
-                    "tier_0": "Free",
-                    "tier_1": "Pro",
-                    "tier_2": "Max",
-                    "tier_3": "Team",
-                    "tier_4": "Enterprise",
-                    "tier_5": "Enterprise",
-                }
-                tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
+                # Match pro/max/team/free followed by optional multiplier like 5x or 20x
+                match = re.search(r"(pro|max|team|free)[\s_]*(\d+x)?", raw_tier.lower())
+                if match:
+                    base = match.group(1).capitalize()
+                    mult = match.group(2)
+                    tier = f"{base} {mult}" if mult else base
+                else:
+                    tier_map = {
+                        "tier_0": "Free",
+                        "tier_1": "Pro",
+                        "tier_2": "Max",
+                        "tier_3": "Team",
+                        "tier_4": "Enterprise",
+                        "tier_5": "Enterprise",
+                    }
+                    tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
         if not tier and hasattr(self, "_get_local_config_hints"):
             local_hints = self._get_local_config_hints()
             local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
@@ -307,7 +315,11 @@ class AnthropicWebMixin:
                     client, "GET", "https://claude.ai/api/account", headers=headers, timeout=10.0
                 )
                 if account_resp.status_code == 200:
-                    account_data = account_resp.json()
+                    raw_acc = account_resp.json()
+                    # Handle both single object and list response
+                    account_data = (
+                        raw_acc[0] if isinstance(raw_acc, list) and len(raw_acc) > 0 else raw_acc
+                    )
             except Exception as e:
                 logger.debug(f"Could not fetch account info: {e}")
 
@@ -374,20 +386,24 @@ class AnthropicWebMixin:
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
+        # Check both account_data and org_data for rate_limit_tier
         tier = None
+        raw_tier = None
         if account_data:
-            raw_tier = account_data.get("rate_limit_tier")
-            if raw_tier:
-                import re
+            raw_tier = account_data.get("rate_limit_tier") or account_data.get("rate_tier_limit")
+        if not raw_tier and org_data:
+            raw_tier = org_data.get("rate_limit_tier") or org_data.get("rate_tier_limit")
 
-                # Match pro/max/team/free followed by optional multiplier like 5x or 20x
-                match = re.search(r"(pro|max|team|free)(?:_?(\d+x))?", raw_tier.lower())
-                if match:
-                    base = match.group(1).capitalize()
-                    mult = match.group(2)
-                    tier = f"{base} {mult}" if mult else base
+        if raw_tier:
+            # Match pro/max/team/free followed by optional multiplier like 5x or 20x
+            match = re.search(r"(pro|max|team|free)[\s_]*(\d+x)?", raw_tier.lower())
+            if match:
+                base = match.group(1).capitalize()
+                mult = match.group(2)
+                tier = f"{base} {mult}" if mult else base
 
         if not tier:
+            # Fallback to older plan detection fields
             plan = ""
             if account_data:
                 plan = (
@@ -469,6 +485,7 @@ class AnthropicWebMixin:
                 else "unknown"
             )
 
+            tier_label = f" [{tier}]" if tier else ""
             results.append(
                 {
                     "service_name": f"Claude ({display_name})",
@@ -478,7 +495,7 @@ class AnthropicWebMixin:
                     "reset": human_delta(reset_at),
                     "health": HealthCalculator.from_percentage(pct_used),
                     "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [Web API]{identity_suffix}",
+                    "detail": f"{pct_used:.1f}% used{tier_label} [Web API]{identity_suffix}",
                     "used_value": pct_used,
                     "limit_value": 100.0,
                     "is_unlimited": False,
@@ -509,7 +526,7 @@ class AnthropicWebMixin:
                             "reset": "Prepaid",
                             "health": HealthCalculator.from_balance(bal),
                             "pace": "Manual Top-up",
-                            "detail": f"Credits: ${bal:.2f} [Web API]{identity_suffix}",
+                            "detail": f"Credits: ${bal:.2f}{tier_label} [Web API]{identity_suffix}",
                             "used_value": 0.0,
                             "limit_value": bal,
                             "unit_type": "currency",
@@ -545,7 +562,7 @@ class AnthropicWebMixin:
                         "reset": "Monthly",
                         "health": HealthCalculator.from_spend(spend, limit),
                         "pace": "Sustainable",
-                        "detail": f"${spend:.2f} / ${limit:.2f} [Web API]{identity_suffix}",
+                        "detail": f"${spend:.2f} / ${limit:.2f}{tier_label} [Web API]{identity_suffix}",
                         "used_value": spend,
                         "limit_value": limit,
                         "unit_type": "currency",
