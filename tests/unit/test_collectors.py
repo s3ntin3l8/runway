@@ -1245,16 +1245,16 @@ class TestGitHubCollector:
                 return_value={},
             ),
             patch(
-                "app.services.collectors.github.token_cache.get_token",
+                "app.services.collectors.github.token_cache.get_with_metadata",
                 new_callable=AsyncMock,
-                return_value="scoped_token",
+                return_value=({"api_key": "scoped_token"}, {"source": "sidecar"}),
             ) as mock_get_token,
             patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
         ):
             token = await collector._get_token()
 
         assert token == "scoped_token"
-        mock_get_token.assert_awaited_once_with("github", "api_key", account_id="acc_a")
+        mock_get_token.assert_awaited_once_with("github", account_id="acc_a")
 
     @pytest.mark.asyncio
     async def test_github_default_token_lookup_does_not_use_sidecar_cache(self, mock_http_client):
@@ -1267,7 +1267,7 @@ class TestGitHubCollector:
                 return_value={},
             ),
             patch(
-                "app.services.collectors.github.token_cache.get_token",
+                "app.services.collectors.github.token_cache.get_with_metadata",
                 new_callable=AsyncMock,
             ) as mock_get_token,
             patch.dict(os.environ, {"GITHUB_TOKEN": ""}),

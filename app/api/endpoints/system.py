@@ -386,7 +386,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             any(k in rule.get("mapping", {}).values() for k in ("api_key", "oauth_token"))
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain")
-        ) and bool(provider_def.get("api_key_label"))
+        )
         supports_session_cookie = any(
             any(
                 k in rule.get("mapping", {}).values()
@@ -395,11 +395,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "cookie_session",
                     "cookie_sessionKey",
                     "cookie___Secure-next-auth.session-token",
+                    "sessionKey",
                 )
             )
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain", "cookie")
-        ) and bool(provider_def.get("session_cookie_label"))
+        )
         results.append(
             {
                 "provider_id": p_id,

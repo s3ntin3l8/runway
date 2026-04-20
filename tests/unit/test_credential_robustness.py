@@ -30,7 +30,7 @@ async def test_zai_is_configured_with_comment_fallback():
     collector = ZaiCollector()
 
     # Mocking _get_api_key to return a comment string
-    def mock_get_api_key():
+    async def mock_get_api_key():
         return "# api.z.ai → Dashboard [UI]"
 
     collector._get_api_key = mock_get_api_key
@@ -43,7 +43,7 @@ async def test_zai_is_configured_with_valid_key():
     collector = ZaiCollector()
 
     # Mocking _get_api_key to return a valid key
-    def mock_get_api_key():
+    async def mock_get_api_key():
         return "zai-valid-key-123"
 
     collector._get_api_key = mock_get_api_key
