@@ -7,13 +7,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.config import settings
-from app.models.schemas import LimitCard
-
 from app.core.utils import safe_write_json
+from app.models.schemas import LimitCard
 
 logger = logging.getLogger(__name__)
 
 _DEBOUNCE_INTERVAL = 30.0  # seconds between disk flushes
+
 
 class ExternalMetricService:
     def __init__(self):

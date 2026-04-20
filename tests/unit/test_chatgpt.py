@@ -47,7 +47,8 @@ class TestChatGPTCollectorDetailed:
         with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "env_token"}):
             auth = await collector._get_auth_data(mock_http_client)
             assert auth["token"] == "env_token"
-            assert auth["source"] == "credential_provider"
+            assert auth["source"] == "oauth"
+            assert auth["input_source"] == "server"
 
     @pytest.mark.asyncio
     async def test_auth_priority_file(self, mock_http_client):
@@ -60,7 +61,7 @@ class TestChatGPTCollectorDetailed:
                 with patch("builtins.open", mock_open(read_data=mock_auth)):
                     auth = await collector._get_auth_data(mock_http_client)
                     assert auth["token"] == "file_token"
-                    assert auth["source"] == "credential_provider"
+                    assert auth["source"] == "oauth"
 
     @pytest.mark.asyncio
     async def test_auth_priority_cookies_and_refresh(self, mock_http_client):
@@ -124,7 +125,7 @@ class TestChatGPTCollectorDetailed:
                     # Second call immediately - should use in-memory cache
                     auth2 = await collector._get_auth_data(mock_http_client)
                     assert auth2["token"] == "t1"
-                    assert auth2["source"] == "cookies_cached"
+                    assert auth2["source"] == "cookies"
                     assert mock_http_client.request.call_count == 1  # No new API call
 
     @pytest.mark.asyncio

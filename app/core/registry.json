@@ -3,6 +3,8 @@
     "anthropic": {
       "name": "Claude Pro",
       "icon": "🟠",
+      "api_key_label": "API Key (OAuth)",
+      "api_key_help": "OAuth access token for Claude",
       "session_cookie_label": "Manual Authentication (Cookie Bundle)",
       "session_cookie_help": "Paste the FULL cookie header from Claude.ai (F12 -> Network -> Cookie)",
       "rules": [
@@ -57,6 +59,8 @@
     "openrouter": {
       "name": "OpenRouter",
       "icon": "🚀",
+      "api_key_label": "API Key",
+      "api_key_help": "Your OpenRouter API key (sk-or-...)",
       "rules": [
         {
           "type": "env",
@@ -68,6 +72,10 @@
     "minimax": {
       "name": "MiniMax",
       "icon": "🤖",
+      "api_key_label": "API Key",
+      "api_key_help": "MiniMax API key",
+      "session_cookie_label": "Session Cookie",
+      "session_cookie_help": "Manual cookie for HTML scraping fallback",
       "rules": [
         {
           "type": "env",
@@ -84,6 +92,8 @@
     "github": {
       "name": "GitHub API",
       "icon": "🐙",
+      "api_key_label": "Personal Access Token",
+      "api_key_help": "A GitHub PAT with 'read:user' or Copilot permissions",
       "rules": [
         {
           "type": "env",
@@ -173,6 +183,8 @@
     "kimi_coding": {
       "name": "Kimi Coding",
       "icon": "🌙",
+      "session_cookie_label": "Auth Token",
+      "session_cookie_help": "Bearer token or session cookie for Kimi Coding",
       "rules": [
         {
           "type": "env",
@@ -184,6 +196,8 @@
     "kimi": {
       "name": "Kimi API",
       "icon": "🌙",
+      "api_key_label": "API Key",
+      "api_key_help": "Moonshot API key (sk-...)",
       "rules": [
         {
           "type": "env",
@@ -206,6 +220,8 @@
     "zai": {
       "name": "zAI API",
       "icon": "🌐",
+      "api_key_label": "API Key",
+      "api_key_help": "zAI API key",
       "rules": [
         {
           "type": "env",
@@ -217,6 +233,8 @@
     "kimi_api": {
       "name": "Kimi API",
       "icon": "🌙",
+      "api_key_label": "API Key",
+      "api_key_help": "Moonshot API key (sk-...)",
       "rules": [
         {
           "type": "env",
@@ -228,6 +246,8 @@
     "kimi_k2": {
       "name": "Kimi K2",
       "icon": "🌙",
+      "api_key_label": "API Key",
+      "api_key_help": "Kimi K2 API key",
       "rules": [
         {
           "type": "env",
@@ -239,6 +259,8 @@
     "opencode": {
       "name": "OpenCode",
       "icon": "⚡",
+      "session_cookie_label": "Auth Cookie",
+      "session_cookie_help": "Paste the 'auth' cookie value from opencode.ai",
       "rules": [
         {
           "type": "cookie",
@@ -288,6 +310,8 @@
       "name": "Ollama Cloud",
       "icon": "🦙",
       "description": "Monitor your Ollama Cloud usage. REQUIRES a session cookie (ollama_session) from ollama.com, not an API key.",
+      "session_cookie_label": "Session Cookie",
+      "session_cookie_help": "Paste the 'session' or 'ollama_session' cookie value from ollama.com",
       "rules": [
         {
           "type": "env",
@@ -298,37 +322,37 @@
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com"],
           "name": "session",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com"],
           "name": "ollama_session",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com"],
           "name": "__Host-ollama_session",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com"],
           "name": "__Secure-next-auth.session-token",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com"],
           "name": "__Secure-session",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         },
         {
           "type": "cookie",
           "domains": ["ollama.com", ".ollama.com", "signin.ollama.com"],
           "name": "access-token",
-          "mapping": { "value": "cookie_session" }
+          "mapping": { "value": "session_cookie" }
         }
       ]
     }
