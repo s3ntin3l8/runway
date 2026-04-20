@@ -388,9 +388,9 @@ class TestAnthropicCollector:
             ):
                 result = await collector.collect(mock_http_client)
 
-        # Should return Web API results — all 4 core windows are always emitted
+        # Should return Web API results — only 3 cards because seven_day_opus is missing from mock data
         assert isinstance(result, list)
-        assert len(result) == 4
+        assert len(result) == 3
         services = [r["service_name"] for r in result]
         assert "Claude (Session Window)" in services
         assert "Claude (Weekly Window)" in services
@@ -693,13 +693,13 @@ class TestAnthropicCollector:
         """Test identity extraction from Web API response."""
         collector = AnthropicCollector()
 
-        # Full identity
+        # Full identity - should only return email if present
         org_data = {
             "name": "Test Org",
             "membership": {"user": {"email": "user@example.com"}},
         }
         identity = collector._extract_identity_from_web(org_data)
-        assert identity == "user@example.com @ Test Org"
+        assert identity == "user@example.com"
 
         # Email only
         org_email = {"membership": {"user": {"email": "user@example.com"}}}
@@ -819,7 +819,7 @@ class TestAnthropicCollector:
                 result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
-        assert len(result) == 4  # all 4 core windows always emitted
+        assert len(result) == 3  # only 3 core windows in mock usage data
         assert any(card.get("data_source") == "web_api" for card in result)
 
         # Identity should be included in detail

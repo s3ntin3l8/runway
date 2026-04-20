@@ -155,14 +155,14 @@ async function checkAuth() {
         
         if (settings.is_authenticated) {
             // Authorized (local, proxy, or valid key already in localStorage)
-            document.querySelector('nav').style.display = 'flex';
+            document.getElementById('main-nav').style.display = 'flex';
             return true;
         }
 
         // Locked - show Auth Portal
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         document.getElementById('view-auth').classList.remove('hidden');
-        document.querySelector('nav').style.display = 'none';
+        document.getElementById('main-nav').style.display = 'none';
         
         // Initializing Auth Form
         const authForm = document.getElementById('auth-form');
@@ -855,6 +855,21 @@ window.handleResetProvider = async function(provider, accountId) {
     }
 }
 
+window.copyToClipboard = async function(text, btn) {
+    try {
+        await navigator.clipboard.writeText(text);
+        const original = btn.innerText;
+        btn.innerText = 'COPIED!';
+        btn.classList.add('text-green-400');
+        setTimeout(() => {
+            btn.innerText = original;
+            btn.classList.remove('text-green-400');
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy: ', err);
+    }
+};
+
 window.viewRawProviderData = async function(providerId) {
     const modal = document.getElementById('modal-container');
     const content = document.getElementById('modal-content');
@@ -877,25 +892,34 @@ window.viewRawProviderData = async function(providerId) {
         }
         const data = await resp.json();
         
+        const responses = data.responses || [];
+        
         content.innerHTML = `
             <div class="flex justify-between items-start mb-5 pb-4 border-b border-zinc-800/50">
                 <div>
                     <div class="text-xl font-black text-zinc-100 uppercase tracking-tight">Raw Data: ${escapeHTML(providerId)}</div>
                     <div class="text-[10px] text-zinc-500 mono mt-1">Provider-specific HTTP interception bundle</div>
                 </div>
-                <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none mt-0.5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+                <div class="flex gap-2">
+                    <button onclick="copyToClipboard(JSON.stringify(JSON.parse(this.dataset.json), null, 2), this)" data-json='${escapeHTMLAttr(JSON.stringify(data))}' class="toggle-btn text-[10px] py-1 px-3">Copy All</button>
+                    <button onclick="document.getElementById('modal-container').classList.remove('active')" class="text-zinc-400 hover:text-zinc-200 transition-colors text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-800">✕</button>
+                </div>
             </div>
-            <div class="max-h-[70vh] overflow-y-auto space-y-6 pr-2">
-                ${Object.keys(data.responses).length === 0 ? `
+            <div class="max-h-[70vh] overflow-y-auto space-y-6 pr-2 custom-scrollbar">
+                ${responses.length === 0 ? `
                     <div class="bg-zinc-900/50 rounded-xl p-8 text-center border border-dashed border-zinc-800">
                         <p class="text-zinc-500 text-sm italic">No HTTP requests were captured during the collection cycle.</p>
-                        <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache.</p>
+                        <p class="text-[10px] text-zinc-600 mt-2">This usually means the data was served from the local cache or an internal strategy.</p>
                     </div>
-                ` : Object.entries(data.responses).map(([url, res]) => `
+                ` : responses.map((res, idx) => `
                     <div class="space-y-2">
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
-                            <span class="text-[10px] text-zinc-500 mono truncate max-w-md">${escapeHTML(url)}</span>
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 mono text-[10px] font-bold border border-zinc-700/50">${res.status}</span>
+                                <span class="px-2 py-0.5 rounded bg-zinc-900 text-violet-400 mono text-[10px] font-bold border border-violet-900/30">${res.method}</span>
+                                <span class="text-[10px] text-zinc-500 mono truncate max-w-md" title="${escapeHTML(res.url)}">${escapeHTML(res.url)}</span>
+                            </div>
+                            <button onclick="copyToClipboard(JSON.stringify(JSON.parse(this.dataset.json), null, 2), this)" data-json='${escapeHTMLAttr(JSON.stringify(res.body))}' class="text-[9px] uppercase tracking-widest text-zinc-600 hover:text-zinc-400 font-bold transition-colors">Copy Body</button>
                         </div>
                         <div class="bg-black/40 rounded-xl p-4 border border-zinc-800/60">
                             <pre class="text-[11px] text-zinc-300 mono whitespace-pre-wrap overflow-x-auto leading-relaxed max-h-[400px]">${escapeHTML(JSON.stringify(res.body, null, 2))}</pre>

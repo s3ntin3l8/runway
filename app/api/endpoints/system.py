@@ -45,11 +45,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     remote_user = request.headers.get("Remote-User")
     user_context = x_forwarded_user or remote_user
 
-    is_local_trust = (
-        request.client
-        and request.client.host == "127.0.0.1"
-        and settings.APP_HOST in ("127.0.0.1", "localhost")
-    )
+    is_local_trust = request.client and request.client.host in ("127.0.0.1", "::1")
 
     auth_methods = []
     if settings.ADMIN_API_KEY:
@@ -113,7 +109,7 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
     Run a specific collector and capture raw HTTP responses.
     Useful for troubleshooting provider API changes.
     """
-    raw_responses = {}
+    raw_responses = []
 
     async def intercept_response(response: httpx.Response):
         await response.aread()
@@ -129,11 +125,16 @@ async def get_raw_provider_data(request: Request, provider_id: str) -> dict[str,
         if "Cookie" in safe_headers:
             safe_headers["Cookie"] = "[MASKED]"
 
-        raw_responses[str(response.url)] = {
-            "status": response.status_code,
-            "headers": safe_headers,
-            "body": data,
-        }
+        raw_responses.append(
+            {
+                "url": str(response.url),
+                "method": response.request.method,
+                "status": response.status_code,
+                "headers": safe_headers,
+                "body": data,
+                "timestamp": time.time(),
+            }
+        )
 
     try:
         # 1. Ensure collectors are loaded
@@ -382,15 +383,23 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         db = db_map.get(p_id)
         rules = provider_def.get("rules", [])
         supports_api_key = any(
-            "api_key" in rule.get("mapping", {}).values()
+            any(k in rule.get("mapping", {}).values() for k in ("api_key", "oauth_token"))
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain")
-        )
+        ) and bool(provider_def.get("api_key_label"))
         supports_session_cookie = any(
-            "session_cookie" in rule.get("mapping", {}).values()
+            any(
+                k in rule.get("mapping", {}).values()
+                for k in (
+                    "session_cookie",
+                    "cookie_session",
+                    "cookie_sessionKey",
+                    "cookie___Secure-next-auth.session-token",
+                )
+            )
             for rule in rules
-            if rule.get("type") in ("env", "file", "keychain")
-        )
+            if rule.get("type") in ("env", "file", "keychain", "cookie")
+        ) and bool(provider_def.get("session_cookie_label"))
         results.append(
             {
                 "provider_id": p_id,
@@ -404,6 +413,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "default_ttl_seconds": default_ttl,
                 "supports_api_key": supports_api_key,
                 "supports_session_cookie": supports_session_cookie,
+                "api_key_label": provider_def.get("api_key_label"),
+                "api_key_help": provider_def.get("api_key_help"),
+                "session_cookie_label": provider_def.get("session_cookie_label"),
+                "session_cookie_help": provider_def.get("session_cookie_help"),
             }
         )
 
@@ -444,9 +457,92 @@ async def upsert_provider_config(
         )
     if body.api_key is not None:
         # Empty string = clear the stored key; non-empty = encrypt and store
-        row.api_key = body.api_key if body.api_key else None
+        val = body.api_key
+        if val:
+            if val.lower().startswith("bearer "):
+                val = val[7:].strip()
+            elif "sessionKey=" in val:
+                # Only truncate if it's NOT a full multi-cookie header.
+                if not ("cf_clearance" in val or "__cf_bm" in val or val.count(";") > 2):
+                    for part in val.split(";"):
+                        part = part.strip()
+                        if part.startswith("sessionKey="):
+                            val = part[11:].strip()
+                            break
+            elif "__Secure-next-auth.session-token=" in val:
+                for part in val.split(";"):
+                    part = part.strip()
+                    if part.startswith("__Secure-next-auth.session-token="):
+                        val = part[32:].strip()
+                        break
+
+        row.api_key = val if val else None
+
+        # Propagate to token_cache if this is also mapped as an OAuth token
+        if row.api_key and provider_id in ("chatgpt", "anthropic", "gemini"):
+            tokens = {"oauth_token": row.api_key}
+
+            # For ChatGPT, try to extract the account_id from the token if it's a JWT
+            if provider_id == "chatgpt":
+                from app.core.utils import IdentityExtractor
+
+                acc_id = IdentityExtractor.get_openai_account_id_from_jwt(row.api_key)
+                if acc_id:
+                    tokens["account_id"] = acc_id
+
+            # If this looks like a Claude session key or bundle, also map it to cookie slots
+            if provider_id == "anthropic" and (
+                "sessionKey=" in row.api_key or row.api_key.startswith("sk-ant-sid")
+            ):
+                tokens["session_cookie"] = row.api_key
+                tokens["cookie_sessionKey"] = row.api_key
+
+            await token_cache.store(
+                provider_id, tokens, account_id="default", source="manual_config"
+            )
     if body.session_cookie is not None:
-        row.session_cookie = body.session_cookie if body.session_cookie else None
+        val = body.session_cookie
+        if val and ";" in val or "=" in val:
+            # Attempt to extract common session tokens from a full cookie string
+            found = None
+            if provider_id == "anthropic":
+                # Only truncate to sessionKey if it's NOT a full multi-cookie header.
+                # If there are many cookies (like Cloudflare's cf_clearance), we need the whole string.
+                if "cf_clearance" in val or "__cf_bm" in val or val.count(";") > 2:
+                    found = None  # Keep the whole string
+                else:
+                    # Extract sessionKey for a cleaner storage if it's just a couple of cookies
+                    for part in val.split(";"):
+                        part = part.strip()
+                        if part.startswith("sessionKey="):
+                            found = part[11:].strip()
+                            break
+            elif provider_id == "chatgpt":
+                # Extract __Secure-next-auth.session-token
+                for part in val.split(";"):
+                    part = part.strip()
+                    if part.startswith("__Secure-next-auth.session-token="):
+                        found = part[32:].strip()
+                        break
+
+            if found:
+                val = found
+
+        row.session_cookie = val if val else None
+
+        # Propagate to token_cache so collectors can find it immediately
+        if row.session_cookie:
+            # Map generic session_cookie to all common provider-specific keys
+            # to ensure the manual override works across various collector implementations.
+            tokens = {
+                "session_cookie": row.session_cookie,
+                "cookie_session": row.session_cookie,
+                "cookie_sessionKey": row.session_cookie,
+                "cookie___Secure-next-auth.session-token": row.session_cookie,
+            }
+
+            await token_cache.store(provider_id, tokens, account_id="default")
+
     session.commit()
     # Trigger immediate sync and collection to reflect changes in dashboard instantly
     try:

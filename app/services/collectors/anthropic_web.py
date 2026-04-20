@@ -20,6 +20,7 @@ import httpx
 from app.core.browser_cookies import get_claude_session_cookie
 from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -227,15 +228,57 @@ class AnthropicWebMixin:
         """
         session_key = await asyncio.to_thread(get_claude_session_cookie)
         if not session_key:
-            logger.debug("No Claude sessionKey cookie found in Chrome")
+            # Fallback to token cache (user-provided in UI or sidecar-ingested)
+            session_key = await token_cache.get_token(
+                "anthropic", "cookie_sessionKey", account_id=self.account_id or "default"
+            )
+            # Second fallback to generic UI-provided session_cookie
+            if not session_key:
+                session_key = await token_cache.get_token(
+                    "anthropic", "session_cookie", account_id=self.account_id or "default"
+                )
+
+            # Third fallback: Check if a session key was accidentally put into the oauth_token field
+            if not session_key:
+                oauth_token = await token_cache.get_token(
+                    "anthropic", "oauth_token", account_id=self.account_id or "default"
+                )
+                if oauth_token and oauth_token.startswith("sk-ant-sid"):
+                    session_key = oauth_token
+
+        if not session_key:
+            logger.debug("No Claude sessionKey cookie found (browser or cache)")
             return []
 
+        # If the session_key already looks like a multi-cookie string (contains ; or =),
+        # use it as-is. Otherwise wrap it in sessionKey=.
+        cookie_header = (
+            session_key if ";" in session_key or "=" in session_key else f"sessionKey={session_key}"
+        )
+
+        # Extract activitySessionId from cookies if present for x-activity-session-id header
+        import re
+
+        activity_sid_match = re.search(r"activitySessionId=([^;]+)", cookie_header)
+        activity_sid = activity_sid_match.group(1) if activity_sid_match else None
+
         headers = {
-            "Cookie": f"sessionKey={session_key}",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-            "Referer": "https://claude.ai/chat/",
-            "Accept": "application/json",
+            "Cookie": cookie_header,
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "en-US,en;q=0.9",
+            "referer": "https://claude.ai/settings/usage",
+            "origin": "https://claude.ai",
+            "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "x-requested-with": "XMLHttpRequest",
         }
+        if activity_sid:
+            headers["x-activity-session-id"] = activity_sid
 
         try:
             # Step 1: Get organization ID
@@ -293,15 +336,21 @@ class AnthropicWebMixin:
             logger.error(f"Claude Web API collection failed: {e}")
             return []
 
-    def _extract_identity_from_web(self, org_data: dict[str, Any]) -> str:
-        """Extract account identity string from Web API organization response."""
-        membership = org_data.get("membership", {})
-        user = membership.get("user", {})
-        email = user.get("email", "")
-        org_name = org_data.get("name", "")
+    def _extract_identity_from_web(
+        self, org_data: dict[str, Any], account_data: dict[str, Any] | None = None
+    ) -> str:
+        """Extract account identity string from Web API organization/account response."""
+        email = ""
+        if account_data:
+            email = account_data.get("email_address", "")
 
-        if email and org_name:
-            return f"{email} @ {org_name}"
+        if not email and org_data:
+            membership = org_data.get("membership", {})
+            user = membership.get("user", {})
+            email = user.get("email", "")
+
+        org_name = org_data.get("name", "") if org_data else ""
+
         if email:
             return email
         if org_name:
@@ -317,49 +366,86 @@ class AnthropicWebMixin:
         """Parse Web API response into standardized quota cards."""
         results = []
 
-        identity_str = self._extract_identity_from_web(org_data) if org_data else ""
+        identity_str = (
+            self._extract_identity_from_web(org_data, account_data)
+            if org_data or account_data
+            else ""
+        )
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
-        # Try multiple sources for tier — account API, org data, then give up
-        plan = ""
+        # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
+        tier = None
         if account_data:
-            plan = (
-                account_data.get("plan")
-                or account_data.get("account_type")
-                or account_data.get("subscription")
-                or ""
-            )
-        if not plan and org_data:
-            # Org response sometimes has plan/capabilities info
-            plan = (
-                org_data.get("plan")
-                or org_data.get("subscription")
-                or org_data.get("account_type")
-                or org_data.get("membership", {}).get("billing_type")
-                or ""
-            )
-        tier = plan.capitalize() if plan else None
+            raw_tier = account_data.get("rate_limit_tier")
+            if raw_tier:
+                import re
 
-        # All four core windows — show even if API returns null (mirrors OAuth path behaviour)
+                # Match pro/max/team/free followed by optional multiplier like 5x or 20x
+                match = re.search(r"(pro|max|team|free)(?:_?(\d+x))?", raw_tier.lower())
+                if match:
+                    base = match.group(1).capitalize()
+                    mult = match.group(2)
+                    tier = f"{base} {mult}" if mult else base
+
+        if not tier:
+            plan = ""
+            if account_data:
+                plan = (
+                    account_data.get("plan")
+                    or account_data.get("account_type")
+                    or account_data.get("subscription")
+                    or ""
+                )
+            if not plan and org_data:
+                plan = (
+                    org_data.get("plan")
+                    or org_data.get("subscription")
+                    or org_data.get("account_type")
+                    or org_data.get("membership", {}).get("billing_type")
+                    or ""
+                )
+            tier = plan.capitalize() if plan else None
+
+        # Window mapping including Claude Design
         window_map = {
             "five_hour": "Session Window",
             "seven_day": "Weekly Window",
             "seven_day_sonnet": "Sonnet Weekly",
             "seven_day_opus": "Opus Weekly",
+            "seven_day_omelette": "Claude Design",
         }
 
-        for api_key, display_name in window_map.items():
+        # All known windows — we start with these to ensure order
+        all_keys = list(window_map.keys())
+        for k in data:
+            if k not in all_keys and k not in (
+                "account",
+                "organization",
+                "billing",
+                "current_balance",
+                "available_balance",
+                "balance",
+                "credits",
+                "extra_usage",
+                "overage",
+            ):
+                all_keys.append(k)
+
+        for api_key in all_keys:
+            display_name = window_map.get(api_key, api_key.replace("_", " ").title())
             window_data = data.get(api_key)
-            # If key is absent entirely, synthesize a null entry so the window still appears
+
+            # Skip null results per user request (not active usage limits)
             if window_data is None:
-                window_data = {"utilization": None, "resetsAt": None}
+                continue
+
             if not isinstance(window_data, dict):
                 continue
 
-            # Web API uses "utilization" (0.0 to 1.0) or "percentUsed" (0 to 100)
+            # Web API uses 0-100 scale directly (e.g. 1 means 1%)
             raw_util = window_data.get("utilization")
             if raw_util is not None:
-                pct_used = float(raw_util) * 100.0
+                pct_used = float(raw_util)
             else:
                 raw_pct = window_data.get("percentUsed")
                 pct_used = float(raw_pct) if raw_pct is not None else 0.0
@@ -399,7 +485,7 @@ class AnthropicWebMixin:
                     "unit_type": "percent",
                     "window_type": w_type,
                     "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": "web_api",
+                    "data_source": getattr(self, "_current_source", "web_api"),
                     "tier": tier,
                     "account_label": identity_str,
                     "usage_url": "https://claude.ai/settings/usage",
@@ -428,7 +514,7 @@ class AnthropicWebMixin:
                             "limit_value": bal,
                             "unit_type": "currency",
                             "window_type": "prepaid",
-                            "data_source": "web_api",
+                            "data_source": getattr(self, "_current_source", "web_api"),
                             "tier": tier,
                             "account_label": identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
@@ -464,7 +550,7 @@ class AnthropicWebMixin:
                         "limit_value": limit,
                         "unit_type": "currency",
                         "window_type": "monthly",
-                        "data_source": "web_api",
+                        "data_source": getattr(self, "_current_source", "web_api"),
                         "tier": tier,
                         "account_label": identity_str,
                         "usage_url": "https://claude.ai/settings/usage",
