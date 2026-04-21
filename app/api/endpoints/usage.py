@@ -58,7 +58,7 @@ async def get_usage_history(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = Query(default=1.0, ge=0.01, le=90.0),
-    limit: int = Query(default=50, ge=1, le=2000),
+    limit: int = Query(default=500, ge=1, le=2000),
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
 ):
@@ -81,12 +81,14 @@ async def get_usage_history(
 
     # JSON path: downsample to one row per (provider, account, model, window, unit, bucket).
     # Bucket size adapts to the window so short views keep sub-hour resolution and
-    # long views stay compact. This also prevents a high-volume day from consuming
-    # the whole LIMIT budget and hiding older days.
+    # long views stay compact. Response includes both averages (avg per bucket)
+    # and peaks (max per bucket).
     bucket_seconds = _pick_bucket_seconds(days)
     raw = session.exec(statement.limit(20000)).all()
-    deduped = _dedupe_by_bucket(raw, bucket_seconds)
-    return [_snapshot_to_dict(s) for s in deduped[:limit]]
+    averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
+    avg_dicts = [_snapshot_to_dict(s) for s in averages[:limit]]
+    peak_dicts = [_snapshot_to_dict(s) for s in peaks[:limit]]
+    return {"averages": avg_dicts, "peaks": peak_dicts}
 
 
 def _pick_bucket_seconds(days: float) -> int:
@@ -100,15 +102,29 @@ def _pick_bucket_seconds(days: float) -> int:
     return 60  # 1h → 1 min (≤60 points)
 
 
-def _dedupe_by_bucket(rows: Sequence[UsageSnapshot], bucket_seconds: int) -> list[UsageSnapshot]:
-    """Keep the most recent row per (provider, account, model, window, unit, bucket).
+def _dedupe_with_peaks(
+    rows: Sequence[UsageSnapshot], bucket_seconds: int
+) -> tuple[list[UsageSnapshot], list[UsageSnapshot]]:
+    """Dedupe by bucket, preserving first/last points and tracking peaks.
 
-    Assumes `rows` is already sorted by timestamp descending — the first row seen
-    for each key wins.
+    Returns (averages, peaks) where:
+    - averages: most recent row per bucket
+    - peaks: row with max used_value per bucket
+    Both always include first and last points by timestamp.
     """
-    seen: set[tuple] = set()
-    kept: list[UsageSnapshot] = []
-    for r in rows:
+    if not rows:
+        return [], []
+
+    sorted_rows = sorted(rows, key=lambda r: r.timestamp)
+    first_row = sorted_rows[0]
+    last_row = sorted_rows[-1]
+
+    avg_seen: set[tuple] = set()
+    averages: list[UsageSnapshot] = []
+
+    bucket_peaks: dict[tuple, UsageSnapshot] = {}
+
+    for r in sorted_rows:
         ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC)
         bucket = int(ts.timestamp()) // bucket_seconds
         key = (
@@ -120,11 +136,76 @@ def _dedupe_by_bucket(rows: Sequence[UsageSnapshot], bucket_seconds: int) -> lis
             r.unit_type,
             bucket,
         )
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(r)
-    return kept
+
+        if key not in avg_seen:
+            avg_seen.add(key)
+            averages.append(r)
+
+        value = r.used_value if r.used_value is not None else 0.0
+        existing = bucket_peaks.get(key)
+        if existing is None or value > (existing.used_value or 0.0):
+            bucket_peaks[key] = r
+
+    peaks = list(bucket_peaks.values())
+
+    avg_keys = {
+        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
+        for r in averages
+    }
+    if (
+        first_row.provider_id,
+        first_row.account_id,
+        first_row.service_name,
+        first_row.model_id,
+        first_row.window_type,
+        first_row.unit_type,
+    ) not in avg_keys:
+        averages.insert(0, first_row)
+    avg_keys_last = {
+        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
+        for r in averages
+    }
+    if (
+        last_row.provider_id,
+        last_row.account_id,
+        last_row.service_name,
+        last_row.model_id,
+        last_row.window_type,
+        last_row.unit_type,
+    ) not in avg_keys_last:
+        averages.append(last_row)
+
+    peak_keys = {
+        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
+        for r in peaks
+    }
+    if (
+        first_row.provider_id,
+        first_row.account_id,
+        first_row.service_name,
+        first_row.model_id,
+        first_row.window_type,
+        first_row.unit_type,
+    ) not in peak_keys:
+        peaks.insert(0, first_row)
+    peak_keys_last = {
+        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
+        for r in peaks
+    }
+    if (
+        last_row.provider_id,
+        last_row.account_id,
+        last_row.service_name,
+        last_row.model_id,
+        last_row.window_type,
+        last_row.unit_type,
+    ) not in peak_keys_last:
+        peaks.append(last_row)
+
+    averages.sort(key=lambda r: r.timestamp, reverse=True)
+    peaks.sort(key=lambda r: r.timestamp, reverse=True)
+
+    return averages, peaks
 
 
 def _snapshot_to_dict(s: UsageSnapshot) -> dict:

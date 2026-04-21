@@ -121,6 +121,11 @@
                                 <button class="toggle-btn" data-metric="tokens" onclick="setHistoryMetric('tokens')">tokens</button>
                                 <button class="toggle-btn" data-metric="cost" onclick="setHistoryMetric('cost')">cost</button>
                             </div>
+                            <!-- Peak Toggle -->
+                            <div class="flex gap-1" id="history-peak-btns">
+                                <button class="toggle-btn active" data-peak="false" onclick="setHistoryPeak(false)">Avg</button>
+                                <button class="toggle-btn" data-peak="true" onclick="setHistoryPeak(true)">Peak</button>
+                            </div>
                         </div>
                     </div>
                     <div id="history-sparkline-strip"></div>

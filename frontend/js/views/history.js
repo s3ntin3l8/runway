@@ -7,6 +7,7 @@ const historyState = {
     activeProviders: null, // Set of provider IDs
     metric: 'percent',
     windowFilter: 'all',
+    showPeaks: false,
     page: 1,
 };
 let _historyCache = [];
@@ -72,6 +73,14 @@ export function setHistoryWindow(windowType) {
     renderHistoryFromCache();
 }
 
+export function setHistoryPeak(enabled) {
+    historyState.showPeaks = enabled;
+    document.querySelectorAll('#history-peak-btns .toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.peak === String(enabled));
+    });
+    renderHistoryFromCache();
+}
+
 export function toggleHistoryProvider(pid) {
     historyState.page = 1;
     if (!historyState.activeProviders) {
@@ -105,10 +114,10 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     if (historyState.activeProviders) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
-    
+
     // updateCharts now handles windowFilter internally or we can filter here
     if (!skipChartUpdate) {
-        updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter);
+        updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter, historyState.showPeaks);
     }
 
     const container = document.getElementById('history-content');
@@ -191,8 +200,12 @@ export async function loadHistoryView() {
     if (container) container.innerHTML = '<p class="text-zinc-500 animate-pulse">Loading history...</p>';
 
     try {
-        const history = await fetchHistoryCached({ days: historyState.days, limit: 1000 });
-        _historyCache = history || [];
+        const response = await fetchHistoryCached({ days: historyState.days, limit: 1000 });
+        // Response is now { averages: [...], peaks: [...] }
+        // Use averages for the table/sparklines, peaks will be passed to chart
+        _historyCache = response?.averages || [];
+        // Also store peaks for chart display
+        window._historyPeaks = response?.peaks || [];
         renderHistoryFromCache();
     } catch (err) {
         destroyCharts();
@@ -205,6 +218,7 @@ export function initHistoryView() {
     window.setHistoryDays = setHistoryDays;
     window.setHistoryMetric = setHistoryMetric;
     window.setHistoryWindow = setHistoryWindow;
+    window.setHistoryPeak = setHistoryPeak;
     window.toggleHistoryProvider = toggleHistoryProvider;
     window.setHistoryPage = setHistoryPage;
 }

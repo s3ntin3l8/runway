@@ -41,7 +41,8 @@ def client_fixture(session: Session):
 def test_get_history_empty(client: TestClient):
     response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
-    assert response.json() == []
+    data = response.json()
+    assert data == {"averages": [], "peaks": []}
 
 
 def test_get_history_with_data(client: TestClient, session: Session):
@@ -70,9 +71,9 @@ def test_get_history_with_data(client: TestClient, session: Session):
     response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 2
-    assert data[0]["provider_id"] == "anthropic"
-    assert data[1]["provider_id"] == "openai"
+    assert len(data["averages"]) == 2
+    assert data["averages"][0]["provider_id"] == "anthropic"
+    assert data["averages"][1]["provider_id"] == "openai"
 
 
 def test_get_history_filtering(client: TestClient, session: Session):
@@ -98,8 +99,9 @@ def test_get_history_filtering(client: TestClient, session: Session):
     session.commit()
 
     response = client.get("/api/v1/usage/history?provider_id=anthropic")
-    assert len(response.json()) == 1
-    assert response.json()[0]["provider_id"] == "anthropic"
+    data = response.json()
+    assert len(data["averages"]) == 1
+    assert data["averages"][0]["provider_id"] == "anthropic"
 
 
 def test_get_history_limit(client: TestClient, session: Session):
@@ -118,7 +120,8 @@ def test_get_history_limit(client: TestClient, session: Session):
     session.commit()
 
     response = client.get("/api/v1/usage/history?limit=5&days=1")
-    assert len(response.json()) == 5
+    data = response.json()
+    assert len(data["averages"]) == 5
 
 
 def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, session: Session):
@@ -159,7 +162,7 @@ def test_get_history_multi_day_not_truncated_by_limit(client: TestClient, sessio
 
     # Each day should contribute roughly ~10 hourly buckets (600 rows spread over
     # ~10 hours). All 3 days must appear — this is the bug being regressed.
-    days_present = {row["timestamp"][:10] for row in data}
+    days_present = {row["timestamp"][:10] for row in data["averages"]}
     assert len(days_present) == 3, (
         f"Expected rows from 3 distinct days, got {len(days_present)}: {days_present}"
     )
@@ -191,12 +194,18 @@ def test_get_history_bucket_size_adapts_to_window(client: TestClient, session: S
 
     # 1h view: 1-minute buckets → expect ~60 rows (one per minute)
     r1h = client.get("/api/v1/usage/history?days=0.042&limit=500").json()
-    assert 55 <= len(r1h) <= 60, f"1h window expected ~60 points, got {len(r1h)}"
+    assert 55 <= len(r1h["averages"]) <= 60, (
+        f"1h window expected ~60 points, got {len(r1h['averages'])}"
+    )
 
     # 6h view: 15-minute buckets → expect ~4 rows
     r6h = client.get("/api/v1/usage/history?days=0.25&limit=500").json()
-    assert 3 <= len(r6h) <= 5, f"6h window expected ~4 points, got {len(r6h)}"
+    assert 3 <= len(r6h["averages"]) <= 5, (
+        f"6h window expected ~4 points, got {len(r6h['averages'])}"
+    )
 
     # 1d view: hourly buckets → 60min span crosses at most 2 hour boundaries
     r1d = client.get("/api/v1/usage/history?days=1&limit=500").json()
-    assert 1 <= len(r1d) <= 2, f"1d window expected 1-2 hourly points, got {len(r1d)}"
+    assert 1 <= len(r1d["averages"]) <= 2, (
+        f"1d window expected 1-2 hourly points, got {len(r1d['averages'])}"
+    )
