@@ -182,14 +182,40 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 ]
 
             if resp.status_code == 429:
-                # Set proactive backoff based on Retry-After or default 5m
+                logger.info(
+                    "Anthropic API returned 429. Attempting aggressive recovery via token rotation..."
+                )
+                # Attempt to get a fresh token (even if not expired)
+                new_token = await self._get_valid_token(client, force_refresh=True)
+                if new_token and new_token != token:
+                    logger.info("Successfully cycled Anthropic token. Retrying usage request...")
+                    # Update headers with new token
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    resp = await http_request_with_retry(
+                        client, "GET", url, headers=headers, timeout=15.0
+                    )
+                    if resp.status_code == 200:
+                        logger.info("Aggressive recovery successful: Usage data retrieved.")
+                        # Proceed to parsing
+                    else:
+                        logger.warning(
+                            f"Aggressive recovery failed: Retry returned {resp.status_code}"
+                        )
+                else:
+                    logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
+
+            # Re-check status after potential retry
+            if resp.status_code == 429:
+                # Fallback to standard proactive backoff if recovery failed or was skipped
                 retry_after = resp.headers.get("Retry-After")
                 # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 wait_sec = max(wait_sec, 300)
 
                 self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                logger.warning(f"Anthropic API returned 429. Proactive backoff set for {wait_sec}s")
+                logger.warning(
+                    f"Anthropic API still rate limited. Proactive backoff set for {wait_sec}s"
+                )
                 return [
                     error_card(
                         "Claude Pro",
