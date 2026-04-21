@@ -62,12 +62,14 @@ class OAuthBaseCollector(BaseCollector):
         except Exception as e:
             logger.error(f"Failed to persist {self.provider_name} credentials: {e}")
 
-    async def _get_valid_token(self, client: httpx.AsyncClient) -> str | None:
+    async def _get_valid_token(
+        self, client: httpx.AsyncClient, force_refresh: bool = False
+    ) -> str | None:
         """Get a valid token, refreshing if necessary."""
         async with self._token_lock:
             # 1. Check if we have a valid token in the core cache first (Sidecar provided or recently refreshed)
             token = await self._get_current_token()
-            if token and not await self._is_token_expired():
+            if token and not await self._is_token_expired() and not force_refresh:
                 return token
 
             # 2. Check if we can refresh
