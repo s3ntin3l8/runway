@@ -469,7 +469,12 @@ class CollectorManager:
             return []
         cls, _name, _ttl = entry
         strategies = getattr(cls, "STRATEGIES", {})
-        return [{"id": s_id, "label": label} for s_id, (label, _method) in strategies.items()]
+        result = []
+        for s_id, entry in strategies.items():
+            if len(entry) >= 2:
+                label = entry[0]
+                result.append({"id": s_id, "label": label})
+        return result
 
 
 # Global instance
