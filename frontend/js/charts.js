@@ -84,6 +84,7 @@ function extractSeriesKeys(snapshots) {
 
 /**
  * Bucket snapshots by (bucket, seriesKey) at the given granularity.
+ * Tracks both average (sum/count) and max for peak display.
  */
 function bucketByMetric(snapshots, metric, bucketSeconds) {
     const buckets = {};
@@ -107,11 +108,12 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
         }
         const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
         const key = `${snap.provider_id || 'unknown'}|${snap.service_name || 'Usage'}|${snap.window_type || 'unknown'}`;
-        
+
         if (!buckets[bucket]) buckets[bucket] = {};
-        if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0 };
+        if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0, max: -Infinity };
         buckets[bucket][key].sum += value;
         buckets[bucket][key].count += 1;
+        buckets[bucket][key].max = Math.max(buckets[bucket][key].max, value);
     }
     return buckets;
 }
@@ -149,8 +151,9 @@ async function ensureECharts() {
  * @param {'percent'|'tokens'|'cost'} [metric='percent'] - which value to plot
  * @param {number} [days=7] - active history window
  * @param {string} [windowFilter='all'] - optional filter for window_type
+ * @param {boolean} [showPeaks=false] - show peak values instead of averages
  */
-export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all') {
+export async function updateCharts(snapshots, metric = 'percent', days = 7, windowFilter = 'all', showPeaks = false) {
     destroyCharts();
 
     const container = document.getElementById("chart-usage");
@@ -188,19 +191,23 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
 
     // Grouping series by provider for color stability
     const providerCounts = {};
-    
-    const series = seriesKeys.map(key => {
+
+    // Build series: always show averages, optionally add peaks as second series
+    let series = [];
+
+    // First pass: averages (always shown)
+    const avgSeries = seriesKeys.map(key => {
         const [pid, name, windowType] = key.split('|');
         if (providerCounts[pid] === undefined) providerCounts[pid] = 0;
         const style = getSeriesStyle(pid, providerCounts[pid]++);
-        
+
         return {
             name: `${pid.toUpperCase()}: ${name}`,
             type: 'line',
             smooth: true,
             symbol: 'circle',
             symbolSize: 4,
-            showSymbol: bucketEpochs.length < 50, // Hide symbols if too many points
+            showSymbol: bucketEpochs.length < 100,
             lineStyle: {
                 width: 2,
                 type: style.lineType,
@@ -210,7 +217,10 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             areaStyle: {
                 color: {
                     type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-                    colorStops: [{ offset: 0, color: style.color + '33' }, { offset: 1, color: style.color + '00' }]
+                    colorStops: [
+                        { offset: 0, color: style.color + '33' },
+                        { offset: 1, color: style.color + '00' }
+                    ]
                 }
             },
             data: bucketEpochs.map(ep => {
@@ -221,9 +231,57 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             emphasis: {
                 focus: 'series',
                 lineStyle: { width: 3 }
-            }
+            },
+            z: 2
         };
     });
+
+    series = avgSeries;
+
+    // If showing peaks, add peak series with shaded area on top
+    if (showPeaks) {
+        const peakCounts = {};
+        const peakSeries = seriesKeys.map(key => {
+            const [pid, name, windowType] = key.split('|');
+            if (peakCounts[pid] === undefined) peakCounts[pid] = 0;
+            const style = getSeriesStyle(pid, peakCounts[pid]++);
+
+            return {
+                name: `${pid.toUpperCase()}: ${name} (Peak)`,
+                type: 'line',
+                smooth: true,
+                symbol: 'circle',
+                symbolSize: 4,
+                showSymbol: bucketEpochs.length < 100,
+                lineStyle: {
+                    width: 1.5,
+                    type: 'dashed',
+                    dashOffset: 0,
+                },
+                itemStyle: { color: style.color },
+                areaStyle: {
+                    color: {
+                        type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                        colorStops: [
+                            { offset: 0, color: style.color + '40' },
+                            { offset: 1, color: style.color + '00' }
+                        ]
+                    }
+                },
+                data: bucketEpochs.map(ep => {
+                    const b = buckets[ep]?.[key];
+                    return b ? parseFloat(b.max.toFixed(2)) : null;
+                }),
+                connectNulls: true,
+                emphasis: {
+                    focus: 'series',
+                    lineStyle: { width: 3 }
+                },
+                z: 1
+            };
+        });
+        series = [...series, ...peakSeries];
+    }
 
     try {
         const echarts = await ensureECharts();
