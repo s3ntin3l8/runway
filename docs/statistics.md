@@ -16,6 +16,27 @@ The `data_source` label identifies **how** the usage data was obtained from the 
 ### Fallback Logic
 Most providers follow an `api` → `web` → `local` fallback chain. This ensures the dashboard always shows the most accurate data available given the current authentication state.
 
+### Enrichment Pattern
+Some collectors support **enrichment**: strategies that run *in addition* to primary data and merge their results instead of replacing them.
+
+**Use case**: API provides quota limits/remaining, local logs provide actual token usage breakdown.
+
+**How it works**:
+1. Primary strategy runs first (e.g., API)
+2. If primary succeeds, enrichment strategies run *after*
+3. Enrichment data is merged into the primary card's `detail` string
+
+**Example**:
+```
+# Before (fallback):
+API card: "25% remaining | 750K/1M tokens left"
+Local not used → fallback runs only on API failure
+
+# After (enrichment):
+API card: "25% remaining | 750K/1M tokens left | Session: 125,400 tokens"
+Local runs after API success, appending token usage to detail
+```
+
 ---
 
 ## Input Source (`input_source`)

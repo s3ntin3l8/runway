@@ -35,8 +35,10 @@ class BaseCollector(ABC):
 
     # Subclasses may declare their available strategies as an ordered dict:
     # { "strategy_id": ("Human-Readable Label", "_method_name") }
+    # Or with options: { "strategy_id": ("Label", "_method", {"enrich": True}) }
     # The ORDER of items defines the default execution priority.
-    STRATEGIES: dict[str, tuple[str, str]] = {}
+    # Use {"enrich": True} for strategies that add data to primary results (e.g., local token logs)
+    STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {}
 
     # Standard Data Source Labels
     DATA_SOURCE_API = "api"  # Official API / OAuth
@@ -74,16 +76,23 @@ class BaseCollector(ABC):
         """
         self._user_strategies = strategies
 
+    def _get_strategy_options(self, strategy_id: str) -> dict:
+        """Get options for a strategy, or empty dict if not specified."""
+        entry = self.STRATEGIES.get(strategy_id)
+        if entry and len(entry) == 3:
+            return entry[2]
+        return {}
+
     def _resolve_strategies(
         self,
-    ) -> list[Callable[[httpx.AsyncClient], Awaitable[list[dict[str, Any]]]]]:
+    ) -> list[tuple[Callable[[httpx.AsyncClient], Awaitable[list[dict[str, Any]]]], str]]:
         """
         Resolve the ordered, filtered strategy list to execute.
 
         If no STRATEGIES are declared (legacy collector), falls back to the
         abstract _primary_strategy + _fallback_strategies pattern.
 
-        Returns a flat ordered list of callables.
+        Returns a flat ordered list of (callable, strategy_id) tuples.
         """
         if not self.STRATEGIES:
             # Legacy path: no STRATEGIES dict declared — use abstract methods
@@ -102,15 +111,16 @@ class BaseCollector(ABC):
             # Default: use declaration order with all enabled
             ordered_ids = list(self.STRATEGIES.keys())
 
-        # Resolve method names to bound callables
+        # Resolve method names to bound callables, keeping strategy_id for options lookup
         callables = []
         for s_id in ordered_ids:
             if s_id not in self.STRATEGIES:
                 continue
-            _label, method_name = self.STRATEGIES[s_id]
+            entry = self.STRATEGIES[s_id]
+            method_name = entry[1]
             method = getattr(self, method_name, None)
             if callable(method):
-                callables.append(method)
+                callables.append((method, s_id))
             else:
                 logger.warning(
                     f"Strategy method '{method_name}' not found on {self.__class__.__name__}"
@@ -159,25 +169,62 @@ class BaseCollector(ABC):
 
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
-        Orchestrate collection strategy with fallbacks and error handling.
+        Orchestrate collection strategy with fallbacks and enrichment.
         Automatically tags results with account identifiers.
 
         If STRATEGIES is declared, uses the dynamic ordered list.
         Otherwise falls back to the abstract _primary_strategy / _fallback_strategies.
+
+        Enrichment: Strategies marked with {"enrich": True} run AFTER primary success
+        and merge their data into primary results instead of replacing them.
         """
         try:
             dynamic_strategies = self._resolve_strategies()
 
             if dynamic_strategies:
-                # Dynamic path: run strategies in user-defined order
-                for strategy in dynamic_strategies:
+                # Separate primary vs enrichment strategies
+                primary_strategies = []
+                enrich_strategies = []
+
+                for strategy, s_id in dynamic_strategies:
+                    opts = self._get_strategy_options(s_id)
+                    if opts.get("enrich"):
+                        enrich_strategies.append((strategy, s_id))
+                    else:
+                        primary_strategies.append((strategy, s_id))
+
+                # Run primary strategies (first success wins)
+                results = None
+                for strategy, s_id in primary_strategies:
                     try:
                         results = await strategy(client)
                         if not self._is_error_result(results):
-                            return self._tag_results(results)
+                            break
                     except Exception as e:
-                        logger.warning(f"Strategy {strategy.__name__} failed: {e}")
-                return self._tag_results(await self._error_handler())
+                        logger.warning(f"Strategy {s_id} failed: {e}")
+
+                # If no primary success, run all as fallbacks (legacy behavior)
+                if self._is_error_result(results):
+                    for strategy, s_id in primary_strategies:
+                        try:
+                            results = await strategy(client)
+                            if not self._is_error_result(results):
+                                break
+                        except Exception:
+                            pass
+                    if self._is_error_result(results):
+                        results = await self._error_handler()
+
+                # Run enrichment strategies and merge
+                for strategy, s_id in enrich_strategies:
+                    try:
+                        enrich_data = await strategy(client)
+                        if enrich_data and not self._is_error_result(enrich_data):
+                            results = self._enrich_results(results, enrich_data)
+                    except Exception as e:
+                        logger.debug(f"Enrichment strategy {s_id} failed: {e}")
+
+                return self._tag_results(results)
 
             # Legacy path: primary + fallback list
             # 1. Try Primary Strategy
@@ -213,6 +260,42 @@ class BaseCollector(ABC):
                     }
                 ]
             )
+
+    def _enrich_results(
+        self,
+        primary: list[dict[str, Any]] | None,
+        enrichment: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """
+        Merge enrichment data into primary results.
+        Default: append summary to detail string.
+        Override in subclasses for custom merging logic.
+        """
+        if not primary or self._is_error_result(primary):
+            return enrichment
+
+        if self._is_error_result(enrichment):
+            return primary
+
+        # Default: summarize enrichment tokens and append to detail
+        # Calculate totals from enrichment data
+        total_used = 0
+        for e in enrichment:
+            used = e.get("used_value") or e.get("remaining", "0")
+            if isinstance(used, int | float):
+                total_used += used
+            elif isinstance(used, str):
+                # Try to parse "1234 tokens"
+                used_num = "".join(filter(str.isdigit, used.split()[0] if " " in used else used))
+                if used_num:
+                    total_used += int(used_num)
+
+        if total_used > 0:
+            for card in primary:
+                current_detail = card.get("detail", "")
+                card["detail"] = f"{current_detail} | Session: {total_used:,} tokens"
+
+        return primary
 
     def _tag_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """

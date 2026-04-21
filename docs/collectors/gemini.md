@@ -2,11 +2,11 @@
 
 **File:** `app/services/collectors/gemini.py`
 
-Google Gemini CLI quota collector with api → local fallback.
+Google Gemini CLI quota collector with api + local enrichment.
 
 ## Overview
 
-- **Collection Strategy**: api (Google Cloud Code) → local (Session Logs)
+- **Collection Strategy**: api (Google Cloud Code) + local enrichment (Session Logs)
 - **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
 - **Authentication**: OAuth credentials (api) or local session logs (local).
 
@@ -24,17 +24,17 @@ The Gemini collector supports the following authentication methods:
 
 ## Data Sources
 
-### Tier 1: api (Google Cloud Code)
+### Primary: api (Google Cloud Code)
 **Endpoints:**
 - `cloudcode-pa.googleapis.com/...:loadCodeAssist` (project discovery)
 - `cloudcode-pa.googleapis.com/...:retrieveUserQuota` (quotas)
 **Auth:** OAuth token (auto-refreshed via Google).
 **Behavior:** Primary source for model-specific quotas (Flash, Pro, etc.).
 
-### Tier 2: local (Session Logs)
-**Location:** `~/.gemini/tmp/sessions/*.jsonl`
-**Tracks:** prompt + completion tokens (24h rolling window).
-**Behavior:** Fallback when the Cloud Code API is unreachable.
+### Enrichment: local (Session Logs)
+**Location:** `~/.gemini/tmp/*/chats/session-*.json`
+**Tracks:** prompt + completion tokens, cached tokens, thoughts tokens.
+**Behavior:** Enriches API data with actual token usage from local sessions. Appends token breakdown to card detail string.
 
 ## Output Format
 

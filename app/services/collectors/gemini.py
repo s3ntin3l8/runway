@@ -34,9 +34,9 @@ class GeminiCollector(
     PROVIDER_ID = "gemini"
     DEFAULT_WINDOW_TYPE = "daily"
 
-    STRATEGIES: dict[str, tuple[str, str]] = {
+    STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "api": ("API (api)", "_strategy_api_wrap"),
-        "local": ("Local Logs / CLI (local)", "_collect_via_logs"),
+        "local": ("Local Logs / CLI (local)", "_collect_via_logs", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
