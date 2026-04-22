@@ -45,6 +45,8 @@ repos:
           "types-PyYAML",
           "types-cryptography",
           "pydantic",
-          "fastapi"
+          "fastapi",
+          "sqlmodel",
+          "httpx"
         ]
-        args: [--ignore-missing-imports]
+        args: [--config-file=pyproject.toml]
