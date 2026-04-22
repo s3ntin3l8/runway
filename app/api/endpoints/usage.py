@@ -10,7 +10,7 @@ from sqlmodel import Session, desc, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.models.db import UsageSnapshot
+from app.models.db import ProviderConfig, UsageSnapshot
 from app.models.schemas import LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 
@@ -87,9 +87,11 @@ async def get_usage_history(
     raw = session.exec(statement.limit(20000)).all()
     averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
 
+    label_map = _build_label_map(session)
+
     # Group by timestamp+provider+account for table display
-    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds)
-    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds)
+    avg_grouped = _group_snapshots(averages[:limit], bucket_seconds, label_map)
+    peak_grouped = _group_snapshots(peaks[:limit], bucket_seconds, label_map)
 
     return {"averages": avg_grouped, "peaks": peak_grouped}
 
@@ -121,13 +123,17 @@ async def get_usage_history_raw(
     statement = statement.order_by(desc(UsageSnapshot.timestamp))
     results = session.exec(statement.limit(limit)).all()
 
+    label_map = _build_label_map(session)
+
     return [
         {
             "id": r.id,
             "timestamp": r.timestamp.isoformat() if r.timestamp else None,
             "provider_id": r.provider_id,
             "account_id": r.account_id,
-            "account_label": r.account_label,
+            "account_label": (
+                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
+            ),
             "service_name": r.service_name,
             "used_value": r.used_value,
             "limit_value": r.limit_value,
@@ -139,13 +145,35 @@ async def get_usage_history_raw(
     ]
 
 
+def _effective_label(raw: str | None) -> str | None:
+    """Return None for absent or generic placeholder labels ('default', 'Default', etc.)."""
+    if not raw or raw.lower() == "default":
+        return None
+    return raw
+
+
+def _build_label_map(session: Session) -> dict[tuple[str, str], str]:
+    """Return current custom labels from ProviderConfig keyed by (provider_id, account_id).
+
+    Used to overlay user-set labels onto historical snapshots that may have been
+    collected before the label was configured (stored as NULL account_label).
+    """
+    configs = session.exec(
+        select(ProviderConfig).where(ProviderConfig.account_label.isnot(None))  # type: ignore[union-attr]
+    ).all()
+    return {(c.provider_id, c.account_id): c.account_label for c in configs if c.account_label}
+
+
 # Credit-based providers: their "monthly" is a credit bucket, goes to weekly column
 CREDIT_PROVIDERS = {"openrouter", "minimax"}
 
-# Session-like window types
+# Session-like window types (exact matches only)
 SESSION_WINDOWS = {"session", "daily", "hourly", "prepaid"}
-# Weekly-like window types (including credit provider's "monthly")
+# Weekly-like window types (exact matches only)
 WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly", "monthly"}
+
+# Special model-specific windows that should go to Additional (not Weekly)
+SPECIAL_MODEL_WINDOWS = {"seven_day_sonnet", "seven_day_opus", "seven_day_omelette"}
 
 
 def _classify_window(window_type: str | None, provider_id: str | None = None) -> str:
@@ -159,11 +187,16 @@ def _classify_window(window_type: str | None, provider_id: str | None = None) ->
     For other providers:
     - session/daily/hourly → session column
     - weekly/biweekly/monthly → weekly column
-    - other (model-specific, etc.) → other column
+    - Special Claude models (seven_day_sonnet, seven_day_opus, seven_day_omelette) → Additional
+    - Other (model-specific, etc.) → Additional
     """
     if not window_type:
         return "other"
     w = window_type.lower()
+
+    # Special model windows always go to Additional
+    if w in SPECIAL_MODEL_WINDOWS:
+        return "other"
 
     # Session windows go to session for all providers
     if w in SESSION_WINDOWS:
@@ -185,6 +218,7 @@ def _classify_window(window_type: str | None, provider_id: str | None = None) ->
 def _group_snapshots(
     snapshots: Sequence[UsageSnapshot],
     bucket_seconds: int = 60,
+    label_map: dict[tuple[str, str], str] | None = None,
 ) -> list[dict]:
     """Group snapshots by bucket+provider+account_label for table display.
 
@@ -218,7 +252,12 @@ def _group_snapshots(
         ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=UTC)
         # Use bucketed timestamp for grouping (rounds down to bucket boundary)
         bucket_ts = ts.replace(second=(ts.second // bucket_seconds) * bucket_seconds, microsecond=0)
-        key = (bucket_ts.isoformat(), s.provider_id, s.account_label or s.account_id)
+        resolved_label = (
+            _effective_label(s.account_label)
+            or (label_map or {}).get((s.provider_id, s.account_id))
+            or s.account_id
+        )
+        key = (bucket_ts.isoformat(), s.provider_id, resolved_label)
 
         # Store first timestamp seen for this key as representative
         if key not in timestamp_map:
@@ -228,6 +267,7 @@ def _group_snapshots(
         entry = {
             "value": s.used_value,
             "unit": s.unit_type,
+            "limit": s.limit_value,
         }
 
         if category == "session":
@@ -240,17 +280,12 @@ def _group_snapshots(
                     "window": s.window_type,
                     "value": s.used_value,
                     "unit": s.unit_type,
+                    "limit": s.limit_value,
                 }
             )
 
     result = []
     for (bucket_ts_iso, provider_id, account_label), data in grouped.items():
-        additional_str = (
-            " | ".join(f"{a['window']}: {a['value']}{a['unit']}" for a in data["additional"])
-            if data["additional"]
-            else None
-        )
-
         # Use the stored representative timestamp for display
         rep_ts = timestamp_map[(bucket_ts_iso, provider_id, account_label)]
 
@@ -261,7 +296,7 @@ def _group_snapshots(
                 "account_label": account_label,
                 "session": data["session"],
                 "weekly": data["weekly"],
-                "additional": additional_str,
+                "additional": data["additional"] or None,
             }
         )
 

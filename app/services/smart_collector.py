@@ -170,7 +170,9 @@ class SmartCollector:
             # Don't hammer the API during outages
             if not self._should_retry_after_error(now):
                 last_fetch = self.last_fetch_time or 0.0
-                logger.debug(f"{self.collector_name}: Still in retry delay ({self.error_retry_delay}s)")
+                logger.debug(
+                    f"{self.collector_name}: Still in retry delay ({self.error_retry_delay}s)"
+                )
                 if self.last_result:
                     return self._tag_as_cached(self.last_result, now)
                 return [
@@ -190,7 +192,7 @@ class SmartCollector:
                 if result:
                     self._mark_success(result, now)
                     return copy.deepcopy(result)
-                    
+
                 # Empty result without error
                 self._mark_failure(Exception("Empty result from collector"), now)
                 if self.last_result:

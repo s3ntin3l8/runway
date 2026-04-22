@@ -290,7 +290,7 @@ async def get_fleet_config(
 
     rows = session.exec(select(ProviderConfig)).all()
 
-    config = {"providers": {}}
+    config: dict[str, dict] = {"providers": {}}
 
     for row in rows:
         # We only care about global defaults for sidecars, or merge all account settings

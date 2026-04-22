@@ -700,15 +700,21 @@ window.forceRefresh = async function() {
     const btn = document.getElementById('refresh-btn');
     const icon = document.getElementById('refresh-icon');
     if (btn) btn.disabled = true;
-    if (icon) icon.style.animation = 'spin 1s linear infinite';
+    if (icon) icon.classList.add('animate-spin');
+
+    // Enforce a visible minimum so the spinner is never just a flash
+    // (collect_all returns cached data in <100ms when providers are within TTL)
+    const minVisible = new Promise(r => setTimeout(r, 1500));
+
     try {
         await forceCollect();
     } catch (e) {
         console.warn('Force collect error (server may be restarting):', e.message);
     }
-    await loadData();
+    await Promise.all([loadData(), minVisible]);
+
     if (btn) btn.disabled = false;
-    if (icon) icon.style.animation = '';
+    if (icon) icon.classList.remove('animate-spin');
 };
 
 // Cleanup on page unload

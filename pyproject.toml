@@ -50,6 +50,7 @@ exclude = [
     "site-packages",
     "venv",
     "sidecar_app/spec",
+    "scratch",
 ]
 
 # Same as Black.

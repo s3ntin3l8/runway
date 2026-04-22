@@ -88,4 +88,7 @@ def test_json_format_still_works(client, session):
     _add_snapshot(session)
     response = client.get("/api/v1/usage/history")
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    data = response.json()
+    assert isinstance(data, dict)
+    assert "averages" in data
+    assert isinstance(data["averages"], list)
