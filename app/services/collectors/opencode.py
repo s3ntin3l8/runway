@@ -40,10 +40,10 @@ class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
     DEFAULT_WINDOW_TYPE = "weekly"
 
-    STRATEGIES: dict[str, tuple[str, str]] = {
+    STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "web": ("Web API (Browser Cookie)", "_get_opencode_web"),
         "sidecar": ("Sidecar Aggregation (Multi-Host)", "_strategy_sidecar_aggregation"),
-        "local": ("Local Database", "_strategy_local_db_fallback"),
+        "local": ("Local Database", "_strategy_local_db_fallback", {"enrich": True}),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -318,14 +318,14 @@ class OpenCodeCollector(BaseCollector):
 
     async def _get_opencode_tui(self) -> list[dict[str, Any]]:
         """
-        Fetch OpenCode TUI local database statistics with multi-window limits.
+        Query local DB and emit one enrichment dict per window.
 
-        This is a fallback when web API and sidecar are unavailable.
-
-        Returns:
-            List[Dict[str, Any]]: Cards for each time window (5h, week, month)
+        Returns enrichment-shaped dicts (not real cards) carrying
+        `_enrichment_detail`, `totals`, and `_fallback_card`. The custom
+        `_enrich_results` merges them into the web-API primary cards; when
+        there is no primary, `_fallback_card` is promoted so local-only
+        hosts still render a card.
         """
-        # Try multiple potential DB paths (platform data dir vs legacy/Linux paths)
         potential_paths = [
             settings.OPENCODE_DB_PATH,
             os.path.expanduser("~/.local/share/opencode/opencode.db"),
@@ -348,10 +348,7 @@ class OpenCodeCollector(BaseCollector):
 
             now = datetime.now(UTC)
 
-            # Discover identity from git config if missing (similar to GitHub)
             if not self.account_label or self.account_label.lower() == "default":
-                import asyncio
-
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         "git",
@@ -371,73 +368,124 @@ class OpenCodeCollector(BaseCollector):
 
             identity_suffix = f" | {self.account_label}" if self.account_label else ""
 
-            # Calculate cutoff times for each window
-            cutoffs = {
-                "5h": int((now - timedelta(hours=5)).timestamp() * 1000),
-                "week": int((now - timedelta(days=7)).timestamp() * 1000),
-                "month": int((now - timedelta(days=30)).timestamp() * 1000),
-            }
+            windows = [
+                (
+                    "5h",
+                    int((now - timedelta(hours=5)).timestamp() * 1000),
+                    "OpenCode (5h)",
+                    12.0,
+                    "5h",
+                ),
+                (
+                    "week",
+                    int((now - timedelta(days=7)).timestamp() * 1000),
+                    "OpenCode (7d)",
+                    30.0,
+                    "7d",
+                ),
+                (
+                    "month",
+                    int((now - timedelta(days=30)).timestamp() * 1000),
+                    "OpenCode (30d)",
+                    60.0,
+                    "30d",
+                ),
+            ]
 
-            # Documented limits for OpenCode Go
-            limits = {
-                "5h": 12.0,
-                "week": 30.0,
-                "month": 60.0,
-            }
-
+            results = []
             async with aiosqlite.connect(db) as conn:
-                cards = []
-
-                for window, cutoff_ms in cutoffs.items():
+                for _window_key, cutoff_ms, service_name, limit, label in windows:
                     cursor = await conn.execute(
                         """
-                        SELECT 
-                            SUM(json_extract(data, '$.cost')),
-                            COUNT(*)
+                        SELECT
+                            json_extract(data, '$.cost')             AS cost,
+                            json_extract(data, '$.tokens.input')     AS t_in,
+                            json_extract(data, '$.tokens.output')    AS t_out,
+                            json_extract(data, '$.tokens.reasoning') AS t_reason,
+                            json_extract(data, '$.tokens.cache.read')  AS cache_r,
+                            json_extract(data, '$.tokens.cache.write') AS cache_w,
+                            json_extract(data, '$.modelID')          AS model_id,
+                            json_extract(data, '$.parentID')         AS parent_id
                         FROM message
                         WHERE time_created > ?
                           AND json_valid(data)
                           AND json_extract(data, '$.role') = 'assistant'
-                    """,
+                        """,
                         (cutoff_ms,),
                     )
-                    row = await cursor.fetchone()
+                    rows = await cursor.fetchall()
 
-                    used = float(row[0] or 0.0)
-                    count = int(row[1] or 0)
-                    limit = limits[window]
-                    remaining = max(0, limit - used)
-                    pct = (used / limit * 100) if limit > 0 else 0
+                    total_cost = 0.0
+                    total_in = total_out = total_reason = cache_r = cache_w = 0
+                    by_model: dict[str, dict] = {}
+                    convos: set[str] = set()
 
-                    # Format window label for display
-                    window_labels = {"5h": "5h", "week": "7d", "month": "30d"}
+                    for cost, t_in, t_out, t_reason, cr, cw, model_id, parent_id in rows:
+                        total_cost += float(cost or 0)
+                        total_in += int(t_in or 0)
+                        total_out += int(t_out or 0)
+                        total_reason += int(t_reason or 0)
+                        cache_r += int(cr or 0)
+                        cache_w += int(cw or 0)
+                        if parent_id:
+                            convos.add(parent_id)
+                        if model_id:
+                            short = self._short_model_id_oc(model_id)
+                            entry = by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
+                            entry["cost"] += float(cost or 0)
+                            entry["msgs"] += 1
 
-                    cards.append(
+                    msgs = len(rows)
+                    remaining = max(0.0, limit - total_cost)
+                    pct = (total_cost / limit * 100) if limit > 0 else 0.0
+
+                    totals = {
+                        "cost": total_cost,
+                        "msgs": msgs,
+                        "convos": len(convos),
+                        "tokens": {
+                            "input": total_in,
+                            "output": total_out,
+                            "reasoning": total_reason,
+                            "cache_read": cache_r,
+                            "cache_write": cache_w,
+                        },
+                        "by_model": by_model,
+                    }
+
+                    enrichment_detail = self._build_oc_enrichment_detail(totals)
+
+                    fallback_card = {
+                        "service_name": service_name,
+                        "icon": "⚡",
+                        "remaining": f"${remaining:.2f}",
+                        "unit": f"${limit:.0f} limit",
+                        "reset": f"Rolling {label}",
+                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
+                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
+                        "detail": f"${total_cost:.2f} used · {msgs} msgs · Local DB{identity_suffix}",
+                        "used_value": total_cost,
+                        "limit_value": limit,
+                        "is_unlimited": False,
+                        "unit_type": "currency",
+                        "currency": "USD",
+                        "account_label": self.account_label,
+                        "reset_at": None,
+                        "data_source": self.DATA_SOURCE_LOCAL,
+                        "input_source": "server",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+
+                    results.append(
                         {
-                            "service_name": f"OpenCode ({window_labels[window]})",
-                            "icon": "⚡",
-                            "remaining": f"${remaining:.2f}",
-                            "unit": f"${limit:.0f} limit",
-                            "reset": f"Rolling {window_labels[window]}",
-                            "health": (
-                                "good" if pct < 70 else "warning" if pct < 90 else "critical"
-                            ),
-                            "pace": ("Stable" if pct < 50 else "High" if pct < 80 else "Fatigue"),
-                            "detail": f"${used:.2f} used · {count} msgs · Local DB{identity_suffix}",
-                            "used_value": used,
-                            "limit_value": limit,
-                            "is_unlimited": False,
-                            "unit_type": "currency",
-                            "currency": "USD",
-                            "account_label": self.account_label,
-                            "reset_at": None,  # Rolling window has no fixed reset time
-                            "data_source": self.DATA_SOURCE_LOCAL,
-                            "input_source": "server",
-                            "updated_at": datetime.now(UTC).isoformat(),
+                            "service_name": service_name,
+                            "_enrichment_detail": enrichment_detail,
+                            "totals": totals,
+                            "_fallback_card": fallback_card,
                         }
                     )
 
-                return cards
+            return results
 
         except Exception as e:
             return [
@@ -448,3 +496,68 @@ class OpenCodeCollector(BaseCollector):
                     error_type="api_error",
                 )
             ]
+
+    def _short_model_id_oc(self, model_id: str) -> str:
+        """Shorten a model ID for display, e.g. claude-sonnet-4-6 → sonnet."""
+        m = model_id.lower()
+        # Strip claude- prefix then any trailing -version suffix
+        m = re.sub(r"^claude-", "", m)
+        m = re.sub(r"-\d+[-.]?\d*$", "", m)
+        # Trim -free / -latest suffixes
+        m = re.sub(r"-(free|latest|preview)$", "", m)
+        return m or model_id
+
+    def _build_oc_enrichment_detail(self, totals: dict) -> str:
+        """Build the enrichment detail string from per-window totals."""
+        parts: list[str] = []
+
+        cost = totals.get("cost", 0.0)
+        parts.append(f"${cost:.2f}")
+
+        tok = totals.get("tokens", {})
+        token_segs: list[str] = []
+        if tok.get("input"):
+            token_segs.append(f"in:{tok['input']:,}")
+        if tok.get("output"):
+            token_segs.append(f"out:{tok['output']:,}")
+        if tok.get("cache_read"):
+            token_segs.append(f"cache_r:{tok['cache_read']:,}")
+        if tok.get("cache_write"):
+            token_segs.append(f"cache_w:{tok['cache_write']:,}")
+        if token_segs:
+            parts.append(" ".join(token_segs))
+
+        by_model = totals.get("by_model", {})
+        if by_model:
+            top = sorted(by_model.items(), key=lambda x: x[1]["cost"], reverse=True)[:3]
+            model_segs = [f"{name}:${info['cost']:.2f}" for name, info in top]
+            parts.append(" ".join(model_segs))
+
+        convos = totals.get("convos", 0)
+        if convos:
+            parts.append(f"{convos} convos")
+
+        return " | ".join(parts)
+
+    def _enrich_results(
+        self,
+        primary: list[dict[str, Any]] | None,
+        enrichment: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not enrichment or self._is_error_result(enrichment):
+            return primary or []
+
+        # Local-only host: promote fallback cards so the account still renders.
+        if not primary or self._is_error_result(primary):
+            promoted = [e["_fallback_card"] for e in enrichment if e.get("_fallback_card")]
+            return promoted or (primary or [])
+
+        by_name = {e.get("service_name"): e for e in enrichment if e.get("_enrichment_detail")}
+        for card in primary:
+            match = by_name.get(card.get("service_name"))
+            if not match:
+                continue
+            suffix = match["_enrichment_detail"]
+            if suffix:
+                card["detail"] = f"{card.get('detail', '').rstrip()} | {suffix}".strip(" |")
+        return primary
