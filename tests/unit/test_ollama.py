@@ -58,6 +58,9 @@ async def test_ollama_parsing(ollama_html):
     assert weekly_card["tier"] == "pro"
     assert weekly_card["reset_at"] == "2026-04-15T00:00:00+00:00"
 
+    assert session_card.get("window_type") == "session"
+    assert weekly_card.get("window_type") == "weekly"
+
 
 @pytest.mark.asyncio
 async def test_ollama_remaining_bars_and_free_tier():
