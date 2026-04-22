@@ -94,6 +94,18 @@ async def test_cached_cards_excluded_from_sleep_tracking():
 
 
 @pytest.mark.asyncio
+async def test_wake_resets_interval_and_sets_event():
+    """wake() resets interval to base and sets the wake event."""
+    p = BackgroundPoller(interval_seconds=900)
+    p._interval = 7200  # simulate dormant state
+
+    p.wake()
+
+    assert p._interval == p._base_interval
+    assert p._wake_event.is_set()
+
+
+@pytest.mark.asyncio
 async def test_all_accounts_must_be_dormant_for_sleep():
     """Sleep only triggers when ALL accounts are dormant."""
     p = BackgroundPoller(interval_seconds=900)
