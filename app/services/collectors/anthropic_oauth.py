@@ -16,6 +16,10 @@ from app.core.utils import (
     http_request_with_retry,
     human_delta,
 )
+from app.services.collectors._anthropic_common import (
+    ANTHROPIC_WINDOW_NAME_MAP,
+    classify_anthropic_window_type,
+)
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.token_cache import token_cache
 
@@ -160,14 +164,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             "User-Agent": "claude-code/2.1.69",
             "anthropic-beta": "oauth-2025-04-20",
         }
-        name_map = {
-            "five_hour": "Session Window",
-            "seven_day": "Weekly Window",
-            "seven_day_sonnet": "Sonnet Weekly",
-            "seven_day_opus": "Opus Weekly",
-            "seven_day_omelette": "Claude Design",
-            "extra_usage": "Extra Usage",
-        }
+        name_map = ANTHROPIC_WINDOW_NAME_MAP
 
         # --- HTTP request ---
         try:
@@ -506,15 +503,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 except (ValueError, TypeError):
                     pass
 
-            # Preserve special model window types
-            if key == "five_hour":
-                w_type = "session"
-            elif key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
-                w_type = key  # preserve as-is for Additional classification
-            elif "seven_day" in key:
-                w_type = "weekly"
-            else:
-                w_type = "unknown"
+            w_type = classify_anthropic_window_type(key)
 
             results.append(
                 {
