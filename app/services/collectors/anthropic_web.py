@@ -465,6 +465,10 @@ class AnthropicWebMixin:
             ):
                 all_keys.append(k)
 
+        # Initialize here so balance/extra_data sections below can reference it even when
+        # the windows loop produces no results (all window_data keys are None).
+        tier_label = f" [{tier}]" if tier else ""
+
         for api_key in all_keys:
             display_name = window_map.get(api_key, api_key.replace("_", " ").title())
             window_data = data.get(api_key)
@@ -504,7 +508,6 @@ class AnthropicWebMixin:
             else:
                 w_type = "unknown"
 
-            tier_label = f" [{tier}]" if tier else ""
             results.append(
                 {
                     "service_name": f"Claude ({display_name})",
