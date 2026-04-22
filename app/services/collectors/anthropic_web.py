@@ -21,6 +21,10 @@ import httpx
 from app.core.browser_cookies import get_claude_session_cookie
 from app.core.config import is_local_collector_enabled, settings
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
+from app.services.collectors._anthropic_common import (
+    ANTHROPIC_WINDOW_NAME_MAP,
+    classify_anthropic_window_type,
+)
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -35,13 +39,7 @@ class AnthropicWebMixin:
     Intended to be composed into AnthropicCollector.
     """
 
-    _name_map = {
-        "five_hour": "Session Window",
-        "seven_day": "Weekly Window",
-        "seven_day_sonnet": "Sonnet Weekly",
-        "seven_day_opus": "Opus Weekly",
-        "extra_usage": "Extra Usage",
-    }
+    _name_map = ANTHROPIC_WINDOW_NAME_MAP
 
     # ─────────────────────────────── Statusline (fast path) ──────────────────
 
@@ -140,15 +138,7 @@ class AnthropicWebMixin:
             reset_ts = info.get("resets_at")
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
-            # Preserve special model window types
-            if key == "five_hour":
-                w_type = "session"
-            elif key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
-                w_type = key  # preserve as-is for Additional classification
-            elif "seven_day" in key:
-                w_type = "weekly"
-            else:
-                w_type = "unknown"
+            w_type = classify_anthropic_window_type(key)
 
             results.append(
                 {
@@ -440,14 +430,8 @@ class AnthropicWebMixin:
                 )
             tier = plan.capitalize() if plan else None
 
-        # Window mapping including Claude Design
-        window_map = {
-            "five_hour": "Session Window",
-            "seven_day": "Weekly Window",
-            "seven_day_sonnet": "Sonnet Weekly",
-            "seven_day_opus": "Opus Weekly",
-            "seven_day_omelette": "Claude Design",
-        }
+        # extra_usage has a different shape and is processed separately as extra_data below
+        window_map = {k: v for k, v in ANTHROPIC_WINDOW_NAME_MAP.items() if k != "extra_usage"}
 
         # All known windows — we start with these to ensure order
         all_keys = list(window_map.keys())
@@ -498,15 +482,7 @@ class AnthropicWebMixin:
                 except (ValueError, TypeError):
                     pass
 
-            # Preserve special model window types for Additional classification
-            if api_key == "five_hour":
-                w_type = "session"
-            elif api_key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
-                w_type = api_key
-            elif "seven_day" in api_key:
-                w_type = "weekly"
-            else:
-                w_type = "unknown"
+            w_type = classify_anthropic_window_type(api_key)
 
             results.append(
                 {
