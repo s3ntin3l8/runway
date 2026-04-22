@@ -743,13 +743,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') closeModal();
     });
 
-    initUI();
-    initHistoryView();
-    
-    // Check auth before loading dashboard data
+    initUI();  // also calls initHistoryView() and switchView('dashboard') → loadDashboard if empty
+
+    // Check auth; only trigger an explicit load if switchView hasn't already fetched.
     checkAuth().then(authorized => {
         if (authorized) {
-            loadDashboard();
+            if (STATE.data.length === 0) loadDashboard();
             // Auto-refresh every 5 minutes so the UI stays current even when the poller is dormant
             refreshTimer = setInterval(() => loadDashboard(), 5 * 60 * 1000);
         }
