@@ -1651,6 +1651,159 @@ class TestOpenCodeCollector:
         # When no data sources are available, should return empty list
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_get_opencode_tui_per_window_enrichment(self, tmp_path):
+        """_get_opencode_tui emits enrichment dicts, not plain cards."""
+        import json
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        db_path = str(tmp_path / "opencode.db")
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+        def _row(
+            offset_hours: float,
+            model: str,
+            cost: float,
+            t_in: int,
+            t_out: int,
+            cache_r: int,
+            cache_w: int,
+            parent_id: str,
+        ) -> dict:
+            ts = int((datetime.now(UTC) - timedelta(hours=offset_hours)).timestamp() * 1000)
+            return {
+                "time_created": ts,
+                "data": json.dumps(
+                    {
+                        "role": "assistant",
+                        "cost": cost,
+                        "tokens": {
+                            "input": t_in,
+                            "output": t_out,
+                            "reasoning": 0,
+                            "cache": {"read": cache_r, "write": cache_w},
+                        },
+                        "modelID": model,
+                        "parentID": parent_id,
+                    }
+                ),
+            }
+
+        rows = [
+            _row(1, "claude-sonnet-4-6", 1.50, 10000, 500, 5000, 200, "conv-a"),
+            _row(3, "claude-opus-4-7", 2.00, 20000, 800, 0, 0, "conv-b"),
+            _row(100, "minimax-m2.5-free", 0.10, 3000, 100, 0, 0, "conv-c"),
+        ]
+        # rows[0] and rows[1] are inside 5h; all three are inside 7d and 30d
+        # row[2] is 100h ago → outside 5h window, but inside 7d (100h < 168h)
+
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE message (time_created INTEGER, data TEXT)")
+        for r in rows:
+            conn.execute("INSERT INTO message VALUES (?, ?)", (r["time_created"], r["data"]))
+        conn.commit()
+        conn.close()
+
+        collector = OpenCodeCollector()
+        with patch("app.services.collectors.opencode.settings") as mock_settings:
+            mock_settings.OPENCODE_DB_PATH = db_path
+            result = await collector._get_opencode_tui()
+
+        assert len(result) == 3
+        by_name = {e["service_name"]: e for e in result}
+        assert set(by_name.keys()) == {"OpenCode (5h)", "OpenCode (7d)", "OpenCode (30d)"}
+
+        fh = by_name["OpenCode (5h)"]
+        assert fh.get("_enrichment_detail")
+        assert "$" in fh["_enrichment_detail"]
+        assert "sonnet" in fh["_enrichment_detail"]
+        assert "cache_w:0" not in fh["_enrichment_detail"]
+        assert fh.get("_fallback_card") is not None
+        assert fh["_fallback_card"]["service_name"] == "OpenCode (5h)"
+        assert fh["_fallback_card"]["data_source"] == "local"
+
+        # 5h window: only rows[0] and rows[1] (rows[2] is 100h ago)
+        assert fh["totals"]["msgs"] == 2
+        assert fh["totals"]["convos"] == 2
+
+        # 7d window: all three rows (100h < 168h = 7d)
+        sevend = by_name["OpenCode (7d)"]
+        assert sevend["totals"]["msgs"] == 3
+        assert sevend["totals"]["convos"] == 3
+
+    @pytest.mark.asyncio
+    async def test_enrich_results_matches_by_service_name(self):
+        """Enrichment suffix lands on the matching primary card; orphan is dropped."""
+        collector = OpenCodeCollector()
+
+        primary = [
+            {
+                "service_name": "OpenCode (5h)",
+                "detail": "$1.00 used · Web API",
+                "remaining": "$11.00",
+            },
+            {
+                "service_name": "OpenCode (7d)",
+                "detail": "$5.00 used · Web API",
+                "remaining": "$25.00",
+            },
+        ]
+        enrichment = [
+            {
+                "service_name": "OpenCode (5h)",
+                "_enrichment_detail": "$1.00 | in:10,000",
+                "_fallback_card": {},
+            },
+            {
+                "service_name": "OpenCode (7d)",
+                "_enrichment_detail": "$5.00 | in:50,000",
+                "_fallback_card": {},
+            },
+            {
+                "service_name": "OpenCode (30d)",
+                "_enrichment_detail": "$8.00 | in:80,000",
+                "_fallback_card": {},
+            },
+        ]
+
+        result = collector._enrich_results(primary, enrichment)
+
+        assert len(result) == 2
+        fh = next(c for c in result if c["service_name"] == "OpenCode (5h)")
+        assert "in:10,000" in fh["detail"]
+        sevend = next(c for c in result if c["service_name"] == "OpenCode (7d)")
+        assert "in:50,000" in sevend["detail"]
+
+    @pytest.mark.asyncio
+    async def test_enrich_results_no_primary_promotes_fallback(self):
+        """When primary is empty, fallback cards are promoted."""
+        collector = OpenCodeCollector()
+
+        fallback = {"service_name": "OpenCode (5h)", "remaining": "$12.00", "detail": "Local DB"}
+        enrichment = [
+            {
+                "service_name": "OpenCode (5h)",
+                "_enrichment_detail": "$0.00",
+                "_fallback_card": fallback,
+            },
+        ]
+
+        result = collector._enrich_results([], enrichment)
+        assert len(result) == 1
+        assert result[0]["service_name"] == "OpenCode (5h)"
+        assert result[0]["remaining"] == "$12.00"
+
+    @pytest.mark.asyncio
+    async def test_enrich_results_error_enrichment_returns_primary(self):
+        """Error-shaped or empty enrichment leaves primary untouched."""
+        collector = OpenCodeCollector()
+
+        primary = [{"service_name": "OpenCode (5h)", "detail": "$1.00 used", "remaining": "$11.00"}]
+
+        assert collector._enrich_results(primary, []) == primary
+        assert collector._enrich_results(primary, [{"remaining": "ERR"}]) == primary
+
 
 class TestZaiCollector:
     """Test suite for zAI (consolidated) collector."""
