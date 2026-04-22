@@ -137,10 +137,15 @@ class AnthropicWebMixin:
             reset_ts = info.get("resets_at")
             reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
 
-            # Correct window type based on key
-            w_type = (
-                "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
-            )
+            # Preserve special model window types
+            if key == "five_hour":
+                w_type = "session"
+            elif key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
+                w_type = key  # preserve as-is for Additional classification
+            elif "seven_day" in key:
+                w_type = "weekly"
+            else:
+                w_type = "unknown"
 
             results.append(
                 {
@@ -484,14 +489,15 @@ class AnthropicWebMixin:
                 except (ValueError, TypeError):
                     pass
 
-            # Correct window type based on key
-            w_type = (
-                "session"
-                if api_key == "five_hour"
-                else "weekly"
-                if "seven_day" in api_key
-                else "unknown"
-            )
+            # Preserve special model window types for Additional classification
+            if api_key == "five_hour":
+                w_type = "session"
+            elif api_key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
+                w_type = api_key
+            elif "seven_day" in api_key:
+                w_type = "weekly"
+            else:
+                w_type = "unknown"
 
             tier_label = f" [{tier}]" if tier else ""
             results.append(

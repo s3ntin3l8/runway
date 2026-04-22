@@ -319,7 +319,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 top: 40,
                 left: 60,
                 right: 30,
-                bottom: 80,
+                bottom: 110,
                 containLabel: false
             },
             xAxis: {
@@ -368,7 +368,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 },
                 {
                     type: 'slider',
-                    bottom: 40,
+                    bottom: 45,
                     height: 20,
                     borderColor: 'transparent',
                     fillerColor: 'rgba(59, 130, 246, 0.1)',

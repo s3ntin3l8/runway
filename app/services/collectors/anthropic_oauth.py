@@ -489,10 +489,15 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 except (ValueError, TypeError):
                     pass
 
-            # Correct window type based on key
-            w_type = (
-                "session" if key == "five_hour" else "weekly" if "seven_day" in key else "unknown"
-            )
+            # Preserve special model window types
+            if key == "five_hour":
+                w_type = "session"
+            elif key in ("seven_day_sonnet", "seven_day_opus", "seven_day_omelette"):
+                w_type = key  # preserve as-is for Additional classification
+            elif "seven_day" in key:
+                w_type = "weekly"
+            else:
+                w_type = "unknown"
 
             results.append(
                 {

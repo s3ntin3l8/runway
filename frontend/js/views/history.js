@@ -108,8 +108,6 @@ function updateCsvHref() {
 
 function formatValue(value, unit) {
     if (value === null || value === undefined) return '—';
-    // Treat 0 and very small values as empty
-    if (value === 0 || value < 0.01) return '—';
     const unitStr = unit || '';
     if (unitStr === 'percent') return `${value.toFixed(1)}%`;
     if (unitStr === 'currency') return `$${value.toFixed(2)}`;
@@ -123,20 +121,46 @@ function formatWindowValue(entry) {
     return formatValue(entry.value, entry.unit);
 }
 
-function parseAdditional(additionalStr) {
-    if (!additionalStr) return [];
-    const items = [];
-    additionalStr.split(' | ').forEach(part => {
-        const match = part.match(/^(.+?): (\d+(?:\.\d+)?)(.*)$/);
-        if (match) {
-            items.push({
-                window_type: match[1],
-                value: parseFloat(match[2]),
-                unit: match[3] || 'generic'
-            });
+// Convert an entry to match the active metric, or return null if incompatible.
+// Used both to display GitHub (requests) as % when metric=percent, and to filter
+// out rows that have no data in the active metric.
+function adaptEntryToMetric(entry, metric) {
+    if (!entry || entry.value == null) return null;
+    if (metric === 'percent') {
+        if (entry.unit === 'percent') return entry;
+        if (entry.limit && entry.limit > 0) {
+            return { ...entry, value: (entry.value / entry.limit) * 100, unit: 'percent' };
         }
-    });
-    return items;
+        return null;
+    }
+    if (metric === 'tokens') {
+        return entry.unit === 'tokens' ? entry : null;
+    }
+    if (metric === 'cost') {
+        return entry.unit === 'currency' ? entry : null;
+    }
+    return entry;
+}
+
+const WINDOW_LABEL_OVERRIDES = {
+    seven_day_omelette: 'design',
+    seven_day_sonnet: 'sonnet',
+    seven_day_opus: 'opus',
+};
+
+function friendlyWindowLabel(windowType) {
+    if (!windowType) return windowType;
+    if (WINDOW_LABEL_OVERRIDES[windowType]) return WINDOW_LABEL_OVERRIDES[windowType];
+    return windowType.replace(/^seven_day_/, '').replace(/_/g, ' ');
+}
+
+function renderAdditional(list) {
+    if (!list || list.length === 0) return '<span class="text-zinc-600">—</span>';
+    return list.map(a => {
+        const label = escapeHTML(friendlyWindowLabel(a.window));
+        const val = formatValue(a.value, a.unit);
+        return `<span class="inline-block mr-1 px-2 py-0.5 rounded bg-zinc-800/60 text-zinc-400 text-[10px] mono">${label} ${val}</span>`;
+    }).join('');
 }
 
 export function renderHistoryFromCache(skipChartUpdate = false) {
@@ -144,22 +168,34 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     const rawHistory = _historyRawCache || [];
     const stripEl = document.getElementById('history-sparkline-strip');
 
-    // Build sparklines from RAW data for chart (each provider+window as separate line)
+    // Build sparklines from RAW data for chart (each provider+service+window as separate line)
     const sparklineData = [];
     rawHistory.forEach(row => {
         if (row.used_value == null) return;
-        // Filter by metric selector
         const metric = historyState.metric;
-        if (metric === 'percent' && row.unit_type !== 'percent') return;
-        if (metric === 'tokens' && row.unit_type !== 'tokens') return;
-        if (metric === 'cost' && row.unit_type !== 'currency') return;
+        let entry = row;
+        if (metric === 'percent') {
+            if (row.unit_type === 'percent') {
+                // pass through
+            } else if (row.limit_value && row.limit_value > 0) {
+                // derive percent on the fly (mirrors dashboard sparkline behavior)
+                entry = { ...row, used_value: (row.used_value / row.limit_value) * 100, unit_type: 'percent' };
+            } else {
+                return;
+            }
+        } else if (metric === 'tokens' && row.unit_type !== 'tokens') {
+            return;
+        } else if (metric === 'cost' && row.unit_type !== 'currency') {
+            return;
+        }
         sparklineData.push({
-            provider_id: row.provider_id,
-            timestamp: row.timestamp,
-            used_value: row.used_value,
-            limit_value: row.limit_value,
-            unit_type: row.unit_type,
-            window_type: row.window_type
+            provider_id: entry.provider_id,
+            service_name: entry.service_name,
+            timestamp: entry.timestamp,
+            used_value: entry.used_value,
+            limit_value: entry.limit_value,
+            unit_type: entry.unit_type,
+            window_type: entry.window_type
         });
     });
     if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
@@ -181,10 +217,23 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
         filtered = history.filter(s => historyState.activeProviders.has(s.provider_id));
     }
 
-    // Apply window filter to table (affects what we show in session/weekly columns)
-    let tableData = filtered;
+    // Adapt each row to the active metric (converts GitHub requests → percent when applicable,
+    // drops entries whose unit can't match the metric). Rows with nothing left are hidden.
+    const metric = historyState.metric;
+    let tableData = filtered
+        .map(s => ({
+            ...s,
+            session: adaptEntryToMetric(s.session, metric),
+            weekly: adaptEntryToMetric(s.weekly, metric),
+            additional: (s.additional || [])
+                .map(a => adaptEntryToMetric(a, metric))
+                .filter(Boolean),
+        }))
+        .filter(s => s.session || s.weekly || s.additional.length > 0);
+
+    // Apply window filter (session/weekly)
     if (historyState.windowFilter !== 'all') {
-        tableData = filtered.filter(s => {
+        tableData = tableData.filter(s => {
             if (historyState.windowFilter === 'session') return !!s.session;
             if (historyState.windowFilter === 'weekly') return !!s.weekly;
             return true;
@@ -213,7 +262,6 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
         const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const session = formatWindowValue(s.session);
         const weekly = formatWindowValue(s.weekly);
-        const additional = s.additional || '—';
 
         html += `<tr class="border-b border-zinc-900/30 hover:bg-zinc-800/10 transition-colors">
             <td class="py-2 px-2 text-zinc-600">${date}</td>
@@ -221,7 +269,7 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
             <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(s.account_label || '—')}</td>
             <td class="py-2 px-2 text-right font-bold text-zinc-300">${session}</td>
             <td class="py-2 px-2 text-right font-bold text-zinc-300">${weekly}</td>
-            <td class="py-2 px-2 text-zinc-500 italic">${escapeHTML(additional)}</td>
+            <td class="py-2 px-2">${renderAdditional(s.additional.length ? s.additional : null)}</td>
         </tr>`;
     });
     html += '</tbody></table>';
