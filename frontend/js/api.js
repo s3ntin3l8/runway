@@ -113,7 +113,7 @@ export async function fetchHistoryRaw(params = {}) {
 export async function fetchForecast(params = {}) {
     const query = new URLSearchParams(params).toString();
     const resp = await fetchWithAuth(`/api/v1/usage/forecast?${query}`);
-    if (!resp.ok) throw new Error('Failed to fetch forecast');
+    if (!resp.ok) throw new Error(`Failed to fetch forecast: HTTP ${resp.status}`);
     return await resp.json();
 }
 
