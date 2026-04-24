@@ -309,6 +309,39 @@ def test_series_key_isolates_by_service_name(db_session):
     assert entry_b.projected_pct > entry_a.projected_pct * 5
 
 
+def test_tiny_positive_slope_reported_as_stable(db_session):
+    """Rounded-percentage series with <1pp projected growth → stable (not ok)."""
+    now = datetime.now(UTC)
+    reset_at = now + timedelta(days=4)
+    window_start = reset_at - timedelta(days=7)
+
+    # Rounded percentages, barely moving: 42.0 → 42.1 → 42.1 → 42.2 over 3 days.
+    # Projects ~42.4% at reset — within 1 pct-point of current → should be stable.
+    for i, pct in enumerate([42.0, 42.1, 42.1, 42.2]):
+        ts = window_start + timedelta(hours=24 * i)
+        _make_snapshot(
+            session=db_session,
+            ts=ts,
+            used_value=pct,
+            unit_type="percent",
+            limit_value=100.0,
+        )
+
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=42.2,
+        limit_value=100.0,
+        reset_at=reset_at.isoformat(),
+    )
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.status == "stable", (
+        f"expected stable (tiny slope, rounded series), got {result.status} "
+        f"({result.projected_pct})"
+    )
+
+
 def test_negative_slope_clamps_to_current(db_session):
     """Declining usage (negative slope) → projected_used >= current snapshot used_value."""
     now = datetime.now(UTC)

@@ -18,6 +18,11 @@ WINDOW_DURATIONS: dict[str, timedelta] = {
 # from "too early to tell".
 MIN_SAMPLES_FOR_TREND = 4
 
+# A projection within this many percentage points of now_pct is reported as
+# "stable" rather than a real forecast. Covers rounded-series noise and
+# downward-clamped slopes where the "forecast" would just echo the current value.
+STABLE_PCT_EPSILON = 1.0
+
 
 def _fit_linear(xs: list[float], ys: list[float]) -> LinearRegression | None:
     if len(xs) < 2:
@@ -158,19 +163,6 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
     current_used_value = valid_rows[-1].used_value
     assert current_used_value is not None  # valid_rows filtered to non-None used_value
 
-    if abs(slope) < 1e-9:
-        return _make_entry(
-            card=card,
-            status="stable",
-            window_start=window_start,
-            samples_used=len(valid_rows),
-            confidence=confidence,
-            now_used=now_used,
-            now_pct=now_pct,
-            projected_used=current_used_value,
-            projected_pct=now_pct,
-        )
-
     projected_used = intercept + slope * reset_at_dt.timestamp()
     # Clamp against both the last snapshot and the card's live value to avoid projecting downward
     clamp_floor = max(current_used_value, card.used_value or 0.0)
@@ -180,6 +172,22 @@ def compute_forecast(card: LimitCard, session: Session) -> ForecastEntry | None:
         projected_pct = projected_used
     else:
         projected_pct = projected_used / card.limit_value * 100
+
+    # Stable: no meaningful upward projection. Catches exact-zero slopes, negative slopes
+    # that got clamp-floored to current, and tiny-positive slopes on rounded series
+    # (e.g., Claude's server-rounded percentages) where the projection rounds to now_pct.
+    if now_pct is not None and projected_pct - now_pct < STABLE_PCT_EPSILON:
+        return _make_entry(
+            card=card,
+            status="stable",
+            window_start=window_start,
+            samples_used=len(valid_rows),
+            confidence=confidence,
+            now_used=now_used,
+            now_pct=now_pct,
+            projected_used=projected_used,
+            projected_pct=now_pct,
+        )
 
     if projected_pct >= 100:
         status = "risk"
