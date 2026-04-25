@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import Integer, func
 from sqlmodel import Session, asc, desc, select
 
 from app.core.db import get_session
@@ -80,7 +81,7 @@ async def get_usage_forecast(
 
 
 @router.get("/history")
-@limiter.limit("30/minute")
+@limiter.limit("10/minute")
 async def get_usage_history(
     request: Request,
     provider_id: str | None = None,
@@ -90,35 +91,111 @@ async def get_usage_history(
     export_format: str = Query(default="json", alias="format"),
     session: Session = Depends(get_session),
 ):
-    """Fetch usage history snapshots. Use format=csv for a downloadable CSV."""
+    """Fetch usage history snapshots. Use format=csv for a downloadable CSV.
+
+    Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
+    """
     since = datetime.now(UTC) - timedelta(days=days)
 
-    statement = select(UsageSnapshot).where(UsageSnapshot.timestamp >= since)
-
-    if provider_id:
-        statement = statement.where(UsageSnapshot.provider_id == provider_id)
-    if account_id:
-        statement = statement.where(UsageSnapshot.account_id == account_id)
-
-    statement = statement.order_by(desc(UsageSnapshot.timestamp))
-
     if export_format == "csv":
-        # CSV is the archival dump — keep raw rows, apply limit directly.
-        results = session.exec(statement.limit(limit)).all()
+        # CSV is the archival dump — fetch raw rows without aggregation
+        statement = (
+            select(UsageSnapshot)
+            .where(UsageSnapshot.timestamp >= since)
+            .order_by(desc(UsageSnapshot.timestamp))
+            .limit(limit)
+        )
+        if provider_id:
+            statement = statement.where(UsageSnapshot.provider_id == provider_id)
+        if account_id:
+            statement = statement.where(UsageSnapshot.account_id == account_id)
+
+        results = session.exec(statement).all()
         return _history_as_csv(results)
 
-    # JSON path: downsample to one row per (provider, account, model, window, unit, bucket).
-    # Bucket size adapts to the window so short views keep sub-hour resolution and
-    # long views stay compact. Response includes both averages (avg per bucket)
-    # and peaks (max per bucket).
+    # JSON path: SQL aggregation with adaptive bucket granularity
     bucket_seconds = _pick_bucket_seconds(days)
-    # Fetch enough raw rows to fill the requested output after dedup, but avoid
-    # pulling 20k rows when the caller only needs a small window.
-    raw_limit = min(20000, max(limit * 4, 1000))
-    raw = session.exec(statement.limit(raw_limit)).all()
-    averages, peaks = _dedupe_with_peaks(raw, bucket_seconds)
 
+    # SQLite bucket expression
+    bucket_expr = (
+        func.floor(func.strftime("%s", UsageSnapshot.timestamp).cast(Integer()) / bucket_seconds)
+        * bucket_seconds
+    ).label("bucket_ts")
+
+    # SQL aggregation
+    stmt = (
+        select(
+            bucket_expr,
+            UsageSnapshot.provider_id,
+            UsageSnapshot.account_id,
+            UsageSnapshot.account_label,
+            UsageSnapshot.service_name,
+            UsageSnapshot.window_type,
+            UsageSnapshot.unit_type,
+            UsageSnapshot.data_source,
+            func.avg(UsageSnapshot.used_value).label("avg_used"),
+            func.max(UsageSnapshot.used_value).label("max_used"),
+            func.avg(UsageSnapshot.limit_value).label("avg_limit"),
+        )
+        .where(UsageSnapshot.timestamp >= since)
+        .order_by(desc("bucket_ts"))
+    )
+
+    if provider_id:
+        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsageSnapshot.account_id == account_id)
+
+    stmt = stmt.group_by(
+        bucket_expr,
+        UsageSnapshot.provider_id,
+        UsageSnapshot.account_id,
+        UsageSnapshot.service_name,
+        UsageSnapshot.window_type,
+        UsageSnapshot.unit_type,
+    )
+
+    raw = session.exec(stmt.limit(20000)).all()
+
+    # Post-processing: Apply label map
     label_map = _build_label_map(session)
+
+    # Build aggregated snapshots for averages and peaks
+    averages = []
+    peaks = []
+    for r in raw:
+        snapshot_base = {
+            "timestamp": datetime.fromtimestamp(r.bucket_ts, tz=UTC),
+            "provider_id": r.provider_id,
+            "account_id": r.account_id,
+            "account_label": (
+                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
+            ),
+            "service_name": r.service_name,
+            "window_type": r.window_type,
+            "unit_type": r.unit_type,
+            "data_source": r.data_source,
+        }
+
+        # Average snapshot (include even if NULL to preserve structure)
+        averages.append(
+            UsageSnapshot(
+                **snapshot_base,
+                used_value=round(r.avg_used, 4) if r.avg_used is not None else None,
+                limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
+                health="good",  # Not used for aggregated data
+            )
+        )
+
+        # Peak snapshot (include even if NULL)
+        peaks.append(
+            UsageSnapshot(
+                **snapshot_base,
+                used_value=round(r.max_used, 4) if r.max_used is not None else None,
+                limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
+                health="good",
+            )
+        )
 
     # Group by timestamp+provider+account for table display
     avg_grouped = _group_snapshots(averages[:limit], bucket_seconds, label_map)
@@ -144,74 +221,75 @@ async def get_usage_history_raw(
     time range regardless of how many raw polls exist in the DB.  Each
     returned row carries both the avg and the peak (max_used_value) for its
     bucket, enabling the BAND mode shaded-area display.
+
+    Uses SQL GROUP BY for aggregation - dramatically faster than Python-side processing.
     """
     since = datetime.now(UTC) - timedelta(days=days)
     bucket_seconds = _pick_bucket_seconds(days)
 
-    statement = (
-        select(UsageSnapshot)
+    # SQLite bucket expression: floor-divide epoch seconds to bucket boundaries
+    bucket_expr = (
+        func.floor(func.strftime("%s", UsageSnapshot.timestamp).cast(Integer()) / bucket_seconds)
+        * bucket_seconds
+    ).label("bucket_ts")
+
+    # SQL aggregation: AVG for trend, MAX for spike preservation (BAND mode)
+    stmt = (
+        select(
+            bucket_expr,
+            UsageSnapshot.provider_id,
+            UsageSnapshot.account_id,
+            UsageSnapshot.account_label,
+            UsageSnapshot.service_name,
+            UsageSnapshot.window_type,
+            UsageSnapshot.unit_type,
+            UsageSnapshot.data_source,
+            func.avg(UsageSnapshot.used_value).label("avg_used"),
+            func.max(UsageSnapshot.used_value).label("max_used"),
+            func.avg(UsageSnapshot.limit_value).label("avg_limit"),
+        )
         .where(UsageSnapshot.timestamp >= since)
-        .order_by(asc(UsageSnapshot.timestamp))
+        .order_by(asc("bucket_ts"))
     )
+
     if provider_id:
-        statement = statement.where(UsageSnapshot.provider_id == provider_id)
+        stmt = stmt.where(UsageSnapshot.provider_id == provider_id)
     if account_id:
-        statement = statement.where(UsageSnapshot.account_id == account_id)
+        stmt = stmt.where(UsageSnapshot.account_id == account_id)
 
-    raw = session.exec(statement.limit(20_000)).all()
+    # GROUP BY bucket timestamp + series identity
+    stmt = stmt.group_by(
+        bucket_expr,
+        UsageSnapshot.provider_id,
+        UsageSnapshot.account_id,
+        UsageSnapshot.service_name,
+        UsageSnapshot.window_type,
+        UsageSnapshot.unit_type,
+    )
 
-    # Python-side bucket aggregation: group by (bucket_ts, series key)
-    buckets: dict[tuple[int, str, str, str, str, str], dict[str, Any]] = {}
-    for r in raw:
-        epoch = int(r.timestamp.timestamp())
-        bt = epoch - (epoch % bucket_seconds)
-        key = (bt, r.provider_id, r.account_id, r.service_name, r.window_type, r.unit_type)
-        if key not in buckets:
-            buckets[key] = {
-                "bucket_ts": bt,
-                "provider_id": r.provider_id,
-                "account_id": r.account_id,
-                "account_label": r.account_label,
-                "service_name": r.service_name,
-                "unit_type": r.unit_type,
-                "window_type": r.window_type,
-                "data_source": r.data_source,
-                "sum": 0.0,
-                "limit_sum": 0.0,
-                "count": 0,
-                "max": float("-inf"),
-            }
-        b = buckets[key]
-        if r.used_value is not None:
-            b["sum"] += r.used_value
-            b["count"] += 1
-            b["max"] = max(b["max"], r.used_value)
-        if r.limit_value is not None:
-            b["limit_sum"] += r.limit_value
+    raw = session.exec(stmt).all()
 
+    # Post-processing: Apply label map (preserves current behavior)
     label_map = _build_label_map(session)
-    ordered = sorted(buckets.values(), key=lambda x: x["bucket_ts"])
 
     return [
         {
             "id": None,
-            "timestamp": datetime.fromtimestamp(b["bucket_ts"], tz=UTC).isoformat(),
-            "provider_id": b["provider_id"],
-            "account_id": b["account_id"],
+            "timestamp": datetime.fromtimestamp(r.bucket_ts, tz=UTC).isoformat(),
+            "provider_id": r.provider_id,
+            "account_id": r.account_id,
             "account_label": (
-                _effective_label(b["account_label"])
-                or label_map.get((b["provider_id"], b["account_id"]))
+                _effective_label(r.account_label) or label_map.get((r.provider_id, r.account_id))
             ),
-            "service_name": b["service_name"],
-            "used_value": round(b["sum"] / b["count"], 4),
-            "limit_value": round(b["limit_sum"] / b["count"], 4) if b["count"] else None,
-            "max_used_value": round(b["max"], 4),
-            "unit_type": b["unit_type"],
-            "window_type": b["window_type"],
-            "data_source": b["data_source"],
+            "service_name": r.service_name,
+            "used_value": round(r.avg_used, 4) if r.avg_used is not None else None,
+            "limit_value": round(r.avg_limit, 4) if r.avg_limit is not None else None,
+            "max_used_value": round(r.max_used, 4) if r.max_used is not None else None,
+            "unit_type": r.unit_type,
+            "window_type": r.window_type,
+            "data_source": r.data_source,
         }
-        for b in ordered
-        if b["count"] > 0
+        for r in raw
     ][:limit]
 
 
@@ -386,112 +464,6 @@ def _pick_bucket_seconds(days: float) -> int:
     if days >= 0.25:
         return 900  # 6h → 15-min            (~24 pts)
     return 300  # 1h → 5-min             (~12 slots)
-
-
-def _dedupe_with_peaks(
-    rows: Sequence[UsageSnapshot], bucket_seconds: int
-) -> tuple[list[UsageSnapshot], list[UsageSnapshot]]:
-    """Dedupe by bucket, preserving first/last points and tracking peaks.
-
-    Returns (averages, peaks) where:
-    - averages: most recent row per bucket
-    - peaks: row with max used_value per bucket
-    Both always include first and last points by timestamp.
-    """
-    if not rows:
-        return [], []
-
-    sorted_rows = sorted(rows, key=lambda r: r.timestamp)
-    first_row = sorted_rows[0]
-    last_row = sorted_rows[-1]
-
-    avg_seen: set[tuple] = set()
-    averages: list[UsageSnapshot] = []
-
-    bucket_peaks: dict[tuple, UsageSnapshot] = {}
-
-    for r in sorted_rows:
-        ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC)
-        bucket = int(ts.timestamp()) // bucket_seconds
-        key = (
-            r.provider_id,
-            r.account_id,
-            r.service_name,
-            r.model_id,
-            r.window_type,
-            r.unit_type,
-            bucket,
-        )
-
-        if key not in avg_seen:
-            avg_seen.add(key)
-            averages.append(r)
-
-        value = r.used_value if r.used_value is not None else 0.0
-        existing = bucket_peaks.get(key)
-        if existing is None or value > (existing.used_value or 0.0):
-            bucket_peaks[key] = r
-
-    peaks = list(bucket_peaks.values())
-
-    avg_keys = {
-        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
-        for r in averages
-    }
-    if (
-        first_row.provider_id,
-        first_row.account_id,
-        first_row.service_name,
-        first_row.model_id,
-        first_row.window_type,
-        first_row.unit_type,
-    ) not in avg_keys:
-        averages.insert(0, first_row)
-    avg_keys_last = {
-        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
-        for r in averages
-    }
-    if (
-        last_row.provider_id,
-        last_row.account_id,
-        last_row.service_name,
-        last_row.model_id,
-        last_row.window_type,
-        last_row.unit_type,
-    ) not in avg_keys_last:
-        averages.append(last_row)
-
-    peak_keys = {
-        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
-        for r in peaks
-    }
-    if (
-        first_row.provider_id,
-        first_row.account_id,
-        first_row.service_name,
-        first_row.model_id,
-        first_row.window_type,
-        first_row.unit_type,
-    ) not in peak_keys:
-        peaks.insert(0, first_row)
-    peak_keys_last = {
-        (r.provider_id, r.account_id, r.service_name, r.model_id, r.window_type, r.unit_type)
-        for r in peaks
-    }
-    if (
-        last_row.provider_id,
-        last_row.account_id,
-        last_row.service_name,
-        last_row.model_id,
-        last_row.window_type,
-        last_row.unit_type,
-    ) not in peak_keys_last:
-        peaks.append(last_row)
-
-    averages.sort(key=lambda r: r.timestamp, reverse=True)
-    peaks.sort(key=lambda r: r.timestamp, reverse=True)
-
-    return averages, peaks
 
 
 def _history_as_csv(results: Sequence[UsageSnapshot]) -> StreamingResponse:

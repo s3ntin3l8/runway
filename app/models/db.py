@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.core.encryption import encryption_service
@@ -10,6 +10,10 @@ from app.core.encryption import encryption_service
 
 class UsageSnapshot(SQLModel, table=True):
     __tablename__ = "usage_snapshots"
+    __table_args__ = (
+        Index("ix_snapshot_provider_account_ts", "provider_id", "account_id", "timestamp"),
+        Index("ix_snapshot_provider_ts", "provider_id", "timestamp"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)

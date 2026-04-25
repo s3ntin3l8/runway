@@ -71,6 +71,27 @@ def _run_migrations():
             except Exception:
                 pass  # Column already exists or table doesn't exist yet — both are fine
 
+        # Performance indexes for history queries (safe to create multiple times)
+        _create_performance_indexes(conn)
+
+
+def _create_performance_indexes(conn):
+    """Create composite indexes for history query optimization.
+
+    These indexes dramatically speed up time-range queries with provider/account filters.
+    Safe to call on every startup - CREATE INDEX IF NOT EXISTS is idempotent.
+    """
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_snapshot_provider_account_ts ON usage_snapshots(provider_id, account_id, timestamp)",
+        "CREATE INDEX IF NOT EXISTS ix_snapshot_provider_ts ON usage_snapshots(provider_id, timestamp)",
+    ]
+    for sql in indexes:
+        try:
+            conn.execute(__import__("sqlalchemy").text(sql))
+            conn.commit()
+        except Exception as e:
+            logger.debug(f"Could not create performance index (may already exist): {e}")
+
 
 def get_session():
     """FastAPI dependency for DB session."""

@@ -6,7 +6,6 @@ import pytest
 
 from app.api.endpoints.usage import (
     _classify_window,
-    _dedupe_with_peaks,
     _effective_label,
     _group_snapshots,
     _pick_bucket_seconds,
@@ -185,36 +184,3 @@ def test_group_snapshots_label_map_overlay():
 
     assert len(rows) == 1
     assert rows[0]["account_label"] == "alice@example.com"
-
-
-# ── _dedupe_with_peaks ───────────────────────────────────────────────────────
-
-
-def test_dedupe_with_peaks_empty():
-    averages, peaks = _dedupe_with_peaks([], 3600)
-    assert averages == []
-    assert peaks == []
-
-
-def test_dedupe_with_peaks_deduplicates():
-    """Multiple snapshots in the same bucket produce one average row."""
-    ts = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
-    snaps = [
-        _make_snapshot(ts=ts, used=40.0),
-        _make_snapshot(ts=ts + timedelta(seconds=30), used=50.0),
-        _make_snapshot(ts=ts + timedelta(seconds=59), used=45.0),
-    ]
-    averages, peaks = _dedupe_with_peaks(snaps, 3600)
-    assert len(averages) == 1
-
-
-def test_dedupe_with_peaks_tracks_max():
-    """Peak row has the highest used_value in the bucket."""
-    ts = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
-    snaps = [
-        _make_snapshot(ts=ts, used=30.0),
-        _make_snapshot(ts=ts + timedelta(seconds=30), used=80.0),
-        _make_snapshot(ts=ts + timedelta(seconds=59), used=50.0),
-    ]
-    _, peaks = _dedupe_with_peaks(snaps, 3600)
-    assert peaks[0].used_value == 80.0
