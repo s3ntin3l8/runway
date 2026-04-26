@@ -109,7 +109,7 @@ __REGISTRY__ = {
                 {"type": "env", "variable": "GITHUB_TOKEN", "mapping": {"value": "api_key"}},
                 {
                     "type": "file",
-                    "paths": ["{{CONFIG_DIR:runway-tracker}}/github_oauth.json"],
+                    "paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"],
                     "format": "json",
                     "mapping": {"access_token": "api_key"},
                 },
@@ -802,7 +802,7 @@ def get_platform_data_dir(app_name: str) -> Path:
 
 def get_platform_config_dir(app_name: str) -> Path:
     """Get the platform-specific directory for user configuration."""
-    if app_name == "runway-tracker":
+    if app_name == "runway":
         override = os.getenv("RUNWAY_CONFIG_DIR")
         if override:
             return Path(override)

@@ -92,7 +92,7 @@ Runway uses the public GitHub OAuth Client ID (`Iv1.b507a08c87ecfe98`) to enable
 Runway supports automatic credential discovery for GitHub. If you have logged in via the `gh` CLI (`gh auth login`), Runway will attempt to read your `oauth_token` from the `gh` CLI's configuration file (`~/.config/gh/hosts.yml` on Linux/macOS, or `%APPDATA%\GitHub CLI\hosts.yml` on Windows).
 
 **Custom Config Directory**:
-The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway-tracker` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.
+The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.
 
 ## Sidecar Support
 

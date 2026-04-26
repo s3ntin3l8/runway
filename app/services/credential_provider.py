@@ -53,7 +53,7 @@ class CredentialProvider:
         results: dict[str, str] = {}
         sources: dict[str, str] = {}
         is_scraping_enabled = is_local_credential_scraping_enabled()
-        runway_config_dir = get_platform_config_dir("runway-tracker")
+        runway_config_dir = get_platform_config_dir("runway")
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
