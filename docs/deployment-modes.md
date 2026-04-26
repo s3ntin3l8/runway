@@ -132,7 +132,7 @@ services:
       - LOCAL_COLLECTOR_ENABLED=false
       - LOCAL_CREDENTIAL_SCRAPING_ENABLED=false
     volumes:
-      - ./data:/home/runway/.config/runway-tracker
+      - ./data:/home/runway/.config/runway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/api/v1/system/health"]

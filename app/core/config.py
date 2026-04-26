@@ -28,7 +28,7 @@ def get_platform_data_dir(app_name: str) -> str:
 
 def get_platform_config_dir(app_name: str) -> str:
     """Get the platform-specific directory for user configuration."""
-    if app_name == "runway-tracker":
+    if app_name == "runway":
         override = os.getenv("RUNWAY_CONFIG_DIR")
         if override:
             return override
@@ -111,9 +111,7 @@ class Settings(BaseSettings):
         default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "oauth_creds.json")
     )
     GITHUB_OAUTH_PATH: str = Field(
-        default_factory=lambda: os.path.join(
-            get_platform_config_dir("runway-tracker"), "github_oauth.json"
-        )
+        default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "github_oauth.json")
     )
     CHATGPT_AUTH_PATH: str = Field(default_factory=lambda: os.path.expanduser("~/.codex/auth.json"))
     CHATGPT_SESSIONS_DIR: str = Field(
@@ -128,11 +126,11 @@ class Settings(BaseSettings):
         default_factory=lambda: os.path.join(get_platform_data_dir("opencode"), "opencode.db")
     )
     DATABASE_PATH: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("runway-tracker"), "runway.db")
+        default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "runway.db")
     )
     EXTERNAL_METRICS_PATH: str = Field(
         default_factory=lambda: os.path.join(
-            get_platform_config_dir("runway-tracker"), "external_metrics.json"
+            get_platform_config_dir("runway"), "external_metrics.json"
         )
     )
 
