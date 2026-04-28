@@ -344,7 +344,7 @@ class CollectorManager:
             try:
                 result = await self._do_collect()
                 future.set_result(result)
-            except Exception as e:
+            except BaseException as e:
                 future.set_exception(e)
                 raise
 
