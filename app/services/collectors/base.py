@@ -475,3 +475,22 @@ class BaseCollector(ABC):
     async def reset(self):
         """Reset collector state (e.g., terminal failures). Subclasses should override if needed."""
         pass
+
+    def handle_429(
+        self, response: httpx.Response | None = None, retry_after: float | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Optional hook for provider-specific 429 (rate limit) handling.
+
+        Called by SmartCollector when a 429 response is detected.
+        Subclasses may override to implement custom backoff logic
+        (e.g., token rotation for Anthropic OAuth).
+
+        Args:
+            response: The HTTP response that triggered the 429, if available.
+            retry_after: Seconds to wait before retrying, if known.
+
+        Returns:
+            An error card list, or empty list to let SmartCollector handle it.
+        """
+        return []

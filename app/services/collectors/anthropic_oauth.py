@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -144,23 +144,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         Calls https://api.anthropic.com/api/oauth/usage and returns quota cards.
         Proactively respects 429 backoff to avoid hammering the API.
         """
-        # Proactive backoff check
-        now = datetime.now(UTC)
-        backoff_until = getattr(self, "_last_429_backoff_until", None)
-        if backoff_until and now < backoff_until:
-            wait_rem = (backoff_until - now).total_seconds()
-            logger.debug(
-                f"Proactively skipping Anthropic API call due to recent 429 (backoff for {wait_rem:.0f}s)"
-            )
-            return [
-                error_card(
-                    "Claude Pro",
-                    "🟠",
-                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
-                    error_type="rate_limited",
-                )
-            ]
-
         # Safety guard: Browser session keys or bundles will 100% fail here with 401.
         # Yield to the Web API scraper strategy instead.
         if token.startswith("sk-ant-sid") or "sessionKey=" in token:
@@ -231,16 +214,14 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         # Re-check status after potential retry
         if resp.status_code == 429:
-            # Fallback to standard proactive backoff if recovery failed or was skipped
+            # Fallback: set retry-after for SmartCollector backoff
             retry_after = resp.headers.get("Retry-After")
             # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
             wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
             wait_sec = max(wait_sec, 300)
 
-            self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-            logger.warning(
-                f"Anthropic API still rate limited. Proactive backoff set for {wait_sec}s"
-            )
+            self._last_retry_after = wait_sec
+            logger.warning(f"Anthropic API still rate limited. Retry-After: {wait_sec}s")
             return [
                 error_card(
                     "Claude Pro",
@@ -258,8 +239,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             ]
 
         # --- Parse response ---
-        # Success: Clear any backoff
-        self._last_429_backoff_until = None
         try:
             data = resp.json()
         except (ValueError, KeyError) as e:

@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -19,12 +19,12 @@ class GeminiApiMixin:
     """Mixin for Gemini Cloud Code API collection."""
 
     def _handle_429(self, response, now: datetime) -> list[dict[str, Any]] | None:
-        """Handle a 429 response: set backoff and return error card, or None."""
+        """Handle a 429 response: set retry-after for SmartCollector and return error card."""
         if response.status_code != 429:
             return None
         retry_after = response.headers.get("Retry-After")
         wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-        self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+        self._last_retry_after = wait_sec
         return [
             error_card(
                 "Gemini",
@@ -37,17 +37,6 @@ class GeminiApiMixin:
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
         now = datetime.now(UTC)
-        backoff_until = getattr(self, "_last_429_backoff_until", None)
-        if backoff_until and now < backoff_until:
-            wait_rem = (backoff_until - now).total_seconds()
-            return [
-                error_card(
-                    "Gemini",
-                    "🔵",
-                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
-                    error_type="rate_limited",
-                )
-            ]
 
         token = await self._get_valid_token(client)
         if not token:
@@ -99,7 +88,6 @@ class GeminiApiMixin:
             if err:
                 return err
 
-            self._last_429_backoff_until = None
             quota_data = quota_resp.json()
             buckets = quota_data.get("buckets", [])
 

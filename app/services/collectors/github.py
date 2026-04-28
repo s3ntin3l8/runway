@@ -30,7 +30,7 @@ Headers:
 
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -104,22 +104,6 @@ class GitHubCollector(BaseCollector):
             if (now - self._last_fetch).total_seconds() < self._cache_ttl:
                 return self._cached_results
 
-        # Proactive backoff check
-        backoff_until = getattr(self, "_last_429_backoff_until", None)
-        if backoff_until and now < backoff_until:
-            wait_rem = (backoff_until - now).total_seconds()
-            logger.debug(
-                f"Proactively skipping GitHub API call due to recent 429 (backoff for {wait_rem:.0f}s)"
-            )
-            return [
-                error_card(
-                    "GitHub Copilot",
-                    "🐙",
-                    f"Rate Limited (429) - Backoff for {wait_rem:.0f}s",
-                    error_type="rate_limited",
-                )
-            ]
-
         try:
             headers = {
                 "Authorization": f"token {token}",
@@ -157,11 +141,11 @@ class GitHubCollector(BaseCollector):
                         timeout=10.0,
                     )
             elif user_resp.status_code == 429:
-                # Set proactive backoff based on Retry-After or default 5m
+                # Pass Retry-After to SmartCollector for centralized backoff
                 retry_after = user_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
-                logger.warning(f"GitHub API returned 429. Proactive backoff set for {wait_sec}s")
+                self._last_retry_after = wait_sec
+                logger.warning(f"GitHub API returned 429. Retry-After: {wait_sec}s")
                 return [
                     error_card(
                         "GitHub Copilot",
@@ -183,7 +167,7 @@ class GitHubCollector(BaseCollector):
             if token_resp and token_resp.status_code == 429:
                 retry_after = token_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_429_backoff_until = now + timedelta(seconds=wait_sec)
+                self._last_retry_after = wait_sec
                 return [
                     error_card(
                         "GitHub Copilot",
@@ -192,9 +176,6 @@ class GitHubCollector(BaseCollector):
                         error_type="rate_limited",
                     )
                 ]
-
-            # Success: Clear any backoff
-            self._last_429_backoff_until = None
 
             # Try to discover identity — call the standard /user endpoint (not Copilot internal)
             identity = getattr(self, "_identity", None)

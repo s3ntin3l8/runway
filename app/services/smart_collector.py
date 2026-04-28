@@ -63,6 +63,10 @@ class SmartCollector:
         self.last_error_message: str | None = None
         self.cache_age_seconds: float = 0.0
 
+        # 429 rate-limit tracking
+        self._last_429_time: float | None = None
+        self._last_retry_after: float | None = None
+
     def _should_use_cache(self, now: float) -> bool:
         """
         Determine if cached result is still fresh.
@@ -101,13 +105,33 @@ class SmartCollector:
         )
         return True
 
+    def _is_429_backoff_active(self, now: float) -> bool:
+        """Check if we're in a 429 backoff window."""
+        if self._last_429_time is None:
+            return False
+        if self._last_retry_after:
+            return (now - self._last_429_time) < self._last_retry_after
+        return False
+
+    def _get_429_backoff_remaining(self, now: float) -> float:
+        """Get remaining seconds in 429 backoff, or 0 if none."""
+        if self._last_429_time is None or self._last_retry_after is None:
+            return 0.0
+        remaining = self._last_retry_after - (now - self._last_429_time)
+        return max(0.0, remaining)
+
     def _should_retry_after_error(self, now: float) -> bool:
         """
         Determine if enough time has passed to retry after an error.
 
-        Returns False if we're still in the error retry delay window.
+        Returns False if we're still in the error retry delay window
+        OR if a 429 backoff is currently active.
         This prevents hammering the API during outages.
         """
+        # Check 429 backoff first (takes precedence)
+        if self._is_429_backoff_active(now):
+            return False
+
         if self.last_fetch_time is None or self.consecutive_errors == 0:
             return True
 
@@ -139,6 +163,21 @@ class SmartCollector:
             f"(error {self.consecutive_errors}/{self.error_threshold}): {error}"
         )
 
+    def _mark_429(self, retry_after: float | None, now: float) -> None:
+        """Record a 429 rate limit response."""
+        self._last_429_time = now
+        self._last_retry_after = retry_after or 60.0  # Default 60s if no header
+        self.last_fetch_time = now
+        self.consecutive_errors += 1
+
+        wait_str = f"{self._last_retry_after:.0f}s"
+        logger.warning(f"{self.collector_name}: Rate limited (429). Backoff for {wait_str}")
+
+    def _clear_429(self) -> None:
+        """Clear 429 backoff state after successful fetch."""
+        self._last_429_time = None
+        self._last_retry_after = None
+
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
         Intelligently fetch data with differential fetching strategy.
@@ -167,19 +206,26 @@ class SmartCollector:
             if self._should_use_cache(now) and self.last_result is not None:
                 return self._tag_as_cached(self.last_result, now)
 
-            # Don't hammer the API during outages
+            # Don't hammer the API during outages or 429 backoff
             if not self._should_retry_after_error(now):
-                last_fetch = self.last_fetch_time or 0.0
-                logger.debug(
-                    f"{self.collector_name}: Still in retry delay ({self.error_retry_delay}s)"
-                )
+                backoff_rem = self._get_429_backoff_remaining(now)
+                if backoff_rem > 0:
+                    logger.debug(
+                        f"{self.collector_name}: Still in 429 backoff ({backoff_rem:.0f}s)"
+                    )
+                    msg = f"Rate limited — retry in {backoff_rem:.0f}s"
+                else:
+                    last_fetch = self.last_fetch_time or 0.0
+                    delay_rem = self.error_retry_delay - (now - last_fetch)
+                    logger.debug(f"{self.collector_name}: Still in retry delay ({delay_rem:.0f}s)")
+                    msg = f"Retry in {delay_rem:.0f}s"
                 if self.last_result:
                     return self._tag_as_cached(self.last_result, now)
                 return [
                     error_card(
                         self.collector_name,
                         "⏳",
-                        f"Retry in {self.error_retry_delay - (now - last_fetch):.0f}s",
+                        msg,
                         error_type="rate_limited",
                     )
                 ]
@@ -190,6 +236,20 @@ class SmartCollector:
                 result = await self.collector.collect(client)
 
                 if result:
+                    # Check if collector returned a 429 error card
+                    rate_limited = any(r.get("error_type") == "rate_limited" for r in result)
+                    if rate_limited:
+                        # Try to extract Retry-After from collector or default
+                        retry_after = None
+                        if hasattr(self.collector, "_last_retry_after"):
+                            retry_after = getattr(self.collector, "_last_retry_after", None)
+                        self._mark_429(retry_after, now)
+                        if self.last_result:
+                            return self._tag_as_cached(self.last_result, now)
+                        return copy.deepcopy(result)
+
+                    # Success: clear any 429 backoff
+                    self._clear_429()
                     self._mark_success(result, now)
                     return copy.deepcopy(result)
 
@@ -262,6 +322,7 @@ class SmartCollector:
             Dictionary with cache stats, error counts, etc.
         """
         now = time.time()
+        backoff_rem = self._get_429_backoff_remaining(now)
         return {
             "collector": self.collector_name,
             "cache_status": {
@@ -275,6 +336,11 @@ class SmartCollector:
                 "consecutive_errors": self.consecutive_errors,
                 "error_threshold": self.error_threshold,
                 "last_error": self.last_error_message,
+            },
+            "rate_limit": {
+                "is_backoff_active": self._is_429_backoff_active(now),
+                "backoff_seconds_remaining": backoff_rem,
+                "retry_after_header": self._last_retry_after,
             },
             "timing": {
                 "last_fetch_time": self.last_fetch_time,
@@ -291,5 +357,6 @@ class SmartCollector:
             self.last_error_message = None
             self.last_fetch_time = None
             self.last_result = None  # Clear cache to force fresh fetch
+            self._clear_429()
             await self.collector.reset()
             logger.info(f"SmartCollector {self.collector_name} reset.")

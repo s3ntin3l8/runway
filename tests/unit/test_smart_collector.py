@@ -11,6 +11,7 @@ Tests cover:
 """
 
 import asyncio
+import time
 from unittest.mock import AsyncMock
 
 import httpx
@@ -307,6 +308,194 @@ class TestSmartCollectorCacheTags:
         assert "ago]" in cached_detail
         # Should preserve original detail
         assert original_detail in cached_detail
+
+
+class TestSmartCollectorRateLimit:
+    """Test 429 rate-limit handling."""
+
+    @pytest.mark.asyncio
+    async def test_429_backoff_set_from_error_card(self, mock_collector, mock_client):
+        """Test that SmartCollector sets 429 backoff when collector returns rate_limited card."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        mock_collector.collect.return_value = rate_limited
+        mock_collector._last_retry_after = 60.0
+
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+
+        result = await smart.collect(mock_client)
+        assert result[0].get("error_type") == "rate_limited"
+        assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
+        assert smart._last_retry_after == 60.0
+
+    @pytest.mark.asyncio
+    async def test_429_backoff_prevents_fetch(self, mock_collector, mock_client):
+        """Test that 429 backoff prevents collector from being called again."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        good_data = [{"service_name": "Test", "remaining": "100%"}]
+
+        mock_collector.collect.side_effect = [rate_limited, good_data]
+        mock_collector._last_retry_after = 0.2
+
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+
+        # First call triggers 429
+        await smart.collect(mock_client)
+        assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
+        assert mock_collector.collect.call_count == 1
+
+        # Second call during backoff should skip fetch
+        result2 = await smart.collect(mock_client)
+        assert mock_collector.collect.call_count == 1  # Still 1
+        assert result2[0].get("error_type") == "rate_limited"
+
+    @pytest.mark.asyncio
+    async def test_429_backoff_expires_and_allows_fetch(self, mock_collector, mock_client):
+        """Test that 429 backoff expires and allows fetching again."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        good_data = [{"service_name": "Test", "remaining": "100%"}]
+
+        mock_collector.collect.side_effect = [rate_limited, good_data]
+        mock_collector._last_retry_after = 0.15
+
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+
+        # First call triggers 429
+        await smart.collect(mock_client)
+        assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
+
+        # Wait for backoff to expire
+        await asyncio.sleep(0.2)
+
+        # Should now fetch fresh data
+        result2 = await smart.collect(mock_client)
+        assert result2[0].get("remaining") == "100%"
+        assert mock_collector.collect.call_count == 2
+        assert not smart._is_429_backoff_active(time.time())
+
+    @pytest.mark.asyncio
+    async def test_429_default_retry_after_when_not_set(self, mock_collector, mock_client):
+        """Test default 60s retry-after when collector doesn't set _last_retry_after."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        mock_collector.collect.return_value = rate_limited
+        # No _last_retry_after set
+
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+
+        await smart.collect(mock_client)
+        assert smart._last_retry_after == 60.0  # Default
+
+    @pytest.mark.asyncio
+    async def test_success_clears_429_backoff(self, mock_collector, mock_client):
+        """Test that successful fetch clears 429 backoff state."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        good_data = [{"service_name": "Test", "remaining": "100%"}]
+
+        mock_collector.collect.side_effect = [rate_limited, good_data]
+        mock_collector._last_retry_after = 300.0
+
+        smart = SmartCollector(mock_collector, "TestCollector", ttl=0.01, error_retry_delay=0)
+
+        # First call: 429
+        await smart.collect(mock_client)
+        assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
+
+        # Wait for cache to expire
+        await asyncio.sleep(0.02)
+
+        # Second call: success should clear backoff
+        await smart.collect(mock_client)
+        assert not smart._is_429_backoff_active(time.time())
+        assert smart._last_429_time is None
+
+    @pytest.mark.asyncio
+    async def test_429_stats_exposed(self, mock_collector, mock_client):
+        """Test that get_stats exposes 429 backoff state."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        mock_collector.collect.return_value = rate_limited
+        mock_collector._last_retry_after = 120.0
+
+        smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
+        await smart.collect(mock_client)
+
+        stats = smart.get_stats()
+        assert stats["rate_limit"]["is_backoff_active"] is True
+        assert stats["rate_limit"]["backoff_seconds_remaining"] > 0
+        assert stats["rate_limit"]["retry_after_header"] == 120.0
+
+    @pytest.mark.asyncio
+    async def test_success_clears_429_backoff(self, mock_collector, mock_client):
+        """Test that successful fetch clears 429 backoff state."""
+        rate_limited = [
+            {
+                "service_name": "Test",
+                "remaining": "ERR",
+                "error_type": "rate_limited",
+                "detail": "Rate limited",
+            }
+        ]
+        good_data = [{"service_name": "Test", "remaining": "100%"}]
+
+        mock_collector.collect.side_effect = [rate_limited, good_data]
+        mock_collector._last_retry_after = 0.15
+
+        smart = SmartCollector(
+            mock_collector, "TestCollector", ttl=0.01, error_retry_delay=0
+        )
+
+        # First call: 429
+        await smart.collect(mock_client)
+        assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
+
+        # Wait for both cache and 429 backoff to expire
+        await asyncio.sleep(0.2)
+
+        # Second call: success should clear backoff
+        await smart.collect(mock_client)
+        assert not smart._is_429_backoff_active(time.time())
+        assert smart._last_429_time is None
+        assert smart._last_retry_after is None
 
 
 class TestSmartCollectorStats:
