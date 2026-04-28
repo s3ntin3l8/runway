@@ -160,6 +160,7 @@ class ChatGPTWebOAuthMixin:
                     "scope": "openid profile email",
                 },
                 timeout=10,
+                retry_on_429=False,
             )
             if resp.status_code == 200:
                 data = resp.json()

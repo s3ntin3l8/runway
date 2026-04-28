@@ -116,11 +116,6 @@ class AnthropicCollector(
     async def _is_token_expired(self) -> bool:
         """Check if Claude token is expired."""
         try:
-            # Check sidecar cache for expiration info
-            token_data = await token_cache.get_all_tokens("anthropic", account_id=self.account_id)
-            if token_data and "expires_at" in token_data:
-                return datetime.now(UTC).timestamp() > token_data["expires_at"]
-
             # Fallback to credentials file
             creds = await self._get_credentials()
             if creds:
@@ -137,6 +132,28 @@ class AnthropicCollector(
             return False
         except Exception as e:
             logger.debug(f"Could not check Anthropic token expiration: {e}")
+            return False
+
+    async def _is_token_expiring_soon(self) -> bool:
+        """Check if Claude token expires within the proactive refresh threshold."""
+        try:
+            threshold = self.TOKEN_REFRESH_THRESHOLD_SECONDS
+            creds = await self._get_credentials()
+            if creds:
+                expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")
+                if expires_at:
+                    if isinstance(expires_at, int | float):
+                        if expires_at > 1e12:  # ms
+                            expires_at /= 1000
+                        remaining = expires_at - datetime.now(UTC).timestamp()
+                        return remaining < threshold
+                    if isinstance(expires_at, str):
+                        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        remaining = (exp_dt - datetime.now(UTC)).total_seconds()
+                        return remaining < threshold
+            return False
+        except Exception as e:
+            logger.debug(f"Could not check Anthropic token expiring soon: {e}")
             return False
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:

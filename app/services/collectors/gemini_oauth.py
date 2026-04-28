@@ -125,6 +125,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                     "grant_type": "refresh_token",
                 },
                 timeout=10,
+                retry_on_429=False,
             )
 
             if resp.status_code == 200:
@@ -134,7 +135,9 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
 
                 # Update sidecar cache
-                await self._store_sidecar_token("gemini", new_data["access_token"])
+                await self._store_sidecar_token(
+                    "gemini", new_data["access_token"], creds.get("refresh_token")
+                )
 
                 return creds
             logger.warning(

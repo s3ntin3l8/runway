@@ -261,6 +261,20 @@ class TestHttpRequestWithRetry:
         assert result.status_code == 429
         assert client.request.call_count == 3
 
+    async def test_429_with_retry_on_429_false_returns_immediately(self):
+        client = MagicMock(spec=httpx.AsyncClient)
+        resp_429 = _make_mock_response(429)
+        client.request = AsyncMock(return_value=resp_429)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await http_request_with_retry(
+                client, "GET", "https://example.com", retry_on_429=False
+            )
+
+        assert result.status_code == 429
+        mock_sleep.assert_not_called()
+        assert client.request.call_count == 1
+
     async def test_non_429_exception_on_non_final_attempt_retries(self):
         client = MagicMock(spec=httpx.AsyncClient)
         resp_200 = _make_mock_response(200)

@@ -95,6 +95,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "anthropic-beta": "oauth-2025-04-20",
                 },
                 timeout=10,
+                retry_on_429=False,
             )
 
             if resp.status_code == 200:
@@ -114,7 +115,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     new_data.get("refresh_token", refresh_token),
                 )
                 creds["access_token"] = new_data["access_token"]
+                self._clear_refresh_429_backoff()
                 return creds
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    wait_sec = float(retry_after) if retry_after else None
+                except (ValueError, TypeError):
+                    wait_sec = None
+                self._set_refresh_429_backoff(wait_sec)
+                return None
             if resp.status_code == 400:
                 error_data = resp.json()
                 if error_data.get("error") == "invalid_grant":
@@ -190,29 +200,34 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.info(
                 "Anthropic API returned 429. Attempting aggressive recovery via token rotation..."
             )
-            # Attempt to get a fresh token (even if not expired)
-            try:
-                new_token = await self._get_valid_token(client, force_refresh=True)
-            except httpx.HTTPError:
-                new_token = None
-            if new_token and new_token != token:
-                logger.info("Successfully cycled Anthropic token. Retrying usage request...")
-                headers["Authorization"] = f"Bearer {new_token}"
-                try:
-                    resp = await http_request_with_retry(
-                        client, "GET", url, headers=headers, timeout=15.0
-                    )
-                except httpx.HTTPError as e:
-                    logger.warning(f"Aggressive recovery request failed: {e}")
-                else:
-                    if resp.status_code == 200:
-                        logger.info("Aggressive recovery successful: Usage data retrieved.")
-                    else:
-                        logger.warning(
-                            f"Aggressive recovery failed: Retry returned {resp.status_code}"
-                        )
+            # Skip bypass if the token endpoint itself is in backoff — hammering it
+            # will only burn refresh tokens and escalate the rate limit.
+            if self._is_refresh_backoff_active():
+                logger.warning("Token refresh endpoint in backoff, skipping aggressive recovery")
             else:
-                logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
+                # Attempt to get a fresh token (even if not expired)
+                try:
+                    new_token = await self._get_valid_token(client, force_refresh=True)
+                except httpx.HTTPError:
+                    new_token = None
+                if new_token and new_token != token:
+                    logger.info("Successfully cycled Anthropic token. Retrying usage request...")
+                    headers["Authorization"] = f"Bearer {new_token}"
+                    try:
+                        resp = await http_request_with_retry(
+                            client, "GET", url, headers=headers, timeout=15.0
+                        )
+                    except httpx.HTTPError as e:
+                        logger.warning(f"Aggressive recovery request failed: {e}")
+                    else:
+                        if resp.status_code == 200:
+                            logger.info("Aggressive recovery successful: Usage data retrieved.")
+                        else:
+                            logger.warning(
+                                f"Aggressive recovery failed: Retry returned {resp.status_code}"
+                            )
+                else:
+                    logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
 
         # Re-check status after potential retry
         if resp.status_code == 429:
@@ -433,7 +448,8 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     bal = float(usage) if usage is not None else 0.0
                     results.append(
                         {
-                            "service_name": f"Claude ({u_type})",
+                            "service_name": "Claude",
+                            "variant": u_type,
                             "icon": "💰",
                             "remaining": f"${bal:.2f}",
                             "unit": "USD",
@@ -444,7 +460,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                             "used_value": 0.0,
                             "limit_value": bal,
                             "unit_type": "currency",
-                            "window_type": "prepaid",
+                            "window_type": "rolling",
                             "model_id": None,
                             "data_source": self.DATA_SOURCE_API,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
@@ -470,7 +486,8 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 remaining = max(0.0, limit - spend)
                 results.append(
                     {
-                        "service_name": f"Claude ({u_type})",
+                        "service_name": "Claude",
+                        "variant": u_type,
                         "icon": "💰",
                         "remaining": f"${remaining:.2f}",
                         "unit": "limit",
@@ -510,7 +527,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
             results.append(
                 {
-                    "service_name": f"Claude ({u_type})",
+                    "service_name": "Claude",
                     "icon": "🟠",
                     "remaining": f"{remaining_pct:.1f}%",
                     "unit": "capacity",
