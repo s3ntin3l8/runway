@@ -643,6 +643,16 @@ export function buildCard(item) {
         ? `<div class="source-badge" title="${escapeHTML(item.sidecar_id)}">${escapeHTML(item.sidecar_id[0].toUpperCase())}</div>`
         : '';
 
+    // Token total for cards with token_usage data
+    const tokenTotal = item.token_usage?.total;
+    const tokenTotalFormatted = tokenTotal
+        ? tokenTotal >= 1000000
+            ? `${(tokenTotal / 1000000).toFixed(1)}M`
+            : tokenTotal >= 1000
+                ? `${(tokenTotal / 1000).toFixed(0)}K`
+                : tokenTotal.toLocaleString()
+        : null;
+
     return `
         <div class="glass-panel ${h.card} overflow-hidden relative card-layout cursor-pointer select-none active:scale-[0.98] transition-all duration-200" data-service="${escapeHTML(item.service_name)}" data-card-key="${escapeHTMLAttr(cardKey(item))}">
             <span class="drag-handle" aria-hidden="true" onclick="event.stopPropagation()">
@@ -691,6 +701,7 @@ export function buildCard(item) {
             <div class="px-5 py-3.5 flex items-center justify-between" style="border-top:1px solid var(--hairline);background:var(--surface-2);">
                 <span class="mono" style="font-size:10px;color:var(--text-dim);font-weight:600;">RESETS</span>
                 ${resetElement}
+                ${tokenTotalFormatted ? `<span class="mono" style="font-size:10px;color:var(--text-dim);font-weight:600;">${tokenTotalFormatted} TOKENS</span>` : ''}
             </div>
         </div>
     `;
@@ -1271,7 +1282,8 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
     if (!worst.is_unlimited && worst.used_value != null && worst.limit_value > 0) {
         worstPct = (worst.used_value / worst.limit_value) * 100;
     }
-    const worstDisplay = worst.is_unlimited ? '∞'
+    const worstDisplay = worst.is_unlimited
+        ? (worst.unit_type === 'tokens' ? (worst.used_value / 1000000).toFixed(1) + 'M' : '∞')
         : worstPct != null ? `${worstPct.toFixed(1)}%`
         : escapeHTML(String(worst.remaining ?? '—'));
 
@@ -1310,7 +1322,9 @@ export function buildProviderSummaryCard(providerId, items, forecastMap = new Ma
         if (!item.is_unlimited && item.used_value != null && item.limit_value > 0) {
             pct = (item.used_value / item.limit_value) * 100;
         }
-        const display = item.is_unlimited ? '∞' : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
+        const display = item.is_unlimited
+            ? (item.unit_type === 'tokens' ? (item.used_value / 1000000).toFixed(1) + 'M tokens' : '∞')
+            : pct != null ? `${pct.toFixed(0)}%` : escapeHTML(String(item.remaining ?? '—'));
         const rowTier = item.tier
             ? `<span style="font-size:8px;font-weight:700;color:var(--text-dim);border:1px solid var(--hairline-strong);padding:0 3px;line-height:1.6;">${escapeHTML(item.tier.toUpperCase())}</span>`
             : '';
@@ -1511,7 +1525,7 @@ export function buildProviderModal(providerId, items, history) {
         // Used / limit display
         const fmt = formatUsageValues(item.used_value, item.limit_value, item.unit_type, item.currency);
         const usageText = item.is_unlimited
-            ? 'Unlimited'
+            ? (item.unit_type === 'tokens' ? (item.used_value / 1000000).toFixed(1) + 'M tokens' : 'Unlimited')
             : (fmt.used !== '—' && fmt.limit !== '—')
             ? `${fmt.used} / ${fmt.limit}${fmt.unit ? ' ' + fmt.unit : ''}`
             : escapeHTML(String(item.remaining ?? '—'));
@@ -1804,7 +1818,9 @@ export function buildHorizonCard(card, forecastEntry) {
     const resetStr = card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : (card.reset || '—');
 
     const hzHeadContent = card.is_unlimited
-        ? `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`
+        ? (card.unit_type === 'tokens'
+            ? `<div class="pct" style="color:var(--unlm);">${(card.used_value / 1000000).toFixed(1)}<em>M</em></div><span class="sub">tokens</span>`
+            : `<div class="pct" style="color:var(--unlm);">∞<em>%</em></div><span class="sub">unlimited</span>`)
         : pctRemaining != null
             ? `<div class="pct">${pctRemaining}<em>%</em></div><span class="sub">${card.unit_type === 'currency' ? 'budget left' : 'remaining'}</span>`
             : `<div class="pct" style="color:var(--unk);">—</div>`;
