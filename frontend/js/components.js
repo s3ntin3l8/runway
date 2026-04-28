@@ -313,12 +313,11 @@ function formatResetDisplay(resetAt) {
         const isSameDay = date.toDateString() === now.toDateString();
         const isTomorrow = !isSameDay && diffHours > 0 && diffHours < 48;
 
-        // Get time in 24h format
+        // Get time in 24h format (local time, no TZ suffix)
         const timeStr = date.toLocaleTimeString(undefined, {
             hour: '2-digit',
             minute: '2-digit',
             hour12: false,
-            timeZoneName: 'short'
         });
 
         // If < 24h away, show local time
