@@ -1432,8 +1432,19 @@ class GenericCollector:
 
                                         data = js.loads(line)
                                         usage = data.get("usage", {})
-                                        prompt_tokens += usage.get("prompt_tokens", 0)
-                                        completion_tokens += usage.get("completion_tokens", 0)
+                                        if usage:
+                                            prompt_tokens += usage.get("prompt_tokens", 0)
+                                            completion_tokens += usage.get("completion_tokens", 0)
+                                        else:
+                                            # Codex format: nested under payload.info.last_token_usage
+                                            payload = data.get("payload", {})
+                                            if payload.get("type") == "token_count":
+                                                info = payload.get("info", {})
+                                                last_usage = info.get("last_token_usage", {})
+                                                prompt_tokens += last_usage.get("input_tokens", 0)
+                                                completion_tokens += last_usage.get(
+                                                    "output_tokens", 0
+                                                )
                                     except Exception:
                                         pass
                         except Exception:

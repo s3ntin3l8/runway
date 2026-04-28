@@ -37,6 +37,88 @@ def chatgpt_usage_response():
     }
 
 
+def _make_codex_jsonl_event(**kwargs) -> str:
+    """Build a single Codex jsonl line for token_count or turn_context."""
+    return json.dumps(kwargs)
+
+
+def _make_codex_session_log() -> str:
+    """Return mock Codex session log content with token_count events.
+
+    Uses increasing input_tokens to model a single conversation where
+    context grows.  Net-new input = last_input - first_input.
+    """
+    now = datetime.now(UTC)
+    reset_at = int((now + timedelta(days=5)).timestamp())
+    base = {
+        "type": "token_count",
+        "info": {
+            "last_token_usage": {
+                "input_tokens": 1000,
+                "cached_input_tokens": 200,
+                "output_tokens": 100,
+                "reasoning_output_tokens": 20,
+                "total_tokens": 1100,
+            }
+        },
+        "rate_limits": {
+            "primary": {
+                "used_percent": 42.0,
+                "window_minutes": 10080,
+                "resets_at": reset_at,
+                "plan_type": "plus",
+            }
+        },
+    }
+    lines = [
+        _make_codex_jsonl_event(
+            timestamp=now.isoformat().replace("+00:00", "Z"),
+            type="turn_context",
+            payload={"model": "gpt-5.4"},
+        ),
+        _make_codex_jsonl_event(
+            timestamp=now.isoformat().replace("+00:00", "Z"),
+            type="event_msg",
+            payload={**base, "info": {"last_token_usage": {**base["info"]["last_token_usage"]}}},
+        ),
+        _make_codex_jsonl_event(
+            timestamp=now.isoformat().replace("+00:00", "Z"),
+            type="event_msg",
+            payload={
+                **base,
+                "info": {
+                    "last_token_usage": {
+                        **base["info"]["last_token_usage"],
+                        "input_tokens": 1500,
+                        "cached_input_tokens": 300,
+                        "output_tokens": 200,
+                        "reasoning_output_tokens": 40,
+                        "total_tokens": 1700,
+                    }
+                },
+            },
+        ),
+        _make_codex_jsonl_event(
+            timestamp=now.isoformat().replace("+00:00", "Z"),
+            type="event_msg",
+            payload={
+                **base,
+                "info": {
+                    "last_token_usage": {
+                        **base["info"]["last_token_usage"],
+                        "input_tokens": 2000,
+                        "cached_input_tokens": 400,
+                        "output_tokens": 300,
+                        "reasoning_output_tokens": 60,
+                        "total_tokens": 2300,
+                    }
+                },
+            },
+        ),
+    ]
+    return "\n".join(lines)
+
+
 class TestChatGPTCollectorDetailed:
     """Detailed unit tests for ChatGPTCollector's complex logic."""
 
@@ -196,8 +278,58 @@ class TestChatGPTCollectorDetailed:
             assert codex_card["tier"] == "plus"
 
     @pytest.mark.asyncio
-    async def test_collect_api_failure_fallback(self, mock_http_client):
-        """Verify fallback to local logs when API returns 429/500."""
+    async def test_local_enrichment_injects_tokens(self, mock_http_client):
+        """Verify local enrichment injects token_usage into primary Codex card."""
+        collector = ChatGPTCollector()
+
+        # Mock web API success
+        usage_resp = MagicMock(spec=httpx.Response)
+        usage_resp.status_code = 200
+        usage_resp.headers = {}
+        usage_resp.json.return_value = {
+            "plan_type": "plus",
+            "email": "user@example.com",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 30.0,
+                    "reset_at": int((datetime.now(UTC) + timedelta(hours=3)).timestamp()),
+                }
+            },
+        }
+        mock_http_client.request.side_effect = [usage_resp]
+
+        log_content = _make_codex_session_log()
+
+        with (
+            patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}),
+            patch(
+                "app.services.collectors.chatgpt_local.glob.glob",
+                return_value=["/fake/sessions/rollout.jsonl"],
+            ),
+            patch("os.path.isdir", return_value=True),
+            patch("builtins.open", mock_open(read_data=log_content)),
+        ):
+            results = await collector.collect(mock_http_client)
+
+            codex_card = next((r for r in results if r.get("variant") == "Codex"), None)
+            assert codex_card is not None
+            assert "token_usage" in codex_card
+            # Net-new tokens (conversation growth, not billed totals)
+            assert codex_card["token_usage"]["input"] == 1000  # 2000 - 1000
+            assert codex_card["token_usage"]["output"] == 600  # 100+200+300
+            assert codex_card["token_usage"]["reasoning"] == 120  # 20+40+60
+            assert codex_card["token_usage"]["cache_read"] == 900  # 200+300+400
+            assert codex_card["token_usage"]["total"] == 1600  # net_input + output
+            assert codex_card["msgs"] == 3
+            assert "by_model" in codex_card
+            assert codex_card["by_model"]["gpt-5.4"]["msgs"] == 3
+            assert "pct_used" in codex_card
+            # Detail should show billed amount too
+            assert "billed:" in codex_card["detail"]
+
+    @pytest.mark.asyncio
+    async def test_local_enrichment_fallback_promotion(self, mock_http_client):
+        """Verify enrichment fallback card is promoted when all primaries fail."""
         collector = ChatGPTCollector()
 
         # Mock API failure
@@ -206,8 +338,7 @@ class TestChatGPTCollectorDetailed:
         mock_resp.headers = {}
         mock_http_client.request.return_value = mock_resp
 
-        # Mock local logs existence
-        log_content = json.dumps({"used_percent": 88.0, "resets_at": 1744876800})
+        log_content = _make_codex_session_log()
 
         with (
             patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}),
@@ -217,18 +348,20 @@ class TestChatGPTCollectorDetailed:
             ),
             patch(
                 "app.services.collectors.chatgpt_local.glob.glob",
-                return_value=["/fake/path/session.jsonl"],
+                return_value=["/fake/sessions/rollout.jsonl"],
             ),
-            patch("os.path.getmtime", return_value=12345),
+            patch("os.path.isdir", return_value=True),
+            patch("builtins.open", mock_open(read_data=log_content)),
         ):
-            with patch("builtins.open", mock_open(read_data=log_content)):
-                results = await collector.collect(mock_http_client)
+            results = await collector.collect(mock_http_client)
 
-                assert len(results) == 1
-                assert results[0]["service_name"] == "ChatGPT"
-                assert results[0].get("variant") == "Codex"
-                assert "12.0%" in results[0]["remaining"]
-                assert results[0]["data_source"] == "local"
+            # Fallback card promoted
+            assert len(results) == 1
+            assert results[0]["service_name"] == "ChatGPT"
+            assert results[0].get("variant") == "Codex"
+            assert results[0]["data_source"] == "local"
+            assert "token_usage" in results[0]
+            assert results[0]["msgs"] == 3
 
     @pytest.mark.asyncio
     async def test_user_agent_on_auth_refresh(self, mock_http_client):
