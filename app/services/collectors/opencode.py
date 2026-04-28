@@ -19,9 +19,11 @@ Local DB Collection:
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -60,6 +62,10 @@ _USAGE_RECORD_RE = re.compile(
 )
 _USAGE_COST_SCALE: float = 1e-8  # raw cost int → USD
 
+# OpenCode _server function ID used for workspace discovery.
+# This is a stable server-side identifier for the workspaces endpoint.
+_SERVER_FN_ID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
+
 
 class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
@@ -73,6 +79,50 @@ class OpenCodeCollector(BaseCollector):
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
+        self._last_window_info: dict[str, dict] | None = self._load_persisted_state()
+
+    def _state_file_path(self) -> str:
+        """Path to the local state file for OpenCode."""
+        acc_id = self.account_id or "default"
+        return os.path.join(settings.data_dir, f"opencode_state_{acc_id}.json")
+
+    def _load_persisted_state(self) -> dict[str, dict] | None:
+        """Load window_info from local JSON state file."""
+        path = self._state_file_path()
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                    # Convert ISO timestamps back to datetime objects
+                    for win in data.values():
+                        if win.get("cutoff"):
+                            win["cutoff"] = datetime.fromisoformat(win["cutoff"])
+                        if win.get("reset_at"):
+                            win["reset_at"] = datetime.fromisoformat(win["reset_at"])
+                    return data
+            except Exception as e:
+                logger.debug(f"Failed to load OpenCode state from {path}: {e}")
+        return None
+
+    def _save_persisted_state(self, window_info: dict[str, dict]) -> None:
+        """Save window_info to local JSON state file."""
+        path = self._state_file_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            # Convert datetime objects to ISO strings for JSON
+            serializable = {}
+            for key, info in window_info.items():
+                copy = info.copy()
+                if isinstance(copy.get("cutoff"), datetime):
+                    copy["cutoff"] = copy["cutoff"].isoformat()
+                if isinstance(copy.get("reset_at"), datetime):
+                    copy["reset_at"] = copy["reset_at"].isoformat()
+                serializable[key] = copy
+
+            with open(path, "w") as f:
+                json.dump(serializable, f)
+        except Exception as e:
+            logger.debug(f"Failed to save OpenCode state to {path}: {e}")
 
     async def is_configured(self) -> bool:
         """Check if OpenCode session cookie or local DB is present."""
@@ -187,6 +237,8 @@ class OpenCodeCollector(BaseCollector):
 
             # 3. Extract window info from usage_data first (for breakdown filtering)
             window_info = self._extract_window_info(usage_data)
+            self._last_window_info = window_info
+            await asyncio.to_thread(self._save_persisted_state, window_info)
 
             # Log window detection for debugging
             for win_key, info in window_info.items():
@@ -202,15 +254,16 @@ class OpenCodeCollector(BaseCollector):
                         breakdown = self._build_usage_breakdown(
                             records, datetime.now(UTC), window_info
                         )
-            except Exception:
-                pass  # non-critical — Go cards still render without breakdown
+            except Exception as e:
+                logger.warning(f"OpenCode: /usage enrichment failed: {e}")
 
             # 5. Parse and return cards (enriched when breakdown is available)
             return self._parse_usage_data(
                 usage_data, workspace_id, breakdown, input_source or "server", window_info
             )
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"OpenCode: Web API collection failed: {e}")
             return []
 
     async def _get_workspace_id(
@@ -226,20 +279,17 @@ class OpenCodeCollector(BaseCollector):
                     return env_workspace.split("workspace/")[-1].split("/")[0]
                 return env_workspace
 
-            import uuid
-
             ws_headers = headers.copy()
-            func_id = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
             ws_headers.update(
                 {
-                    "X-Server-Id": func_id,
+                    "X-Server-Id": _SERVER_FN_ID,
                     "X-Server-Instance": f"server-fn:{uuid.uuid4()}",
                     "Accept": "text/javascript, application/json;q=0.9, */*;q=0.8",
                 }
             )
 
             # Try primary GET approach
-            url = f"https://opencode.ai/_server?id={func_id}"
+            url = f"https://opencode.ai/_server?id={_SERVER_FN_ID}"
             resp = await http_request_with_retry(
                 client, "GET", url, headers=ws_headers, timeout=10.0, follow_redirects=True
             )
@@ -273,7 +323,8 @@ class OpenCodeCollector(BaseCollector):
                 return match.group(1)
 
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"OpenCode: Workspace discovery failed: {e}")
             return None
 
     async def _get_subscription_data(
@@ -296,7 +347,8 @@ class OpenCodeCollector(BaseCollector):
                 return None
 
             return resp.text
-        except Exception:
+        except Exception as e:
+            logger.warning(f"OpenCode: Subscription data fetch failed: {e}")
             return None
 
     async def _get_usage_page(
@@ -318,10 +370,6 @@ class OpenCodeCollector(BaseCollector):
                 logger.info(
                     f"OpenCode: Fetched /usage page, length: {len(resp.text)}, records: {record_count}"
                 )
-                debug_path = "/home/bjoern/projects/ai-usage-tracker/scratch/opencode_usage.html"
-                with open(debug_path, "w") as f:
-                    f.write(resp.text)
-                logger.warning(f"OpenCode: Dumped /usage page to {debug_path}")
             else:
                 logger.warning(f"OpenCode: /usage fetch failed, status: {resp.status_code}")
 
@@ -376,11 +424,11 @@ class OpenCodeCollector(BaseCollector):
                     "model": model,
                     "model_short": self._short_model_id_oc(model),
                     "source": source,
-                    "input": int(t_in),
-                    "output": int(t_out),
-                    "reasoning": 0 if t_reason == "null" else int(t_reason),
-                    "cache_read": int(cache_r),
-                    "cost_usd": cost_int * _USAGE_COST_SCALE,
+                    "input": max(0, int(t_in)),
+                    "output": max(0, int(t_out)),
+                    "reasoning": 0 if t_reason == "null" else max(0, int(t_reason)),
+                    "cache_read": max(0, int(cache_r)),
+                    "cost_usd": max(0, cost_int) * _USAGE_COST_SCALE,
                 }
             )
 
@@ -507,10 +555,10 @@ class OpenCodeCollector(BaseCollector):
             tok_display = f"{total_tokens:,} tokens"
             detail += f" · Free tier{identity_suffix}"
             return {
-                "service_name": "OpenCode Free",
+                "service_name": "OpenCode",
+                "variant": "Free",
+                "window_type": "rolling",
                 "icon": "⚡",
-                # remaining shows as the big number; no limit_value → no bar,
-                # detail falls through to the card subtitle
                 "remaining": tok_display,
                 "unit": "free tier",
                 "reset": "Lifetime",
@@ -519,12 +567,13 @@ class OpenCodeCollector(BaseCollector):
                 "detail": detail,
                 "used_value": total_tokens,
                 "limit_value": None,
-                "is_unlimited": False,
+                "is_unlimited": True,
                 "unit_type": "token",
                 "currency": "USD",
                 "account_label": email,
                 "reset_at": None,
                 "tier": "Free",
+                "provider_id": "opencode",
                 "data_source": self.DATA_SOURCE_WEB,
                 "input_source": input_source,
                 "usage_url": usage_url,
@@ -533,7 +582,37 @@ class OpenCodeCollector(BaseCollector):
         # api
         detail += f" · API key{identity_suffix}"
         return {
-            "service_name": "OpenCode API",
+            "service_name": "OpenCode",
+            "variant": "API",
+            "window_type": "rolling",
+            "icon": "⚡",
+            # remaining shows total spend; detail falls through to subtitle
+            "remaining": f"${data['cost']:.4f}",
+            "unit": "pay-as-you-go",
+            "reset": "Lifetime",
+            "health": "good",
+            "pace": "—",
+            "detail": detail,
+            "used_value": data["cost"],
+            "limit_value": None,
+            "is_unlimited": False,
+            "unit_type": "currency",
+            "currency": "USD",
+            "account_label": email,
+            "reset_at": None,
+            "tier": "API",
+            "provider_id": "opencode",
+            "data_source": self.DATA_SOURCE_WEB,
+            "input_source": input_source,
+            "usage_url": usage_url,
+            "updated_at": now_iso,
+        }
+        # api
+        detail += f" · API key{identity_suffix}"
+        return {
+            "service_name": "OpenCode",
+            "variant": "API",
+            "window_type": "rolling",
             "icon": "⚡",
             # remaining shows total spend; detail falls through to subtitle
             "remaining": f"${data['cost']:.4f}",
@@ -584,17 +663,15 @@ class OpenCodeCollector(BaseCollector):
         identity_suffix = f" | {email}" if email else ""
 
         # Definition of windows to search for
-        # Each window: (key, service_name, limit, reset_label, is_fixed)
-        # is_fixed determined from resetInSec value: > 30 days (~2.6M sec) = fixed
+        # Each tuple: (text-key, service_name, limit_usd, window_type, reset_label_for_display)
+        # window_type is the canonical enum used for card identity; reset_label is the human "in N days" hint.
         windows = [
-            ("rollingUsage", "OpenCode (5h)", 12.0, "5h"),
-            ("weeklyUsage", "OpenCode (7d)", 30.0, "7d"),
-            ("monthlyUsage", "OpenCode (30d)", 60.0, "Monthly"),
+            ("rollingUsage", "OpenCode", 12.0, "session", "5h"),
+            ("weeklyUsage", "OpenCode", 30.0, "weekly", "7d"),
+            ("monthlyUsage", "OpenCode", 60.0, "monthly", "30d"),
         ]
 
-        window_info: dict[str, dict] = {}
-
-        for key, service_name, limit, reset_label in windows:
+        for key, service_name, limit, window_type, reset_label in windows:
             # Even more flexible regex
             # key:($R[xx]=)?{...}
             pattern = rf"{key}:(?:\$R\[\d+\]=)?\{{([^}}]+)\}}"
@@ -618,54 +695,9 @@ class OpenCodeCollector(BaseCollector):
             pct = float(pct_match.group(1))
             reset_sec = int(reset_match.group(1))
 
-            # Detect window type from reset_sec value
-            # If > 1 day (~86400 seconds), it's a FIXED reset date (7d/30d have ~4-10 days until reset)
-            # If < 1 day, it's rolling (5h has ~5h until reset)
-            FIXED_RESET_THRESHOLD = 86400  # 1 day in seconds
-            is_fixed = reset_sec > FIXED_RESET_THRESHOLD
-
-            # Calculate window cutoff based on type
-            if is_fixed:
-                # Fixed: cutoff is reset_at - window_duration
-                reset_at = now + timedelta(seconds=reset_sec)
-                if key == "weeklyUsage":
-                    window_cutoff = reset_at - timedelta(days=7)
-                elif key == "monthlyUsage":
-                    window_cutoff = reset_at - timedelta(days=30)
-                else:
-                    window_cutoff = reset_at - timedelta(hours=5)
-            # Rolling: cutoff is now - window_duration
-            elif key == "rollingUsage":
-                window_cutoff = now - timedelta(hours=5)
-            elif key == "weeklyUsage":
-                window_cutoff = now - timedelta(days=7)
-            else:
-                window_cutoff = now - timedelta(days=30)
-
-            # Store window info for token aggregation
-            window_info[key] = {
-                "cutoff": window_cutoff,
-                "is_fixed": is_fixed,
-                "reset_at": (now + timedelta(seconds=reset_sec)) if is_fixed else None,
-            }
-
             used = (pct / 100) * limit
             remaining = max(0, limit - used)
             reset_at = now + timedelta(seconds=reset_sec)
-
-            # Map window key to window_type for forecast
-            window_type_map = {"5h": "session", "7d": "weekly", "30d": "monthly"}
-            window_type = (
-                window_type_map.get(key.split("Usage")[0].lower().replace("rolling", ""), "unknown")
-                if key
-                else "unknown"
-            )
-            if key and "rolling" in key.lower():
-                window_type = "session"
-            elif key and "weekly" in key.lower():
-                window_type = "weekly"
-            elif key and "monthly" in key.lower():
-                window_type = "monthly"
 
             cards.append(
                 {
@@ -685,6 +717,7 @@ class OpenCodeCollector(BaseCollector):
                     "account_label": email,
                     "reset_at": reset_at.isoformat(),
                     "window_type": window_type,
+                    "provider_id": "opencode-go",
                     "tier": "Go",
                     "data_source": self.DATA_SOURCE_WEB,
                     "input_source": input_source,
@@ -693,18 +726,19 @@ class OpenCodeCollector(BaseCollector):
                 }
             )
 
-        # Enrich Go cards with per-model token breakdown from the /usage page
+        # Enrich Go cards with per-model token breakdown from the /usage page.
+        # Cards carry canonical window_type ("session"/"weekly"/"monthly"); the upstream
+        # API breakdown is keyed by the short codes "5h"/"7d"/"30d".
+        breakdown_key_for = {"session": "5h", "weekly": "7d", "monthly": "30d"}
         if breakdown:
             logger.info(f"OpenCode: breakdown keys: {breakdown.keys()}")
             logger.info(f"OpenCode: breakdown[go] keys: {breakdown.get('go', {}).keys()}")
-            window_map = {
-                "OpenCode (5h)": "5h",
-                "OpenCode (7d)": "7d",
-                "OpenCode (30d)": "30d",
-            }
             for card in cards:
-                wk = window_map.get(card.get("service_name", ""))
-                logger.info(f"OpenCode: card {card.get('service_name')} -> window key: {wk}")
+                wt = card.get("window_type")
+                wk = breakdown_key_for.get(wt)
+                logger.info(
+                    f"OpenCode: card {card.get('service_name')} ({wt}) -> breakdown key: {wk}"
+                )
                 if not wk:
                     continue
                 go_data = breakdown.get("go", {}).get(wk)
@@ -738,25 +772,6 @@ class OpenCodeCollector(BaseCollector):
                 logger.info(
                     f"OpenCode: Added token fields to {card.get('service_name')}: token={token_usage.get('total')}"
                 )
-
-                # Build token_usage dict
-                tokens = go_data["tokens"]
-                token_usage = {
-                    "input": tokens.get("input", 0),
-                    "output": tokens.get("output", 0),
-                    "reasoning": tokens.get("reasoning", 0),
-                    "cache_read": tokens.get("cache_read", 0),
-                }
-                # Calculate total
-                token_usage["total"] = (
-                    token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
-                )
-
-                # Add structured token fields to card
-                card["token_usage"] = token_usage
-                card["by_model"] = go_data.get("by_model", {})
-                card["msgs"] = go_data["msgs"]
-                card["pct_used"] = pct
 
                 # Also update detail string for display
                 suffix = self._build_oc_enrichment_detail(
@@ -825,68 +840,64 @@ class OpenCodeCollector(BaseCollector):
 
             now = datetime.now(UTC)
 
-            if not self.account_label or self.account_label.lower() == "default":
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "git",
-                        "config",
-                        "--global",
-                        "user.email",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, _ = await proc.communicate()
-                    if proc.returncode == 0:
-                        git_email = stdout.decode().strip()
-                        if git_email:
-                            self.account_label = git_email
-                except Exception:
-                    pass
-
-            identity_suffix = f" | {self.account_label}" if self.account_label else ""
-
-            windows = [
-                (
-                    "5h",
-                    int((now - timedelta(hours=5)).timestamp() * 1000),
-                    "OpenCode (5h)",
-                    12.0,
-                    "5h",
-                ),
-                (
-                    "week",
-                    int((now - timedelta(days=7)).timestamp() * 1000),
-                    "OpenCode (7d)",
-                    30.0,
-                    "7d",
-                ),
-                (
-                    "month",
-                    int((now - timedelta(days=30)).timestamp() * 1000),
-                    "OpenCode (30d)",
-                    60.0,
-                    "30d",
-                ),
-            ]
-
-            results = []
             async with aiosqlite.connect(db) as conn:
-                for _window_key, cutoff_ms, service_name, limit, label in windows:
+                # Discover identity if not already set via UI/Web
+                if not self.account_label or self.account_label.lower() == "default":
+                    # 1. Check for environment variable override
+                    env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+                    if env_label:
+                        self.account_label = env_label
+                    else:
+                        # 2. Check local account table
+                        try:
+                            cursor = await conn.execute("SELECT email FROM account LIMIT 1")
+                            row = await cursor.fetchone()
+                            if row and row[0]:
+                                self.account_label = row[0]
+                            else:
+                                self.account_label = "Default"
+                        except Exception:
+                            self.account_label = "Default"
+
+                identity_suffix = f" | {self.account_label}" if self.account_label else ""
+
+                # Define windows. If we have web-discovered info, use those exact cutoffs.
+                # Mapping: rollingUsage->session, weeklyUsage->weekly, monthlyUsage->monthly
+                win_map = {
+                    "session": ("rollingUsage", 5, 12.0),
+                    "weekly": ("weeklyUsage", 7 * 24, 30.0),
+                    "monthly": ("monthlyUsage", 30 * 24, 60.0),
+                }
+
+                windows = []
+                for window_type, (web_key, rolling_hours, limit) in win_map.items():
+                    # Check if we have a fresh cutoff from the web API
+                    web_info = (self._last_window_info or {}).get(web_key)
+                    if web_info and "cutoff" in web_info:
+                        cutoff_ms = int(web_info["cutoff"].timestamp() * 1000)
+                    else:
+                        # Fallback to rolling
+                        cutoff_ms = int((now - timedelta(hours=rolling_hours)).timestamp() * 1000)
+
+                    windows.append((web_key, cutoff_ms, "OpenCode", limit, window_type))
+
+                results = []
+                for _window_key, cutoff_ms, service_name, limit, window_type in windows:
                     cursor = await conn.execute(
                         """
                         SELECT
-                            json_extract(data, '$.cost')             AS cost,
-                            json_extract(data, '$.tokens.input')     AS t_in,
-                            json_extract(data, '$.tokens.output')    AS t_out,
-                            json_extract(data, '$.tokens.reasoning') AS t_reason,
-                            json_extract(data, '$.tokens.cache.read')  AS cache_r,
-                            json_extract(data, '$.tokens.cache.write') AS cache_w,
-                            json_extract(data, '$.modelID')          AS model_id,
-                            json_extract(data, '$.parentID')         AS parent_id
+                            json_extract(data, '$.cost'),
+                            json_extract(data, '$.tokens.input'),
+                            json_extract(data, '$.tokens.output'),
+                            json_extract(data, '$.tokens.reasoning'),
+                            json_extract(data, '$.tokens.cache.read'),
+                            json_extract(data, '$.tokens.cache.write'),
+                            json_extract(data, '$.modelID'),
+                            json_extract(data, '$.parentID')
                         FROM message
                         WHERE time_created > ?
-                          AND json_valid(data)
                           AND json_extract(data, '$.role') = 'assistant'
+                          AND json_extract(data, '$.providerID') = 'opencode-go'
                         """,
                         (cutoff_ms,),
                     )
@@ -932,12 +943,20 @@ class OpenCodeCollector(BaseCollector):
 
                     enrichment_detail = self._build_oc_enrichment_detail(totals)
 
+                    # Map totals to canonical card fields
+                    token_usage = totals["tokens"].copy()
+                    token_usage["total"] = (
+                        token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
+                    )
+
                     fallback_card = {
                         "service_name": service_name,
+                        "window_type": window_type,
+                        "provider_id": "opencode-go",
                         "icon": "⚡",
                         "remaining": f"${remaining:.2f}",
                         "unit": f"${limit:.0f} limit",
-                        "reset": f"Rolling {label}",
+                        "reset": "Rolling" if window_type == "session" else "n/a",
                         "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
                         "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
                         "detail": f"${total_cost:.2f} used · {msgs} msgs · Local DB{identity_suffix}",
@@ -948,17 +967,175 @@ class OpenCodeCollector(BaseCollector):
                         "currency": "USD",
                         "account_label": self.account_label,
                         "reset_at": None,
+                        "tier": "Go",
                         "data_source": self.DATA_SOURCE_LOCAL,
                         "input_source": "server",
                         "updated_at": datetime.now(UTC).isoformat(),
+                        "token_usage": token_usage,
+                        "by_model": by_model,
+                        "msgs": msgs,
+                        "pct_used": pct,
                     }
 
                     results.append(
                         {
                             "service_name": service_name,
+                            "window_type": window_type,
                             "_enrichment_detail": enrichment_detail,
                             "totals": totals,
                             "_fallback_card": fallback_card,
+                        }
+                    )
+
+                free_cursor = await conn.execute(
+                    """
+                    SELECT
+                        json_extract(data, '$.tokens.input'),
+                        json_extract(data, '$.tokens.output'),
+                        json_extract(data, '$.tokens.reasoning'),
+                        json_extract(data, '$.tokens.cache.read'),
+                        json_extract(data, '$.tokens.cache.write'),
+                        json_extract(data, '$.modelID'),
+                        json_extract(data, '$.parentID')
+                    FROM message
+                    WHERE json_extract(data, '$.role') = 'assistant'
+                      AND json_extract(data, '$.providerID') = 'opencode'
+                    """,
+                )
+                free_rows = await free_cursor.fetchall()
+
+                session_cutoff_ms = int((now - timedelta(hours=5)).timestamp() * 1000)
+                session_cursor = await conn.execute(
+                    """
+                    SELECT
+                        json_extract(data, '$.tokens.input'),
+                        json_extract(data, '$.tokens.output'),
+                        json_extract(data, '$.tokens.reasoning'),
+                        json_extract(data, '$.tokens.cache.read'),
+                        json_extract(data, '$.tokens.cache.write'),
+                        json_extract(data, '$.modelID'),
+                        json_extract(data, '$.parentID')
+                    FROM message
+                    WHERE time_created > ?
+                      AND json_extract(data, '$.role') = 'assistant'
+                      AND json_extract(data, '$.providerID') = 'opencode'
+                    """,
+                    (session_cutoff_ms,),
+                )
+                session_rows = await session_cursor.fetchall()
+
+                def sum_free_tokens(rows: list) -> tuple[int, int, int, int, int, dict, int]:
+                    total_in = total_out = total_reason = cache_r = cache_w = 0
+                    by_model: dict[str, dict] = {}
+                    convos: set[str] = set()
+                    for t_in, t_out, t_reason, cr, cw, model_id, parent_id in rows:
+                        total_in += int(t_in or 0)
+                        total_out += int(t_out or 0)
+                        total_reason += int(t_reason or 0)
+                        cache_r += int(cr or 0)
+                        cache_w += int(cw or 0)
+                        if parent_id:
+                            convos.add(parent_id)
+                        if model_id:
+                            short = self._short_model_id_oc(model_id)
+                            entry = by_model.setdefault(short, {"cost": 0.0, "msgs": 0})
+                            entry["msgs"] += 1
+                    msgs = len(rows)
+                    return total_in, total_out, total_reason, cache_r, cache_w, by_model, msgs
+
+                lt_in, lt_out, lt_reason, lt_cache_r, lt_cache_w, lt_by_model, lt_msgs = (
+                    sum_free_tokens(free_rows)
+                )
+                se_in, se_out, se_reason, se_cache_r, se_cache_w, se_by_model, se_msgs = (
+                    sum_free_tokens(session_rows)
+                )
+
+                if lt_msgs > 0:
+                    lifetime_tokens = lt_in + lt_out + lt_reason
+                    session_tokens = se_in + se_out + se_reason
+
+                    free_totals = {
+                        "lifetime": {
+                            "tokens": {
+                                "input": lt_in,
+                                "output": lt_out,
+                                "reasoning": lt_reason,
+                                "cache_read": lt_cache_r,
+                                "cache_write": lt_cache_w,
+                            },
+                            "msgs": lt_msgs,
+                            "by_model": lt_by_model,
+                        },
+                        "session": {
+                            "tokens": {
+                                "input": se_in,
+                                "output": se_out,
+                                "reasoning": se_reason,
+                                "cache_read": se_cache_r,
+                                "cache_write": se_cache_w,
+                            },
+                            "msgs": se_msgs,
+                            "by_model": se_by_model,
+                        },
+                    }
+
+                    free_token_usage = {
+                        "input": se_in,
+                        "output": se_out,
+                        "reasoning": se_reason,
+                        "cache_read": se_cache_r,
+                        "cache_write": se_cache_w,
+                        "total": session_tokens,
+                    }
+
+                    session_tok = free_totals["session"]["tokens"]
+                    free_detail_parts = []
+                    if session_tok.get("input"):
+                        free_detail_parts.append(f"in:{session_tok['input']:,}")
+                    if session_tok.get("output"):
+                        free_detail_parts.append(f"out:{session_tok['output']:,}")
+                    if session_tok.get("cache_read"):
+                        free_detail_parts.append(f"cache_r:{session_tok['cache_read']:,}")
+                    free_detail = " ".join(free_detail_parts) if free_detail_parts else "$0.00"
+                    free_detail += f" · Lifetime: {lifetime_tokens:,} tokens{identity_suffix}"
+
+                    free_fallback_card = {
+                        "service_name": service_name,
+                        "window_type": "rolling",
+                        "variant": "Free",
+                        "provider_id": "opencode",
+                        "icon": "⚡",
+                        "remaining": f"{lifetime_tokens:,} tokens",
+                        "unit": "free tier",
+                        "reset": "Lifetime",
+                        "health": "good",
+                        "pace": "—",
+                        "detail": f"{session_tokens:,} tokens in last 5h · {se_msgs} msgs | {free_detail}",
+                        "used_value": lifetime_tokens,
+                        "limit_value": None,
+                        "is_unlimited": True,
+                        "unit_type": "token",
+                        "currency": "USD",
+                        "account_label": self.account_label,
+                        "reset_at": None,
+                        "tier": "Free",
+                        "data_source": self.DATA_SOURCE_LOCAL,
+                        "input_source": "server",
+                        "updated_at": datetime.now(UTC).isoformat(),
+                        "token_usage": free_token_usage,
+                        "by_model": se_by_model,
+                        "msgs": se_msgs,
+                        "pct_used": None,
+                    }
+
+                    results.append(
+                        {
+                            "service_name": service_name,
+                            "window_type": "rolling",
+                            "variant": "Free",
+                            "_enrichment_detail": free_detail,
+                            "totals": free_totals,
+                            "_fallback_card": free_fallback_card,
                         }
                     )
 
@@ -1082,12 +1259,40 @@ class OpenCodeCollector(BaseCollector):
             promoted = [e["_fallback_card"] for e in enrichment if e.get("_fallback_card")]
             return promoted or (primary or [])
 
-        by_name = {e.get("service_name"): e for e in enrichment if e.get("_enrichment_detail")}
+        # Check for unmatched variant-specific fallbacks (Free, API, etc.)
+        # Web API may not return these if there's no usage, but local DB might have data
+        for e in enrichment:
+            fb = e.get("_fallback_card")
+            if not fb:
+                continue
+            variant = fb.get("variant")
+            if not variant:
+                continue
+
+            primary_variant_exists = any(c.get("variant") == variant for c in primary)
+
+            if not primary_variant_exists:
+                primary.append(fb)
+
+        by_name = {
+            (e.get("service_name"), e.get("window_type")): e
+            for e in enrichment
+            if e.get("_enrichment_detail")
+        }
         for card in primary:
-            match = by_name.get(card.get("service_name"))
+            match = by_name.get((card.get("service_name"), card.get("window_type")))
             if not match:
                 continue
+
+            # 1. Update detail suffix
             suffix = match["_enrichment_detail"]
             if suffix:
                 card["detail"] = f"{card.get('detail', '').rstrip()} | {suffix}".strip(" |")
+
+            # 2. Always prefer local token data - it's more complete/accurate than web API
+            fb_card = match.get("_fallback_card", {})
+            for field in ["token_usage", "by_model", "msgs"]:
+                if field in fb_card:
+                    card[field] = fb_card[field]
+
         return primary

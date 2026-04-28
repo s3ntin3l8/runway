@@ -71,14 +71,17 @@ class TestAnthropicCollector:
         assert isinstance(result, list)
         assert len(result) >= 1
         assert all("service_name" in card for card in result)
-        assert any("Session" in str(card.get("service_name", "")) for card in result)
+        assert any(card.get("window_type") == "session" for card in result)
         # seven_day_sonnet must fold into weekly window_type with model_id="sonnet"
         sonnet_card = next(
-            (c for c in result if "Sonnet Weekly" in str(c.get("service_name", ""))), None
+            (
+                c
+                for c in result
+                if c.get("window_type") == "weekly" and c.get("model_id") == "sonnet"
+            ),
+            None,
         )
         assert sonnet_card is not None, "Expected a Sonnet Weekly card from mock data"
-        assert sonnet_card["window_type"] == "weekly"
-        assert sonnet_card["model_id"] == "sonnet"
 
     @pytest.mark.asyncio
     async def test_refresh_token_lookup_is_scoped_to_account(self, mock_http_client):
@@ -226,19 +229,20 @@ class TestAnthropicCollector:
         # Should return 7 cards: 5 standard quota windows + Balance + Extra Usage
         assert len(result) == 7
 
-        services = {c["service_name"]: c for c in result}
-        assert "Claude (Session Window)" in services
-        assert "Claude (Current Balance)" in services
-        assert "Claude (Extra Usage)" in services
+        variants = {c.get("variant"): c for c in result if c.get("variant")}
+        assert "Current Balance" in variants
+        assert "Extra Usage" in variants
+        # Plus a Session window-percent card with variant=null
+        assert any(c.get("window_type") == "session" and c.get("variant") is None for c in result)
 
         # Check Balance card
-        bal_card = services["Claude (Current Balance)"]
+        bal_card = variants["Current Balance"]
         assert bal_card["remaining"] == "$15.75"
         assert bal_card["unit"] == "USD"
         assert bal_card["icon"] == "💰"
 
         # Check Extra Usage card
-        extra_card = services["Claude (Extra Usage)"]
+        extra_card = variants["Extra Usage"]
         assert extra_card["remaining"] == "$17.50"  # 20.00 - 2.50
         assert extra_card["unit"] == "limit"
         assert "Spent: $2.50" in extra_card["detail"]
@@ -398,9 +402,9 @@ class TestAnthropicCollector:
         # Should return Web API results — only 3 cards because seven_day_opus is missing from mock data
         assert isinstance(result, list)
         assert len(result) == 3
-        services = [r["service_name"] for r in result]
-        assert "Claude (Session Window)" in services
-        assert "Claude (Weekly Window)" in services
+        window_types = [r.get("window_type") for r in result]
+        assert "session" in window_types
+        assert "weekly" in window_types
         assert any(card.get("data_source") == "web" for card in result)
         # Fixture uses snake_case resets_at — must NOT be dropped (regression for camelCase-only bug)
         assert all(card.get("reset_at") is not None for card in result), (
@@ -960,14 +964,15 @@ class TestAnthropicCollector:
 
         assert len(result) == 2
         # Check Session card
-        assert "Session Window" in result[0]["service_name"]
+        assert result[0]["service_name"] == "Claude"
+        assert result[0].get("window_type") == "session"
         assert result[0]["used_value"] == 12.5
         assert result[0]["remaining"] == "87.5%"
         assert result[0]["data_source"] == "local"
         assert "[CLI PTY]" in result[0]["detail"]
 
         # Check Weekly card
-        assert "Weekly Window" in result[1]["service_name"]
+        assert result[1].get("window_type") == "weekly"
         assert result[1]["used_value"] == 5.0
         assert result[1]["remaining"] == "95.0%"
         assert "4d" in result[1]["reset"]
@@ -1405,7 +1410,7 @@ class TestChatGPTCollector:
 
         assert isinstance(result, list)
         assert len(result) == 1
-        assert "Codex" in str(result[0].get("service_name", ""))
+        assert result[0].get("variant") == "Codex"
         assert "PLUS" in str(result[0].get("detail", ""))
         assert "%" in str(result[0].get("remaining", ""))
 
@@ -1514,18 +1519,19 @@ class TestAntigravityCollector:
             f"Expected 2 cards, got {len(result)}: {[c['service_name'] for c in result]}"
         )
 
-        # Check quota card
-        quota_cards = [c for c in result if "claude" in c["service_name"].lower()]
+        # Check quota card (model-specific, no variant)
+        quota_cards = [c for c in result if c.get("model_id") and not c.get("variant")]
         assert len(quota_cards) == 1, (
-            f"Quota card for 'claude' not found in {[c['service_name'] for c in result]}"
+            f"Quota card not found in {[(c['service_name'], c.get('variant'), c.get('model_id')) for c in result]}"
         )
         assert quota_cards[0]["remaining"] == "50.0%"
 
-        # Check credits card
-        credit_cards = [c for c in result if "credits" in c["service_name"].lower()]
+        # Check credits card (variant carries the credit type)
+        credit_cards = [c for c in result if c.get("variant") and "credit" in c["variant"].lower()]
         assert len(credit_cards) == 1, "Credits card not found"
         assert credit_cards[0]["remaining"] == "854"
-        assert credit_cards[0]["service_name"] == "Google AI Credits"
+        assert credit_cards[0]["service_name"] == "Antigravity"
+        assert credit_cards[0]["variant"] == "Google AI Credits"
         assert credit_cards[0]["icon"] == "💰"
         assert credit_cards[0]["unit"] == "credits"
         assert credit_cards[0]["provider_id"] == "antigravity"
@@ -1611,7 +1617,7 @@ class TestAntigravityCollector:
 
         assert len(result) == 1
         card = result[0]
-        assert card["service_name"] == "claude-sonnet-4"
+        assert card["service_name"] == "Antigravity"
         assert card["provider_id"] == "antigravity"
         assert card["model_id"] == "claude-sonnet-4"
         assert card["reset_at"] is not None
@@ -1623,6 +1629,57 @@ class TestAntigravityCollector:
 
 class TestOpenCodeCollector:
     """Test suite for OpenCode collector."""
+
+    @pytest.mark.asyncio
+    async def test_opencode_state_persistence(self, tmp_path):
+        """OpenCodeCollector saves and loads window state from file."""
+        import json
+        from datetime import UTC, datetime, timedelta
+
+        # 1. Setup mock state
+        data_dir = tmp_path / "runway_data_persistence"
+        data_dir.mkdir()
+        state_file = data_dir / "opencode_state_default.json"
+
+        fixed_reset = datetime.now(UTC) + timedelta(days=5)
+        mock_info = {
+            "weeklyUsage": {
+                "cutoff": (fixed_reset - timedelta(days=7)).isoformat(),
+                "is_fixed": True,
+                "reset_at": fixed_reset.isoformat(),
+            }
+        }
+        with open(state_file, "w") as f:
+            json.dump(mock_info, f)
+
+        # 2. Verify loading in __init__
+        with patch("app.services.collectors.opencode.settings") as mock_settings:
+            mock_settings.data_dir = str(data_dir)
+            collector = OpenCodeCollector()
+
+            assert collector._last_window_info is not None
+            assert "weeklyUsage" in collector._last_window_info
+            # Verify it converted back to datetime
+            assert isinstance(collector._last_window_info["weeklyUsage"]["cutoff"], datetime)
+            assert collector._last_window_info["weeklyUsage"]["is_fixed"] is True
+
+            # 3. Verify saving
+            new_reset = datetime.now(UTC) + timedelta(days=6)
+            new_info = {
+                "rollingUsage": {
+                    "cutoff": (new_reset - timedelta(hours=5)),
+                    "is_fixed": False,
+                    "reset_at": None,
+                }
+            }
+            collector._save_persisted_state(new_info)
+
+            with open(state_file) as f:
+                saved = json.load(f)
+                assert "rollingUsage" in saved
+                assert saved["rollingUsage"]["is_fixed"] is False
+                assert "cutoff" in saved["rollingUsage"]
+                assert isinstance(saved["rollingUsage"]["cutoff"], str)
 
     @pytest.mark.asyncio
     async def test_collect_returns_list(self, mock_http_client):
@@ -1659,6 +1716,10 @@ class TestOpenCodeCollector:
         from datetime import UTC, datetime, timedelta
 
         db_path = str(tmp_path / "opencode.db")
+        # Ensure a clean state directory for this test
+        state_dir = tmp_path / "runway_data_tui"
+        state_dir.mkdir()
+
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
 
         def _row(
@@ -1670,6 +1731,7 @@ class TestOpenCodeCollector:
             cache_r: int,
             cache_w: int,
             parent_id: str,
+            provider_id: str = "opencode-go",
         ) -> dict:
             ts = int((datetime.now(UTC) - timedelta(hours=offset_hours)).timestamp() * 1000)
             return {
@@ -1686,51 +1748,80 @@ class TestOpenCodeCollector:
                         },
                         "modelID": model,
                         "parentID": parent_id,
+                        "providerID": provider_id,
                     }
                 ),
             }
 
-        rows = [
-            _row(1, "claude-sonnet-4-6", 1.50, 10000, 500, 5000, 200, "conv-a"),
-            _row(3, "claude-opus-4-7", 2.00, 20000, 800, 0, 0, "conv-b"),
-            _row(100, "minimax-m2.5-free", 0.10, 3000, 100, 0, 0, "conv-c"),
+        # Go tier: opencode-go (counts toward limits)
+        go_rows = [
+            _row(1, "qwen3.5-plus", 1.50, 10000, 500, 5000, 200, "conv-a"),
+            _row(3, "qwen3.5-plus", 2.00, 20000, 800, 0, 0, "conv-b"),
         ]
-        # rows[0] and rows[1] are inside 5h; all three are inside 7d and 30d
-        # row[2] is 100h ago → outside 5h window, but inside 7d (100h < 168h)
+        # Free tier: opencode (unlimited)
+        free_rows = [
+            _row(100, "minimax-m2.5-free", 0.0, 3000, 100, 0, 0, "conv-c", provider_id="opencode"),
+        ]
+        rows = go_rows + free_rows
+        # go_rows[0] and go_rows[1] are inside 5h; go_rows inside 7d and 30d
+        # free_rows[0] is 100h ago → outside 5h window, but inside 7d (100h < 168h)
 
         conn = sqlite3.connect(db_path)
         conn.execute("CREATE TABLE message (time_created INTEGER, data TEXT)")
+        conn.execute("CREATE TABLE account (email TEXT)")
+        conn.execute("INSERT INTO account (email) VALUES (?)", ("opencode@example.com",))
         for r in rows:
             conn.execute("INSERT INTO message VALUES (?, ?)", (r["time_created"], r["data"]))
         conn.commit()
         conn.close()
 
-        collector = OpenCodeCollector()
         with patch("app.services.collectors.opencode.settings") as mock_settings:
             mock_settings.OPENCODE_DB_PATH = db_path
+            # Use the clean state directory
+            mock_settings.data_dir = str(state_dir)
+            collector = OpenCodeCollector()
             result = await collector._get_opencode_tui()
 
-        assert len(result) == 3
-        by_name = {e["service_name"]: e for e in result}
-        assert set(by_name.keys()) == {"OpenCode (5h)", "OpenCode (7d)", "OpenCode (30d)"}
+        assert collector.account_label == "opencode@example.com"
+        assert len(result) == 4
+        by_wt = {e["window_type"]: e for e in result}
+        assert set(by_wt.keys()) == {"session", "weekly", "monthly", "rolling"}
 
-        fh = by_name["OpenCode (5h)"]
+        free_card = by_wt.get("rolling")
+        assert free_card is not None
+        assert free_card.get("variant") == "Free"
+        assert free_card["_fallback_card"]["provider_id"] == "opencode"
+        assert free_card["_fallback_card"]["tier"] == "Free"
+        assert "tokens in last 5h" in free_card["_fallback_card"]["detail"]
+        assert "Lifetime:" in free_card["_fallback_card"]["detail"]
+
+        fh = by_wt["session"]
         assert fh.get("_enrichment_detail")
         assert "$" in fh["_enrichment_detail"]
-        assert "sonnet" in fh["_enrichment_detail"]
+        assert "qwen" in fh["_enrichment_detail"]
         assert "cache_w:0" not in fh["_enrichment_detail"]
         assert fh.get("_fallback_card") is not None
-        assert fh["_fallback_card"]["service_name"] == "OpenCode (5h)"
+        assert fh["_fallback_card"]["service_name"] == "OpenCode"
+        assert fh["_fallback_card"]["window_type"] == "session"
         assert fh["_fallback_card"]["data_source"] == "local"
+        assert fh["_fallback_card"]["provider_id"] == "opencode-go"
 
-        # 5h window: only rows[0] and rows[1] (rows[2] is 100h ago)
+        # Session window: only go_rows[0] and go_rows[1] (free_rows[0] is 100h ago)
         assert fh["totals"]["msgs"] == 2
         assert fh["totals"]["convos"] == 2
 
-        # 7d window: all three rows (100h < 168h = 7d)
-        sevend = by_name["OpenCode (7d)"]
-        assert sevend["totals"]["msgs"] == 3
-        assert sevend["totals"]["convos"] == 3
+        # Check top-level card fields in fallback_card
+        card = fh["_fallback_card"]
+        assert card["msgs"] == 2
+        assert card["token_usage"]["input"] == 30000
+        assert card["token_usage"]["total"] == 30000 + 1300 + 0  # in + out + reasoning
+        assert "qwen3.5-plus" in card["by_model"]
+        assert card["pct_used"] > 0
+
+        # Weekly window: only Go rows (100h < 168h = 7d)
+        weekly = by_wt["weekly"]
+        assert weekly["totals"]["msgs"] == 2
+        assert weekly["totals"]["convos"] == 2
 
     @pytest.mark.asyncio
     async def test_enrich_results_matches_by_service_name(self):
@@ -1739,29 +1830,34 @@ class TestOpenCodeCollector:
 
         primary = [
             {
-                "service_name": "OpenCode (5h)",
+                "service_name": "OpenCode",
+                "window_type": "session",
                 "detail": "$1.00 used · Web API",
                 "remaining": "$11.00",
             },
             {
-                "service_name": "OpenCode (7d)",
+                "service_name": "OpenCode",
+                "window_type": "weekly",
                 "detail": "$5.00 used · Web API",
                 "remaining": "$25.00",
             },
         ]
         enrichment = [
             {
-                "service_name": "OpenCode (5h)",
+                "service_name": "OpenCode",
+                "window_type": "session",
                 "_enrichment_detail": "$1.00 | in:10,000",
                 "_fallback_card": {},
             },
             {
-                "service_name": "OpenCode (7d)",
+                "service_name": "OpenCode",
+                "window_type": "weekly",
                 "_enrichment_detail": "$5.00 | in:50,000",
                 "_fallback_card": {},
             },
             {
-                "service_name": "OpenCode (30d)",
+                "service_name": "OpenCode",
+                "window_type": "monthly",
                 "_enrichment_detail": "$8.00 | in:80,000",
                 "_fallback_card": {},
             },
@@ -1770,20 +1866,26 @@ class TestOpenCodeCollector:
         result = collector._enrich_results(primary, enrichment)
 
         assert len(result) == 2
-        fh = next(c for c in result if c["service_name"] == "OpenCode (5h)")
+        fh = next(c for c in result if c["window_type"] == "session")
         assert "in:10,000" in fh["detail"]
-        sevend = next(c for c in result if c["service_name"] == "OpenCode (7d)")
-        assert "in:50,000" in sevend["detail"]
+        weekly = next(c for c in result if c["window_type"] == "weekly")
+        assert "in:50,000" in weekly["detail"]
 
     @pytest.mark.asyncio
     async def test_enrich_results_no_primary_promotes_fallback(self):
         """When primary is empty, fallback cards are promoted."""
         collector = OpenCodeCollector()
 
-        fallback = {"service_name": "OpenCode (5h)", "remaining": "$12.00", "detail": "Local DB"}
+        fallback = {
+            "service_name": "OpenCode",
+            "window_type": "session",
+            "remaining": "$12.00",
+            "detail": "Local DB",
+        }
         enrichment = [
             {
-                "service_name": "OpenCode (5h)",
+                "service_name": "OpenCode",
+                "window_type": "session",
                 "_enrichment_detail": "$0.00",
                 "_fallback_card": fallback,
             },
@@ -1791,7 +1893,8 @@ class TestOpenCodeCollector:
 
         result = collector._enrich_results([], enrichment)
         assert len(result) == 1
-        assert result[0]["service_name"] == "OpenCode (5h)"
+        assert result[0]["service_name"] == "OpenCode"
+        assert result[0]["window_type"] == "session"
         assert result[0]["remaining"] == "$12.00"
 
     @pytest.mark.asyncio
@@ -1799,7 +1902,14 @@ class TestOpenCodeCollector:
         """Error-shaped or empty enrichment leaves primary untouched."""
         collector = OpenCodeCollector()
 
-        primary = [{"service_name": "OpenCode (5h)", "detail": "$1.00 used", "remaining": "$11.00"}]
+        primary = [
+            {
+                "service_name": "OpenCode",
+                "window_type": "session",
+                "detail": "$1.00 used",
+                "remaining": "$11.00",
+            }
+        ]
 
         assert collector._enrich_results(primary, []) == primary
         assert collector._enrich_results(primary, [{"remaining": "ERR"}]) == primary
@@ -1947,29 +2057,35 @@ class TestOpenCodeCollector:
         assert len(cards) == 5
 
         service_names = {c["service_name"] for c in cards}
-        assert "OpenCode (5h)" in service_names
-        assert "OpenCode Free" in service_names
-        assert "OpenCode API" in service_names
+        assert "OpenCode" in service_names
 
-        # Go (5h) card detail should contain the per-model enrichment
-        five_h = next(c for c in cards if c["service_name"] == "OpenCode (5h)")
+        # Go (session) card detail should contain the per-model enrichment
+        five_h = next(c for c in cards if c.get("window_type") == "session")
         assert "sonnet" in five_h["detail"]
         assert "$2.50" in five_h["detail"]
 
-        # Free card: is_unlimited=False so detail renders as card subtitle
-        free_card = next(c for c in cards if c["service_name"] == "OpenCode Free")
-        assert free_card["is_unlimited"] is False
+        # Monthly card window_type must be "monthly" — drives the breakdown_key_for
+        # lookup. Mismatch here silently breaks per-model enrichment, sidecar
+        # aggregation, and history continuity.
+        monthly_card = next(
+            c for c in cards if c.get("window_type") == "monthly" and c["limit_value"] == 60.0
+        )
+        assert monthly_card["service_name"] == "OpenCode"
+
+        # Free card: is_unlimited=True shows token count instead of infinity
+        free_card = next(c for c in cards if c.get("variant") == "Free")
+        assert free_card["is_unlimited"] is True
         assert free_card["health"] == "good"
         assert "tokens" in free_card["remaining"]  # e.g. "105,000 tokens"
         assert "Free tier" in free_card["detail"]
 
         # API card: is_unlimited=False so detail renders as card subtitle
-        api_card = next(c for c in cards if c["service_name"] == "OpenCode API")
+        api_card = next(c for c in cards if c.get("variant") == "API")
         assert api_card["is_unlimited"] is False
         assert "$0.30" in api_card["detail"] or "0.30" in api_card["remaining"]
 
         # Tier badges
-        go_cards = [c for c in cards if c["service_name"].startswith("OpenCode (")]
+        go_cards = [c for c in cards if c.get("tier") == "Go"]
         assert all(c.get("tier") == "Go" for c in go_cards)
         assert free_card.get("tier") == "Free"
         assert api_card.get("tier") == "API"
@@ -2068,6 +2184,296 @@ class TestOpenCodeCollector:
         cards = collector._parse_usage_data(go_text, "wrk_TEST", breakdown)
         assert len(cards) == 3  # only Go cards, no Free or API
 
+    @pytest.mark.asyncio
+    async def test_get_workspace_id_from_env(self, mock_http_client):
+        """OPENCODE_WORKSPACE_ID env var bypasses the network call."""
+        collector = OpenCodeCollector()
+        with patch.dict(os.environ, {"OPENCODE_WORKSPACE_ID": "wrk_env_123"}, clear=False):
+            result = await collector._get_workspace_id(mock_http_client, {})
+        assert result == "wrk_env_123"
+
+    @pytest.mark.asyncio
+    async def test_get_workspace_id_from_env_url(self, mock_http_client):
+        """Env var with full URL format extracts just the workspace ID."""
+        collector = OpenCodeCollector()
+        with patch.dict(
+            os.environ,
+            {"OPENCODE_WORKSPACE_ID": "https://opencode.ai/workspace/wrk_url_456/go"},
+            clear=False,
+        ):
+            result = await collector._get_workspace_id(mock_http_client, {})
+        assert result == "wrk_url_456"
+
+    @pytest.mark.asyncio
+    async def test_get_workspace_id_from_response(self, mock_http_client):
+        """Workspace ID and email are extracted from the JS response."""
+        collector = OpenCodeCollector()
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = 'someJS({id:"wrk_resp789",name:"Test"});user@example.com '
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            result = await collector._get_workspace_id(mock_http_client, {})
+
+        assert result == "wrk_resp789"
+        assert collector.account_label == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_get_workspace_id_post_fallback(self, mock_http_client):
+        """GET 404 falls back to POST with empty body."""
+        collector = OpenCodeCollector()
+
+        get_resp = MagicMock(spec=httpx.Response)
+        get_resp.status_code = 404
+
+        post_resp = MagicMock(spec=httpx.Response)
+        post_resp.status_code = 200
+        post_resp.text = 'id:"wrk_post999"'
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[get_resp, post_resp],
+            ) as mock_retry,
+        ):
+            result = await collector._get_workspace_id(mock_http_client, {})
+
+        assert result == "wrk_post999"
+        assert mock_retry.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_workspace_id_failure_returns_none(self, mock_http_client):
+        """Non-200 on both GET and POST returns None."""
+        collector = OpenCodeCollector()
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 500
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=resp,
+            ),
+        ):
+            result = await collector._get_workspace_id(mock_http_client, {})
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_data_success(self, mock_http_client):
+        """Subscription data page is returned as text."""
+        collector = OpenCodeCollector()
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = "rollingUsage:{usagePercent:10,resetInSec:3600}"
+
+        with patch(
+            "app.services.collectors.opencode.http_request_with_retry",
+            new_callable=AsyncMock,
+            return_value=resp,
+        ):
+            result = await collector._get_subscription_data(mock_http_client, {}, "wrk_123")
+        assert result == "rollingUsage:{usagePercent:10,resetInSec:3600}"
+
+    @pytest.mark.asyncio
+    async def test_get_subscription_data_failure_returns_none(self, mock_http_client):
+        """Non-200 response returns None."""
+        collector = OpenCodeCollector()
+
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 403
+
+        with patch(
+            "app.services.collectors.opencode.http_request_with_retry",
+            new_callable=AsyncMock,
+            return_value=resp,
+        ):
+            result = await collector._get_subscription_data(mock_http_client, {}, "wrk_123")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_opencode_web_full_flow(self, mock_http_client, tmp_path):
+        """End-to-end web API collection with mocked responses."""
+        collector = OpenCodeCollector()
+        data_dir = tmp_path / "runway_data_web"
+        data_dir.mkdir()
+
+        with patch("app.services.collectors.opencode.settings") as mock_settings:
+            mock_settings.data_dir = str(data_dir)
+
+            # 1. Workspace discovery
+            ws_resp = MagicMock(spec=httpx.Response)
+            ws_resp.status_code = 200
+            ws_resp.text = 'id:"wrk_flow111";user@flow.com'
+
+            # 2. Subscription /go page
+            sub_resp = MagicMock(spec=httpx.Response)
+            sub_resp.status_code = 200
+            sub_resp.text = (
+                "user@flow.com "
+                "rollingUsage:{usagePercent:25,resetInSec:3600} "
+                "weeklyUsage:{usagePercent:40,resetInSec:345600} "
+                "monthlyUsage:{usagePercent:15,resetInSec:864000}"
+            )
+
+            # 3. /usage page (enrichment)
+            usage_resp = MagicMock(spec=httpx.Response)
+            usage_resp.status_code = 200
+            usage_resp.text = ""  # empty — no per-model breakdown
+
+            with (
+                patch(
+                    "app.services.collectors.opencode.get_opencode_session_cookie",
+                    return_value="session_cookie_123",
+                ),
+                patch(
+                    "app.services.collectors.opencode.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    side_effect=[ws_resp, sub_resp, usage_resp],
+                ),
+            ):
+                result = await collector._get_opencode_web(mock_http_client)
+
+        assert len(result) == 3
+        by_wt = {c["window_type"]: c for c in result}
+        assert set(by_wt.keys()) == {"session", "weekly", "monthly"}
+
+        session = by_wt["session"]
+        assert session["used_value"] == 3.0  # 25% of $12
+        assert session["remaining"] == "$9.00"
+        assert session["provider_id"] == "opencode-go"
+        assert session["input_source"] == "server"
+
+        weekly = by_wt["weekly"]
+        assert weekly["used_value"] == 12.0  # 40% of $30
+        assert weekly["remaining"] == "$18.00"
+
+        monthly = by_wt["monthly"]
+        assert monthly["used_value"] == 9.0  # 15% of $60
+        assert monthly["remaining"] == "$51.00"
+
+    @pytest.mark.asyncio
+    async def test_get_opencode_web_no_cookie_returns_empty(self, mock_http_client):
+        """When no session cookie is available, return empty list immediately."""
+        collector = OpenCodeCollector()
+
+        with (
+            patch(
+                "app.services.collectors.opencode.get_opencode_session_cookie",
+                return_value=None,
+            ),
+            patch(
+                "app.services.collectors.opencode.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            result = await collector._get_opencode_web(mock_http_client)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_opencode_web_workspace_failure_returns_empty(self, mock_http_client):
+        """If workspace ID cannot be discovered, return empty list."""
+        collector = OpenCodeCollector()
+
+        ws_resp = MagicMock(spec=httpx.Response)
+        ws_resp.status_code = 200
+        ws_resp.text = "no workspace id here"
+
+        with (
+            patch(
+                "app.services.collectors.opencode.get_opencode_session_cookie",
+                return_value="session_cookie_123",
+            ),
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "app.services.collectors.opencode.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=ws_resp,
+            ),
+        ):
+            result = await collector._get_opencode_web(mock_http_client)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_negative_tokens_clamped_to_zero(self):
+        """Negative raw token values are clamped to zero."""
+        collector = OpenCodeCollector()
+
+        html = (
+            '$R[1]={id:"usg_NEG",workspaceID:"wrk_1",'
+            'timeCreated:new Date("2026-04-20T10:00:00.000Z"),'
+            'timeUpdated:new Date("2026-04-20T10:00:00.100Z"),'
+            "timeDeleted:null,"
+            'model:"claude-sonnet-4-6",provider:"anthropic",'
+            "inputTokens:-1000,"
+            "outputTokens:-200,"
+            "reasoningTokens:-50,"
+            "cacheReadTokens:-500,"
+            "cacheWrite5mTokens:0,"
+            "cacheWrite1hTokens:null,"
+            "cost:-970321,"
+            'keyID:"key_AAA",sessionID:"",'
+            'enrichment:$R[2]={plan:"lite"}'
+            "}"
+        )
+
+        records = collector._parse_usage_records(html)
+        assert len(records) == 1
+        r = records[0]
+        assert r["input"] == 0
+        assert r["output"] == 0
+        assert r["reasoning"] == 0
+        assert r["cache_read"] == 0
+        assert r["cost_usd"] == 0.0
+
+    def test_free_api_cards_have_provider_id(self):
+        """Free and API cards emitted by _build_free_api_card carry provider_id."""
+        collector = OpenCodeCollector()
+
+        free_card = collector._build_free_api_card(
+            "free",
+            {
+                "cost": 0.0,
+                "msgs": 5,
+                "tokens": {"input": 1000, "output": 100, "reasoning": 0, "cache_read": 0},
+                "by_model": {"m2.5-free": {"cost": 0.0, "msgs": 5}},
+            },
+            "wrk_123",
+            "user@example.com",
+            "2026-04-20T12:00:00+00:00",
+        )
+        assert free_card["provider_id"] == "opencode"
+
+        api_card = collector._build_free_api_card(
+            "api",
+            {
+                "cost": 0.30,
+                "msgs": 3,
+                "tokens": {"input": 5000, "output": 500, "reasoning": 0, "cache_read": 0},
+                "by_model": {"gpt-4o": {"cost": 0.30, "msgs": 3}},
+            },
+            "wrk_123",
+            "user@example.com",
+            "2026-04-20T12:00:00+00:00",
+        )
+        assert api_card["provider_id"] == "opencode"
+
 
 class TestZaiCollector:
     """Test suite for zAI (consolidated) collector."""
@@ -2106,7 +2512,7 @@ class TestZaiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) >= 1
-        token_card = next((c for c in result if "Tokens" in c.get("service_name", "")), None)
+        token_card = next((c for c in result if c.get("variant") == "Tokens"), None)
         assert token_card is not None
         assert "550,000" in token_card["remaining"]
         assert token_card["health"] == "good"
@@ -2155,8 +2561,8 @@ class TestZaiCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) >= 2
-        assert any("Tokens" in c.get("service_name", "") for c in result)
-        assert any("Time" in c.get("service_name", "") for c in result)
+        assert any(c.get("variant") == "Tokens" for c in result)
+        assert any(c.get("variant") == "Time" for c in result)
 
     @pytest.mark.asyncio
     async def test_collect_no_plan_returns_info_card(self, mock_http_client):
@@ -2423,8 +2829,8 @@ class TestKimiCodingCollector:
             result = await collector.collect(mock_http_client)
 
         assert len(result) == 2
-        assert any("Weekly" in card["service_name"] for card in result)
-        assert any("5h" in card["service_name"] for card in result)
+        assert any(card.get("window_type") == "weekly" for card in result)
+        assert any(card.get("window_type") == "session" for card in result)
         assert any("Moderato" in card["detail"] for card in result)
 
     @pytest.mark.asyncio
@@ -2514,7 +2920,8 @@ class TestOpenRouterCollector:
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service_name"] == "OpenRouter Credits"
+        assert result[0]["service_name"] == "OpenRouter"
+        assert result[0].get("variant") == "Credits"
         assert "$7.50" in result[0]["remaining"]
         assert result[0]["health"] == "good"
 
@@ -2551,10 +2958,10 @@ class TestOpenRouterCollector:
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 2
-        services = {c["service_name"]: c for c in result}
-        assert "OpenRouter Credits" in services
-        assert "OpenRouter Key Limit" in services
-        key_card = services["OpenRouter Key Limit"]
+        services = {c.get("variant"): c for c in result}
+        assert "Credits" in services
+        assert "Key Limit" in services
+        key_card = services["Key Limit"]
         assert "$19.50" in key_card["remaining"]
         assert key_card["health"] == "good"
         assert key_card["limit_value"] == 20.0
@@ -2593,7 +3000,8 @@ class TestOpenRouterCollector:
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service_name"] == "OpenRouter Credits"
+        assert result[0]["service_name"] == "OpenRouter"
+        assert result[0].get("variant") == "Credits"
 
     @pytest.mark.asyncio
     async def test_collect_key_timeout_still_returns_credits(self, mock_http_client):
@@ -2624,7 +3032,8 @@ class TestOpenRouterCollector:
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service_name"] == "OpenRouter Credits"
+        assert result[0]["service_name"] == "OpenRouter"
+        assert result[0].get("variant") == "Credits"
 
     @pytest.mark.asyncio
     async def test_collect_key_no_limit_configured(self, mock_http_client):
@@ -2659,7 +3068,8 @@ class TestOpenRouterCollector:
                 result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["service_name"] == "OpenRouter Credits"
+        assert result[0]["service_name"] == "OpenRouter"
+        assert result[0].get("variant") == "Credits"
 
     @pytest.mark.asyncio
     async def test_headers_include_referer_and_title(self, mock_http_client):
