@@ -208,6 +208,7 @@ async def http_request_with_retry(
     url: str,
     max_retries: int = 3,
     initial_delay: float = 0.5,
+    retry_on_429: bool = True,
     **kwargs,
 ) -> httpx.Response:
     """
@@ -220,6 +221,8 @@ async def http_request_with_retry(
         url: Request URL
         max_retries: Maximum number of retries (default: 3)
         initial_delay: Initial backoff delay in seconds (default: 0.5)
+        retry_on_429: Whether to retry on 429 (default: True). Set to False
+            for token endpoints where the caller manages backoff.
         **kwargs: Additional arguments to pass to the request
 
     Returns:
@@ -231,6 +234,11 @@ async def http_request_with_retry(
 
             # If not rate limited, return immediately
             if response.status_code != 429:
+                return response
+
+            # If retry_on_429 is disabled, return 429 immediately so the
+            # caller can inspect Retry-After and apply its own backoff.
+            if not retry_on_429:
                 return response
 
             # If this was the last attempt, return the 429 response
