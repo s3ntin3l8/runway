@@ -390,8 +390,8 @@ class TestAnthropicCollector:
         )
 
     @pytest.mark.asyncio
-    async def test_collect_enhanced_local_fallback(self, mock_http_client):
-        """Test fallback to enhanced local logs when both OAuth and Web API fail."""
+    async def test_collect_enhanced_local_no_fallback(self, mock_http_client):
+        """Enrichment does not act as fallback when OAuth and Web API fail."""
         collector = AnthropicCollector()
 
         # Mock OAuth failure - OAuth uses request() not get()
@@ -443,7 +443,7 @@ class TestAnthropicCollector:
                             "type": "assistant",
                             "timestamp": datetime.now(UTC).isoformat(),
                             "message": {
-                                "id": "msg_2",  # Different message, should be counted
+                                "id": "msg_2",
                                 "requestId": "req_2",
                                 "usage": {
                                     "input_tokens": 500,
@@ -468,25 +468,14 @@ class TestAnthropicCollector:
                 ):
                     result = await collector.collect(mock_http_client)
 
-        # Should return local log results
+        # Error card remains; enrichment does not promote fallback
         assert isinstance(result, list)
         assert len(result) == 1
-        assert "Claude Pro" in str(result[0].get("service_name", ""))
-        assert "Local Logs" in str(result[0].get("detail", ""))
-        # Should sum all token types: (1000+500+2000+100) + (500+200+0+0) = 4300
-        assert "4,300" in str(result[0].get("detail", "")) or "4300" in str(
-            result[0].get("detail", "")
-        )
+        assert result[0]["remaining"] == "ERR"
 
-    @pytest.mark.asyncio
-    async def test_collect_local_dedup(self, mock_http_client):
+    def test_get_claude_local_enhanced_sync_dedup(self, tmp_path):
         """Test deduplication of streaming chunks in local logs."""
         collector = AnthropicCollector()
-
-        # Mock OAuth failure - OAuth uses request() not get()
-        oauth_response = MagicMock(spec=httpx.Response)
-        oauth_response.status_code = 401
-        mock_http_client.request.return_value = oauth_response
 
         # Mock local log data with duplicate messages (streaming chunks)
         log_data = [
@@ -500,8 +489,8 @@ class TestAnthropicCollector:
                         "usage": {
                             "input_tokens": 1000,
                             "output_tokens": 500,
-                            "cache_read_tokens": 0,
-                            "cache_creation_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
                         },
                     },
                 }
@@ -517,8 +506,8 @@ class TestAnthropicCollector:
                         "usage": {
                             "input_tokens": 1000,
                             "output_tokens": 500,
-                            "cache_read_tokens": 0,
-                            "cache_creation_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
                         },
                     },
                 }
@@ -527,39 +516,29 @@ class TestAnthropicCollector:
         ]
 
         with (
-            patch(
-                "app.services.credential_provider.CredentialProvider.get_claude_token",
-                return_value="invalid_token",
-            ),
             patch("app.services.collectors.anthropic.settings") as mock_settings,
+            patch("builtins.open", mock_open(read_data="".join(log_data))),
+            patch(
+                "app.services.collectors.anthropic_local.glob.glob",
+                return_value=["/fake/path/test.jsonl"],
+            ),
+            patch("os.path.isdir", return_value=True),
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-
-            with (
-                patch(
-                    "app.services.collectors.anthropic_web.get_claude_session_cookie",
-                    return_value=None,
-                ),
-                patch.object(collector, "_get_valid_token", return_value="invalid_token"),
-                patch("builtins.open", mock_open(read_data="".join(log_data))),
-                patch(
-                    "app.services.collectors.anthropic_local.glob.glob",
-                    return_value=["/fake/path/test.jsonl"],
-                ),
-                patch("os.path.isdir", return_value=True),
-                patch.object(collector, "_strategy_cli_pty", return_value=[]),
-            ):
-                result = await collector.collect(mock_http_client)
+            result = collector._get_claude_local_enhanced_sync()
 
         # Should deduplicate - only count once
         assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(result) == 2  # session + weekly
+        by_wt = {r["window_type"]: r for r in result}
+        sess = by_wt["session"]
         # Should only show 1500 tokens (not 3000 from duplicate)
-        detail = str(result[0].get("detail", ""))
-        assert "1,500" in detail or "1500" in detail
+        assert sess["msgs"] == 1
+        assert sess["token_usage"]["input"] == 1000
+        assert sess["token_usage"]["output"] == 500
+        week = by_wt["weekly"]
+        assert week["msgs"] == 1
 
     @pytest.mark.asyncio
     async def test_collect_multi_config_dirs(self, mock_http_client):
@@ -870,12 +849,7 @@ class TestAnthropicCollector:
 
         with patch("app.services.collectors.anthropic_local.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = AsyncMock(return_value=None)
-            with patch("app.services.collectors.anthropic_local.settings") as mock_settings:
-                mock_settings.CLAUDE_PRO_LIMIT = 2000000
-                mock_settings.CLAUDE_FREE_LIMIT = 500000
-                mock_settings.CLAUDE_PROJECTS_DIR = ""
-
-                result = await collector._get_claude_local_enhanced()
+            result = await collector._get_claude_local_enhanced()
 
         mock_asyncio.to_thread.assert_called_once()
         called_fn = mock_asyncio.to_thread.call_args[0][0]
@@ -1005,12 +979,8 @@ class TestAnthropicCollector:
 
         with (
             patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
-            patch("app.services.collectors.anthropic_local.settings") as mock_settings,
             patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
         ):
-            mock_settings.CLAUDE_PRO_LIMIT = 2_000_000
-            mock_settings.CLAUDE_FREE_LIMIT = 500_000
-            mock_settings.CLAUDE_MAX_LIMIT = 5_000_000
             result = collector._get_claude_local_enhanced_sync()
 
         assert len(result) == 2
@@ -1021,11 +991,16 @@ class TestAnthropicCollector:
 
         sess = by_window["session"]
         assert "_enrichment_detail" in sess
-        assert "_fallback_card" in sess
+        assert "token_usage" in sess
+        assert "by_model" in sess
+        assert "msgs" in sess
         assert "opus" in sess["_enrichment_detail"]
         assert sess["totals"]["cache_read"] == 3000
         assert sess["totals"]["sessions"] == 1
         assert "web:3" in sess["_enrichment_detail"]
+        assert sess["token_usage"]["input"] == 1000
+        assert sess["token_usage"]["output"] == 500
+        assert sess["msgs"] == 1
 
         week = by_window["weekly"]
         assert "_enrichment_detail" in week
@@ -1034,6 +1009,8 @@ class TestAnthropicCollector:
         assert week["totals"]["sessions"] == 2
         assert "opus" in week["_enrichment_detail"]
         assert "sonnet" in week["_enrichment_detail"]
+        assert week["token_usage"]["input"] == 1500
+        assert week["msgs"] == 2
 
     def test_enrich_results_matches_by_window(self):
         """_enrich_results appends the right suffix to the right primary card."""
@@ -1063,28 +1040,23 @@ class TestAnthropicCollector:
         assert "in:1k out:500" in by_window["session"]["detail"]
         assert "in:10k out:5k" in by_window["weekly"]["detail"]
 
-    def test_enrich_results_no_primary_promotes_fallback(self):
-        """When primary is empty, fallback card from enrichment is promoted."""
+    def test_enrich_results_no_primary_returns_empty(self):
+        """Enrichment does not promote fallback when primary is empty."""
         collector = AnthropicCollector()
 
-        fallback = {
-            "window_type": "session",
-            "detail": "fallback card",
-            "service_name": "Claude Pro",
-        }
         enrichment = [
             {
                 "window_type": "session",
                 "_enrichment_detail": "in:1k",
                 "totals": {},
-                "_fallback_card": fallback,
+                "token_usage": {"input": 1000, "output": 0, "total": 1000},
+                "msgs": 1,
             },
         ]
 
         result = collector._enrich_results(None, enrichment)
 
-        assert len(result) == 1
-        assert result[0]["service_name"] == "Claude Pro"
+        assert result == []
 
     def test_enrich_results_error_enrichment_returns_primary(self):
         """When enrichment contains an error card, primary is returned unchanged."""
@@ -1765,38 +1737,33 @@ class TestOpenCodeCollector:
         free_card = by_wt.get("rolling")
         assert free_card is not None
         assert free_card.get("variant") == "Free"
-        assert free_card["_fallback_card"]["provider_id"] == "opencode"
-        assert free_card["_fallback_card"]["tier"] == "Free"
-        assert "tokens in last 5h" in free_card["_fallback_card"]["detail"]
-        assert "Lifetime:" in free_card["_fallback_card"]["detail"]
+        assert "token_usage" in free_card
+        assert "by_model" in free_card
+        assert "msgs" in free_card
+        assert "Lifetime:" in free_card["_enrichment_detail"]
 
         fh = by_wt["session"]
         assert fh.get("_enrichment_detail")
         assert "$" in fh["_enrichment_detail"]
         assert "qwen" in fh["_enrichment_detail"]
         assert "cache_w:0" not in fh["_enrichment_detail"]
-        assert fh.get("_fallback_card") is not None
-        assert fh["_fallback_card"]["service_name"] == "OpenCode"
-        assert fh["_fallback_card"]["window_type"] == "session"
-        assert fh["_fallback_card"]["data_source"] == "local"
-        assert fh["_fallback_card"]["provider_id"] == "opencode-go"
+        assert "token_usage" in fh
+        assert "by_model" in fh
+        assert "msgs" in fh
 
         # Session window: only go_rows[0] and go_rows[1] (free_rows[0] is 100h ago)
         assert fh["totals"]["msgs"] == 2
         assert fh["totals"]["convos"] == 2
-
-        # Check top-level card fields in fallback_card
-        card = fh["_fallback_card"]
-        assert card["msgs"] == 2
-        assert card["token_usage"]["input"] == 30000
-        assert card["token_usage"]["total"] == 30000 + 1300 + 0  # in + out + reasoning
-        assert "qwen3.5-plus" in card["by_model"]
-        assert card["pct_used"] > 0
+        assert fh["msgs"] == 2
+        assert fh["token_usage"]["input"] == 30000
+        assert fh["token_usage"]["total"] == 30000 + 1300 + 0  # in + out + reasoning
+        assert "qwen3.5-plus" in fh["by_model"]
 
         # Weekly window: only Go rows (100h < 168h = 7d)
         weekly = by_wt["weekly"]
         assert weekly["totals"]["msgs"] == 2
         assert weekly["totals"]["convos"] == 2
+        assert weekly["msgs"] == 2
 
     @pytest.mark.asyncio
     async def test_enrich_results_matches_by_service_name(self):
@@ -1822,19 +1789,16 @@ class TestOpenCodeCollector:
                 "service_name": "OpenCode",
                 "window_type": "session",
                 "_enrichment_detail": "$1.00 | in:10,000",
-                "_fallback_card": {},
             },
             {
                 "service_name": "OpenCode",
                 "window_type": "weekly",
                 "_enrichment_detail": "$5.00 | in:50,000",
-                "_fallback_card": {},
             },
             {
                 "service_name": "OpenCode",
                 "window_type": "monthly",
                 "_enrichment_detail": "$8.00 | in:80,000",
-                "_fallback_card": {},
             },
         ]
 
@@ -1847,30 +1811,22 @@ class TestOpenCodeCollector:
         assert "in:50,000" in weekly["detail"]
 
     @pytest.mark.asyncio
-    async def test_enrich_results_no_primary_promotes_fallback(self):
-        """When primary is empty, fallback cards are promoted."""
+    async def test_enrich_results_no_primary_returns_empty(self):
+        """Enrichment does not promote fallback when primary is empty."""
         collector = OpenCodeCollector()
 
-        fallback = {
-            "service_name": "OpenCode",
-            "window_type": "session",
-            "remaining": "$12.00",
-            "detail": "Local DB",
-        }
         enrichment = [
             {
                 "service_name": "OpenCode",
                 "window_type": "session",
                 "_enrichment_detail": "$0.00",
-                "_fallback_card": fallback,
+                "token_usage": {"input": 0, "output": 0, "total": 0},
+                "msgs": 0,
             },
         ]
 
         result = collector._enrich_results([], enrichment)
-        assert len(result) == 1
-        assert result[0]["service_name"] == "OpenCode"
-        assert result[0]["window_type"] == "session"
-        assert result[0]["remaining"] == "$12.00"
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_enrich_results_error_enrichment_returns_primary(self):

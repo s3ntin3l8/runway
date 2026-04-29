@@ -277,16 +277,8 @@ class ChatGPTLocalMixin:
         # Window info from the most recent event
         latest = events[-1]
         primary_limits = latest["rate_limits"].get("primary", {})
-        used_percent = float(primary_limits.get("used_percent", 0.0))
         resets_at_ts = primary_limits.get("resets_at")
         window_minutes = int(primary_limits.get("window_minutes", 10080))
-        plan_type = str(primary_limits.get("plan_type", "free")).lower()
-
-        tier = "free"
-        if "plus" in plan_type or "pro" in plan_type:
-            tier = "plus"
-        elif "team" in plan_type:
-            tier = "team"
 
         reset_at = datetime.fromtimestamp(resets_at_ts, tz=UTC) if resets_at_ts else None
         cutoff = (
@@ -382,36 +374,6 @@ class ChatGPTLocalMixin:
             [p for p in [token_detail, model_detail, f"{msgs} msgs"] if p]
         )
 
-        now = datetime.now(UTC)
-        remaining_pct = 100.0 - used_percent
-
-        fallback_card = {
-            "service_name": "ChatGPT",
-            "variant": "Codex",
-            "window_type": "weekly",
-            "icon": "💬",
-            "remaining": f"{remaining_pct:.1f}%",
-            "unit": "remaining",
-            "reset": human_delta(reset_at),
-            "health": "critical"
-            if used_percent >= 90
-            else ("warning" if used_percent >= 80 else "good"),
-            "pace": PaceCalculator.estimate_longevity(used_percent, reset_at),
-            "detail": f"{used_percent:.1f}% used [Local Logs]",
-            "used_value": used_percent,
-            "limit_value": 100.0,
-            "unit_type": "percent",
-            "reset_at": reset_at.isoformat() if reset_at else None,
-            "data_source": self.DATA_SOURCE_LOCAL,
-            "tier": tier,
-            "usage_url": "https://chatgpt.com/codex/settings/usage/",
-            "updated_at": now.isoformat(),
-            "token_usage": token_usage,
-            "by_model": by_model,
-            "msgs": msgs,
-            "pct_used": used_percent,
-        }
-
         return [
             {
                 "service_name": "ChatGPT",
@@ -421,7 +383,6 @@ class ChatGPTLocalMixin:
                 "token_usage": token_usage,
                 "msgs": msgs,
                 "by_model": by_model,
-                "_fallback_card": fallback_card,
             }
         ]
 

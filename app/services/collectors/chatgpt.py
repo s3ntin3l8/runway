@@ -90,45 +90,6 @@ class ChatGPTCollector(
         """Dispatch wrapper: Web API / OAuth strategy."""
         return await self._primary_strategy(client)
 
-    def _enrich_results(
-        self,
-        primary: list[dict[str, Any]] | None,
-        enrichment: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Merge local session log enrichment into primary results."""
-        if not enrichment or self._is_error_result(enrichment):
-            return primary or []
-
-        # Local-only host: promote fallback cards
-        if not primary or self._is_error_result(primary):
-            promoted = [e["_fallback_card"] for e in enrichment if e.get("_fallback_card")]
-            return promoted or (primary or [])
-
-        # Index enrichment by (variant, window_type)
-        by_key = {
-            (e.get("variant"), e.get("window_type")): e
-            for e in enrichment
-            if e.get("_enrichment_detail")
-        }
-
-        for card in primary:
-            key = (card.get("variant"), card.get("window_type"))
-            match = by_key.get(key)
-            if not match:
-                continue
-
-            # Inject canonical enrichment fields
-            for field in ("token_usage", "by_model", "msgs", "pct_used"):
-                if field in match:
-                    card[field] = match[field]
-
-            # Append detail suffix
-            suffix = match.get("_enrichment_detail", "")
-            if suffix:
-                card["detail"] = f"{card.get('detail', '').rstrip()} | {suffix}".strip(" |")
-
-        return primary
-
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card."""
         return [

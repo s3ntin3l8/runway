@@ -3,7 +3,6 @@ import glob
 import json
 import logging
 import os
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -187,45 +186,22 @@ class GeminiLocalMixin:
                     "msgs": model_data["msgs"],
                 }
 
-            enrichment_data = {
-                "_enrichment_detail": f"{detail_str} | {totals['session_count']} sessions",
-                "token_usage": {
-                    "input": totals["input"],
-                    "output": totals["output"],
-                    "reasoning": totals["thoughts"],
-                    "cache_read": totals["cached"],
-                    "total": totals["total"],
-                },
-                "msgs": totals["session_count"],
-                "by_model": by_model_formatted,
-                "model_classes": totals["model_classes"],
-                "_messages": totals["messages"],
-            }
-
             return [
                 {
-                    "service_name": "Gemini CLI",
+                    "service_name": "Gemini",
                     "window_type": "session",
-                    "icon": "🔵",
-                    "remaining": f"{totals['total']:,}",
-                    "unit": "tokens",
-                    "reset": "Rolling",
-                    "health": "good",
-                    "pace": "Stable",
-                    "detail": f"{detail_str} | {totals['session_count']} sessions",
-                    "used_value": float(totals["total"]),
-                    "limit_value": 0.0,
-                    "is_unlimited": True,
-                    "unit_type": "tokens",
-                    "data_source": self.DATA_SOURCE_LOCAL,
-                    "usage_url": "https://one.google.com/settings",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                    "_enrichment_detail": enrichment_data["_enrichment_detail"],
-                    "token_usage": enrichment_data["token_usage"],
-                    "msgs": enrichment_data["msgs"],
-                    "by_model": enrichment_data["by_model"],
-                    "_model_classes": enrichment_data["model_classes"],
-                    "_messages": enrichment_data["_messages"],
+                    "_enrichment_detail": f"{detail_str} | {totals['session_count']} sessions",
+                    "token_usage": {
+                        "input": totals["input"],
+                        "output": totals["output"],
+                        "reasoning": totals["thoughts"],
+                        "cache_read": totals["cached"],
+                        "total": totals["total"],
+                    },
+                    "msgs": totals["session_count"],
+                    "by_model": by_model_formatted,
+                    "_model_classes": totals["model_classes"],
+                    "_messages": totals["messages"],
                 }
             ]
         except Exception as e:

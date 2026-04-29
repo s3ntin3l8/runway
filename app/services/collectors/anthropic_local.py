@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import get_platform_config_dir, is_local_collector_enabled, settings
+from app.core.config import get_platform_config_dir, is_local_collector_enabled
 from app.core.utils import PaceCalculator, human_delta
 
 logger = logging.getLogger(__name__)
@@ -294,13 +294,6 @@ class AnthropicLocalMixin:
         except Exception as e:
             logger.debug(f"Could not read tier/email from credentials: {e}")
 
-        limit = (
-            settings.CLAUDE_FREE_LIMIT
-            if tier == "Free"
-            else settings.CLAUDE_MAX_LIMIT
-            if tier == "Max"
-            else settings.CLAUDE_PRO_LIMIT
-        )
         cutoff_5h = datetime.now(UTC) - timedelta(hours=5)
         cutoff_7d = datetime.now(UTC) - timedelta(days=7)
 
@@ -318,6 +311,8 @@ class AnthropicLocalMixin:
                 "web_fetch": 0,
                 "sessions": set(),
                 "models": {},
+                "model_msgs": {},
+                "msg_count": 0,
                 "oldest": None,
             }
 
@@ -385,6 +380,10 @@ class AnthropicLocalMixin:
                             weekly_bucket["models"][short_model] = (
                                 weekly_bucket["models"].get(short_model, 0) + token_sum
                             )
+                            weekly_bucket["model_msgs"][short_model] = (
+                                weekly_bucket["model_msgs"].get(short_model, 0) + 1
+                            )
+                        weekly_bucket["msg_count"] += 1
                         if not weekly_bucket["oldest"] or ts < weekly_bucket["oldest"]:
                             weekly_bucket["oldest"] = ts
 
@@ -402,6 +401,10 @@ class AnthropicLocalMixin:
                                 session_bucket["models"][short_model] = (
                                     session_bucket["models"].get(short_model, 0) + token_sum
                                 )
+                                session_bucket["model_msgs"][short_model] = (
+                                    session_bucket["model_msgs"].get(short_model, 0) + 1
+                                )
+                            session_bucket["msg_count"] += 1
                             if not session_bucket["oldest"] or ts < session_bucket["oldest"]:
                                 session_bucket["oldest"] = ts
 
@@ -424,68 +427,38 @@ class AnthropicLocalMixin:
             + weekly_bucket["cache_creation"]
         )
 
-        oldest_session = session_bucket["oldest"]
-        reset_at_session = (oldest_session + timedelta(hours=5)) if oldest_session else None
-        identity_suffix = f" | {email}" if email else ""
-
-        remaining = max(0, limit - session_total)
-        pct = (session_total / limit * 100) if limit > 0 else 0
-
-        fallback_card = {
-            "service_name": "Claude Pro",
-            "icon": "🟠",
-            "remaining": f"{remaining:,}",
-            "unit": "tokens / 5h",
-            "reset": human_delta(reset_at_session),
-            "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-            "pace": PaceCalculator.estimate_longevity(pct, reset_at_session),
-            "detail": f"{session_total:,} / {limit:,} [Local Logs] | cli-local{identity_suffix}",
-            "used_value": float(session_total),
-            "limit_value": float(limit),
-            "is_unlimited": False,
-            "tier": tier,
-            "account_label": email,
-            "unit_type": "tokens",
-            "window_type": "session",
-            "model_id": None,
-            "reset_at": reset_at_session.isoformat() if reset_at_session else None,
-            "data_source": self.DATA_SOURCE_LOCAL,
-            "input_source": "server",
-            "usage_url": "https://claude.ai/settings/usage",
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
+        def _build_enrichment(bucket: dict, total: int, wt: str) -> dict[str, Any]:
+            return {
+                "service_name": "Claude",
+                "window_type": wt,
+                "_enrichment_detail": self._build_enrichment_detail(bucket),
+                "token_usage": {
+                    "input": bucket["input"],
+                    "output": bucket["output"],
+                    "reasoning": 0,
+                    "cache_read": bucket["cache_read"],
+                    "total": total,
+                },
+                "by_model": {
+                    mid: {"cost": 0.0, "msgs": cnt} for mid, cnt in bucket["model_msgs"].items()
+                },
+                "msgs": bucket["msg_count"],
+                "totals": {
+                    "input": bucket["input"],
+                    "output": bucket["output"],
+                    "cache_read": bucket["cache_read"],
+                    "cache_creation": bucket["cache_creation"],
+                    "total": total,
+                    "sessions": len(bucket["sessions"]),
+                },
+            }
 
         results: list[dict[str, Any]] = [
-            {
-                "window_type": "session",
-                "_enrichment_detail": self._build_enrichment_detail(session_bucket),
-                "totals": {
-                    "input": session_bucket["input"],
-                    "output": session_bucket["output"],
-                    "cache_read": session_bucket["cache_read"],
-                    "cache_creation": session_bucket["cache_creation"],
-                    "total": session_total,
-                    "sessions": len(session_bucket["sessions"]),
-                },
-                "_fallback_card": fallback_card,
-            }
+            _build_enrichment(session_bucket, session_total, "session")
         ]
 
         if weekly_total > 0:
-            results.append(
-                {
-                    "window_type": "weekly",
-                    "_enrichment_detail": self._build_enrichment_detail(weekly_bucket),
-                    "totals": {
-                        "input": weekly_bucket["input"],
-                        "output": weekly_bucket["output"],
-                        "cache_read": weekly_bucket["cache_read"],
-                        "cache_creation": weekly_bucket["cache_creation"],
-                        "total": weekly_total,
-                        "sessions": len(weekly_bucket["sessions"]),
-                    },
-                }
-            )
+            results.append(_build_enrichment(weekly_bucket, weekly_total, "weekly"))
 
         return results
 

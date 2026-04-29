@@ -297,32 +297,81 @@ class BaseCollector(ABC):
     ) -> list[dict[str, Any]]:
         """
         Merge enrichment data into primary results.
-        Default: append summary to detail string.
-        Override in subclasses for custom merging logic.
+
+        Enrichment strategies provide token breakdowns, session counts, and
+        detail suffixes only. They never act as fallback for missing primary
+        quota data.
+
+        Matching is performed by (service_name, variant, window_type) with
+        graceful fallback to less specific keys. Canonical fields injected:
+        token_usage, by_model, msgs. pct_used is derived from the primary
+        card's own used_value / limit_value.
         """
         if not primary or self._is_error_result(primary):
-            return enrichment
+            return primary or []
 
         if self._is_error_result(enrichment):
             return primary
 
-        # Default: summarize enrichment tokens and append to detail
-        # Calculate totals from enrichment data
-        total_used = 0
+        # Index enrichment by multiple specificity levels so lookups succeed
+        # even when enrichment dicts omit service_name or variant.
+        by_key: dict[tuple[str | None, str | None, str | None], dict[str, Any]] = {}
         for e in enrichment:
-            used = e.get("used_value") or e.get("remaining", "0")
-            if isinstance(used, int | float):
-                total_used += used
-            elif isinstance(used, str):
-                # Try to parse "1234 tokens"
-                used_num = "".join(filter(str.isdigit, used.split()[0] if " " in used else used))
-                if used_num:
-                    total_used += int(used_num)
+            if not e.get("_enrichment_detail"):
+                continue
+            sn = e.get("service_name")
+            va = e.get("variant")
+            wt = e.get("window_type")
+            keys = [
+                (sn, va, wt),
+                (sn, va, None),
+                (sn, None, wt),
+                (None, va, wt),
+                (sn, None, None),
+                (None, va, None),
+                (None, None, wt),
+            ]
+            for key in keys:
+                if key not in by_key:
+                    by_key[key] = e
 
-        if total_used > 0:
-            for card in primary:
-                current_detail = card.get("detail", "")
-                card["detail"] = f"{current_detail} | Session: {total_used:,} tokens"
+        for card in primary:
+            card_sn = card.get("service_name")
+            card_va = card.get("variant")
+            card_wt = card.get("window_type")
+            match = None
+            for key in [
+                (card_sn, card_va, card_wt),
+                (card_sn, card_va, None),
+                (card_sn, None, card_wt),
+                (None, card_va, card_wt),
+                (card_sn, None, None),
+                (None, card_va, None),
+                (None, None, card_wt),
+            ]:
+                match = by_key.get(key)
+                if match:
+                    break
+
+            if not match:
+                continue
+
+            # Inject canonical enrichment fields
+            for field in ("token_usage", "by_model", "msgs"):
+                if field in match and match[field] is not None:
+                    card[field] = match[field]
+
+            # Derive pct_used from the primary card's own quota data
+            used = card.get("used_value")
+            limit = card.get("limit_value")
+            if used is not None and limit and limit > 0:
+                card["pct_used"] = (used / limit) * 100
+
+            # Append detail suffix
+            suffix = match.get("_enrichment_detail", "")
+            if suffix:
+                current = card.get("detail", "").rstrip()
+                card["detail"] = f"{current} | {suffix}".strip(" |")
 
         return primary
 
