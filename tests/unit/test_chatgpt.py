@@ -328,8 +328,8 @@ class TestChatGPTCollectorDetailed:
             assert "billed:" in codex_card["detail"]
 
     @pytest.mark.asyncio
-    async def test_local_enrichment_fallback_promotion(self, mock_http_client):
-        """Verify enrichment fallback card is promoted when all primaries fail."""
+    async def test_local_enrichment_does_not_fallback(self, mock_http_client):
+        """Enrichment must not act as fallback when all primaries fail."""
         collector = ChatGPTCollector()
 
         # Mock API failure
@@ -355,13 +355,9 @@ class TestChatGPTCollectorDetailed:
         ):
             results = await collector.collect(mock_http_client)
 
-            # Fallback card promoted
+            # Error card remains; enrichment does not promote fallback
             assert len(results) == 1
-            assert results[0]["service_name"] == "ChatGPT"
-            assert results[0].get("variant") == "Codex"
-            assert results[0]["data_source"] == "local"
-            assert "token_usage" in results[0]
-            assert results[0]["msgs"] == 3
+            assert results[0]["remaining"] == "ERR"
 
     @pytest.mark.asyncio
     async def test_user_agent_on_auth_refresh(self, mock_http_client):

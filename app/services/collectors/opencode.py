@@ -924,8 +924,6 @@ class OpenCodeCollector(BaseCollector):
                             entry["msgs"] += 1
 
                     msgs = len(rows)
-                    remaining = max(0.0, limit - total_cost)
-                    pct = (total_cost / limit * 100) if limit > 0 else 0.0
 
                     totals = {
                         "cost": total_cost,
@@ -949,41 +947,15 @@ class OpenCodeCollector(BaseCollector):
                         token_usage["input"] + token_usage["output"] + token_usage["reasoning"]
                     )
 
-                    fallback_card = {
-                        "service_name": service_name,
-                        "window_type": window_type,
-                        "provider_id": "opencode-go",
-                        "icon": "⚡",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": f"${limit:.0f} limit",
-                        "reset": "Rolling" if window_type == "session" else "n/a",
-                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                        "detail": f"${total_cost:.2f} used · {msgs} msgs · Local DB{identity_suffix}",
-                        "used_value": total_cost,
-                        "limit_value": limit,
-                        "is_unlimited": False,
-                        "unit_type": "currency",
-                        "currency": "USD",
-                        "account_label": self.account_label,
-                        "reset_at": None,
-                        "tier": "Go",
-                        "data_source": self.DATA_SOURCE_LOCAL,
-                        "input_source": "server",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                        "token_usage": token_usage,
-                        "by_model": by_model,
-                        "msgs": msgs,
-                        "pct_used": pct,
-                    }
-
                     results.append(
                         {
                             "service_name": service_name,
                             "window_type": window_type,
                             "_enrichment_detail": enrichment_detail,
+                            "token_usage": token_usage,
+                            "by_model": by_model,
+                            "msgs": msgs,
                             "totals": totals,
-                            "_fallback_card": fallback_card,
                         }
                     )
 
@@ -1099,43 +1071,16 @@ class OpenCodeCollector(BaseCollector):
                     free_detail = " ".join(free_detail_parts) if free_detail_parts else "$0.00"
                     free_detail += f" · Lifetime: {lifetime_tokens:,} tokens{identity_suffix}"
 
-                    free_fallback_card = {
-                        "service_name": service_name,
-                        "window_type": "rolling",
-                        "variant": "Free",
-                        "provider_id": "opencode",
-                        "icon": "⚡",
-                        "remaining": f"{lifetime_tokens:,} tokens",
-                        "unit": "free tier",
-                        "reset": "Lifetime",
-                        "health": "good",
-                        "pace": "—",
-                        "detail": f"{session_tokens:,} tokens in last 5h · {se_msgs} msgs | {free_detail}",
-                        "used_value": lifetime_tokens,
-                        "limit_value": None,
-                        "is_unlimited": True,
-                        "unit_type": "token",
-                        "currency": "USD",
-                        "account_label": self.account_label,
-                        "reset_at": None,
-                        "tier": "Free",
-                        "data_source": self.DATA_SOURCE_LOCAL,
-                        "input_source": "server",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                        "token_usage": free_token_usage,
-                        "by_model": se_by_model,
-                        "msgs": se_msgs,
-                        "pct_used": None,
-                    }
-
                     results.append(
                         {
                             "service_name": service_name,
                             "window_type": "rolling",
                             "variant": "Free",
                             "_enrichment_detail": free_detail,
+                            "token_usage": free_token_usage,
+                            "by_model": se_by_model,
+                            "msgs": se_msgs,
                             "totals": free_totals,
-                            "_fallback_card": free_fallback_card,
                         }
                     )
 
@@ -1245,54 +1190,3 @@ class OpenCodeCollector(BaseCollector):
             parts.append(f"{convos} convos")
 
         return " | ".join(parts)
-
-    def _enrich_results(
-        self,
-        primary: list[dict[str, Any]] | None,
-        enrichment: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        if not enrichment or self._is_error_result(enrichment):
-            return primary or []
-
-        # Local-only host: promote fallback cards so the account still renders.
-        if not primary or self._is_error_result(primary):
-            promoted = [e["_fallback_card"] for e in enrichment if e.get("_fallback_card")]
-            return promoted or (primary or [])
-
-        # Check for unmatched variant-specific fallbacks (Free, API, etc.)
-        # Web API may not return these if there's no usage, but local DB might have data
-        for e in enrichment:
-            fb = e.get("_fallback_card")
-            if not fb:
-                continue
-            variant = fb.get("variant")
-            if not variant:
-                continue
-
-            primary_variant_exists = any(c.get("variant") == variant for c in primary)
-
-            if not primary_variant_exists:
-                primary.append(fb)
-
-        by_name = {
-            (e.get("service_name"), e.get("window_type")): e
-            for e in enrichment
-            if e.get("_enrichment_detail")
-        }
-        for card in primary:
-            match = by_name.get((card.get("service_name"), card.get("window_type")))
-            if not match:
-                continue
-
-            # 1. Update detail suffix
-            suffix = match["_enrichment_detail"]
-            if suffix:
-                card["detail"] = f"{card.get('detail', '').rstrip()} | {suffix}".strip(" |")
-
-            # 2. Always prefer local token data - it's more complete/accurate than web API
-            fb_card = match.get("_fallback_card", {})
-            for field in ["token_usage", "by_model", "msgs"]:
-                if field in fb_card:
-                    card[field] = fb_card[field]
-
-        return primary

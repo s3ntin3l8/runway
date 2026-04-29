@@ -100,11 +100,11 @@ class GeminiCollector(
         enrichment: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Merge local enrichment into API primary cards by model class."""
-        if not enrichment or self._is_error_result(enrichment):
-            return primary or []
-
         if not primary or self._is_error_result(primary):
             return primary or []
+
+        if not enrichment or self._is_error_result(enrichment):
+            return primary
 
         e_data = enrichment[0]
         messages = e_data.get("_messages", [])
@@ -112,54 +112,54 @@ class GeminiCollector(
         detail_suffix = e_data.get("_enrichment_detail", "")
 
         for card in primary:
-            if card.get("data_source") == self.DATA_SOURCE_API:
-                model_id = card.get("model_id", "unknown")
-                reset_at = card.get("reset_at")
+            if card.get("data_source") != self.DATA_SOURCE_API:
+                continue
 
-                model_messages = [
-                    m for m in messages if m["model_class"] == model_id and m["timestamp"]
+            model_id = card.get("model_id", "unknown")
+            reset_at = card.get("reset_at")
+
+            model_messages = [
+                m for m in messages if m["model_class"] == model_id and m["timestamp"]
+            ]
+
+            if reset_at:
+                reset_dt = self._parse_timestamp(reset_at)
+                window_messages = [
+                    m
+                    for m in model_messages
+                    if (self._parse_timestamp(m["timestamp"]) is not None)
+                    and (self._parse_timestamp(m["timestamp"]) < reset_dt)
                 ]
+            else:
+                window_messages = model_messages
 
-                if reset_at:
-                    reset_dt = self._parse_timestamp(reset_at)
-                    window_messages = [
-                        m
-                        for m in model_messages
-                        if (self._parse_timestamp(m["timestamp"]) is not None)
-                        and (self._parse_timestamp(m["timestamp"]) < reset_dt)
-                    ]
-                else:
-                    window_messages = model_messages
+            if window_messages:
+                class_data = self._aggregate_window_messages(window_messages)
+                card["token_usage"] = {
+                    "input": class_data.get("input", 0),
+                    "output": class_data.get("output", 0),
+                    "reasoning": class_data.get("reasoning", 0),
+                    "cache_read": class_data.get("cache_read", 0),
+                    "total": class_data.get("total", 0),
+                }
+                card["msgs"] = class_data.get("session_count", 0)
+                used = card.get("used_value", 0)
+                limit = card.get("limit_value", 1)
+                if limit and limit > 0:
+                    card["pct_used"] = (used / limit) * 100
 
-                if window_messages:
-                    class_data = self._aggregate_window_messages(window_messages)
-                    token_usage = {
-                        "input": class_data.get("input", 0),
-                        "output": class_data.get("output", 0),
-                        "reasoning": class_data.get("reasoning", 0),
-                        "cache_read": class_data.get("cache_read", 0),
-                        "total": class_data.get("total", 0),
-                    }
-                    card["token_usage"] = token_usage
-                    card["msgs"] = class_data.get("session_count", 0)
-                    card["pct_used"] = 0
+            if all_by_model:
+                filtered_by_model = {
+                    model_name: model_info
+                    for model_name, model_info in all_by_model.items()
+                    if self._map_model_to_class(model_name) == model_id
+                }
+                if filtered_by_model:
+                    card["by_model"] = filtered_by_model
 
-                    used = card.get("used_value", 0)
-                    limit = card.get("limit_value", 1)
-                    if limit and limit > 0:
-                        card["pct_used"] = (used / limit) * 100
-
-                if all_by_model:
-                    filtered_by_model = {}
-                    for model_name, model_info in all_by_model.items():
-                        model_class = self._map_model_to_class(model_name)
-                        if model_class == model_id:
-                            filtered_by_model[model_name] = model_info
-                    if filtered_by_model:
-                        card["by_model"] = filtered_by_model
-
-                if detail_suffix:
-                    card["detail"] = f"{card.get('detail', '')} | {detail_suffix}"
+            if detail_suffix:
+                current = card.get("detail", "").rstrip()
+                card["detail"] = f"{current} | {detail_suffix}".strip(" |")
 
         return primary
 
