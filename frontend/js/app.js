@@ -576,28 +576,36 @@ window.handleResetProvider = async function(event, provider, accountId) {
     
     try {
         const query = accountId && accountId !== 'default' ? `?account_id=${accountId}` : '';
-        const resp = await fetch(`/api/v1/usage/reset/${provider}${query}`, { method: 'POST' });
-        if (!resp.ok) throw new Error('Reset failed');
+        // 1. Reset backoff/failure state
+        const resetResp = await fetch(`/api/v1/usage/reset/${provider}${query}`, { method: 'POST' });
+        if (!resetResp.ok) throw new Error('Reset failed');
         
-        if (btn) btn.innerText = 'SUCCESS!';
-        setTimeout(() => {
-            const modalContainer = document.getElementById('modal-container');
-            modalContainer.classList.remove('active');
-            loadData();
-        }, 1000);
+        if (btn) btn.innerText = 'COLLECTING...';
+        
+        // 2. Force immediate re-collection
+        const collectResp = await fetch(`/api/v1/usage/collect/${provider}${query}`, { method: 'POST' });
+        if (!collectResp.ok) throw new Error('Collection failed');
+        const collectData = await collectResp.json();
+        
+        // 3. Only show SUCCESS if we actually got cards back (not an error card)
+        // Note: collect_one returns the raw cards. If the first one is an error, it failed.
+        if (collectData.cards > 0) {
+            if (btn) btn.innerText = 'SUCCESS!';
+            setTimeout(() => {
+                const modalContainer = document.getElementById('modal-container');
+                if (modalContainer) modalContainer.classList.remove('active');
+                loadDashboard();
+            }, 1000);
+        } else {
+            throw new Error('Still rate limited');
+        }
     } catch (err) {
         if (btn) {
-            btn.innerText = 'ERROR';
-            btn.classList.add('bg-red-500');
+            btn.innerText = 'RETRY';
+            btn.disabled = false;
         }
-        alert('Failed to reset provider: ' + err.message);
-        setTimeout(() => {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerText = originalText;
-                btn.classList.remove('bg-red-500');
-            }
-        }, 2000);
+        // If still limited, the dashboard will refresh and show the updated backoff anyway
+        loadDashboard();
     }
 }
 

@@ -28,7 +28,7 @@ export const STATE = {
     })(),
     filterDimension: (() => {
         const stored = localStorage.getItem('runway_filter_dimension');
-        return ['account_label', 'sidecar_id', 'window_type', 'provider_id'].includes(stored) ? stored : 'account_label';
+        return ['account_label', 'sidecar_id', 'window_type', 'provider_id'].includes(stored) ? stored : 'provider_id';
     })(),
     // Dashboard reordering
     editMode: false,

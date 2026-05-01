@@ -1804,9 +1804,10 @@ export function buildHorizonCard(card, forecastEntry) {
 
     // Error card variant
     if (card.error_type) {
+        const errText = card.error_type === 'rate_limited' ? (card.detail || 'Rate Limited') : 'collector error';
         return `<article class="glass card err ${hCls}" data-prov="${escapeHTMLAttr(card.provider_id || '')}" data-card-key="${escapeHTMLAttr(cKey)}">
             ${head}
-            <div class="hz-head"><div class="pct" style="font-size:18px;color:var(--crit);">collector error</div></div>
+            <div class="hz-head"><div class="pct" style="font-size:16px;color:var(--crit);text-transform:uppercase;letter-spacing:0.02em;">${escapeHTML(errText)}</div></div>
             <button class="retry" onclick="event.stopPropagation();window.handleResetProvider(event,'${escapeHTMLAttr(card.provider_id || '')}','${escapeHTMLAttr(card.account_id || '')}')">↺ retry</button>
         </article>`;
     }
