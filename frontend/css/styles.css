@@ -663,9 +663,6 @@
   .bg-neutral-300 {
     background-color: var(--color-neutral-300);
   }
-  .bg-red-500 {
-    background-color: var(--color-red-500);
-  }
   .bg-red-500\/10 {
     background-color: color-mix(in srgb, oklch(63.7% 0.237 25.331) 10%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -2196,11 +2193,14 @@ header.top .icon-btn[aria-pressed="true"] {
   gap: 14px;
   margin-bottom: 14px;
 }
+.hero.hero-equal {
+  grid-template-columns: 1fr 1fr;
+}
 .hero > .glass {
   padding: 16px;
 }
 @media (max-width: 900px) {
-  .hero {
+  .hero, .hero.hero-equal {
     grid-template-columns: 1fr;
   }
 }

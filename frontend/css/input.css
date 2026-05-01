@@ -973,8 +973,13 @@ header.top .icon-btn[aria-pressed="true"] {
     gap: 14px;
     margin-bottom: 14px;
 }
+.hero.hero-equal {
+    grid-template-columns: 1fr 1fr;
+}
 .hero > .glass { padding: 16px; }
-@media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { 
+    .hero, .hero.hero-equal { grid-template-columns: 1fr; } 
+}
 
 /* Fleet health header + lights grid */
 .health-head {
