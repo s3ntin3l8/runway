@@ -166,3 +166,32 @@ async def test_appends_time_str_to_service_name():
 
     assert len(result) == 1
     assert "3m ago" in result[0]["service_name"]
+
+
+@pytest.mark.asyncio
+async def test_opencode_aggregation_has_provider_id():
+    """Aggregated OpenCode cards must have 'provider_id' set to 'opencode'."""
+    ts = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+
+    card_5h = {
+        "service_name": "OpenCode",
+        "window_type": "session",
+        "metadata": {"used": 1.5, "count": 10, "hostname": "host-a"},
+        "account_label": "user@example.com",
+    }
+
+    svc = _make_service(
+        {
+            "opencode-host-a": {
+                "timestamp": ts,
+                "cards": [card_5h],
+            }
+        }
+    )
+
+    result = await svc.get_all_metrics()
+
+    oc_cards = [c for c in result if c.get("service_name") == "OpenCode"]
+    assert len(oc_cards) > 0
+    for card in oc_cards:
+        assert card.get("provider_id") == "opencode", "Aggregated card missing provider_id"

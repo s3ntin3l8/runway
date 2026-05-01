@@ -226,6 +226,7 @@ class ExternalMetricService:
 
                     result.append(
                         {
+                            "provider_id": "opencode",
                             "service_name": "OpenCode",
                             "variant": "Combined",
                             "window_type": window_type_map[window],

@@ -1378,8 +1378,8 @@ export function buildHorizonCard(card, forecastEntry) {
         <div class="tooltip-container" style="cursor:help;padding:2px;margin:3px -2px 0 -2px;">
             <div class="health" style="margin-top:0;"></div>
             <div class="tooltip" style="right:0;bottom:100%;margin-bottom:10px;z-index:200;">
-                <div style="font-weight:700;margin-bottom:2px;">${escapeHTML(card.provider_id.toUpperCase())}</div>
-                <div style="font-size:10px;color:var(--text-dim);">${escapeHTML(card.health.charAt(0).toUpperCase() + card.health.slice(1))} Status</div>
+                <div style="font-weight:700;margin-bottom:2px;">${escapeHTML((card.provider_id || '??').toUpperCase())}</div>
+                <div style="font-size:10px;color:var(--text-dim);">${escapeHTML((card.health || 'unknown').charAt(0).toUpperCase() + (card.health || 'unknown').slice(1))} Status</div>
             </div>
         </div>
         <div class="badges">${tierBadge}${srcBadge}</div>
