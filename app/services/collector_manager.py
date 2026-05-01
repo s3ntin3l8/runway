@@ -343,9 +343,15 @@ class CollectorManager:
         if is_leader:
             try:
                 result = await self._do_collect()
-                future.set_result(result)
+                if not future.done():
+                    future.set_result(result)
+            except asyncio.CancelledError:
+                if not future.done():
+                    future.cancel()
+                raise
             except BaseException as e:
-                future.set_exception(e)
+                if not future.done():
+                    future.set_exception(e)
                 raise
 
         return await future

@@ -151,32 +151,53 @@ function renderAggregateHero(cards, forecastMap) {
         </div>`;
 }
 
-/** Render provider chips + search in the filterbar. */
-function renderFilterBar(cards) {
-    const chipsEl = document.getElementById('provider-chips');
-    if (!chipsEl) return;
+function dimensionDisplayLabel(dim) {
+    const map = {
+        provider_id: 'Provider',
+        account_label: 'Account',
+        window_type: 'Window',
+        sidecar_id: 'Sidecar'
+    };
+    return map[dim] || dim;
+}
 
-    // Count cards per provider
-    const provCounts = new Map();
+/** Render dimension chips and secondary chips + search in the filterbar. */
+function renderFilterBar(cards) {
+    const dimChipsEl = document.getElementById('dimension-chips');
+    const valChipsEl = document.getElementById('provider-chips');
+    if (!dimChipsEl || !valChipsEl) return;
+
+    // 1. Render Dimension Chips
+    const dimensions = ['provider_id', 'account_label', 'window_type'];
+    dimChipsEl.innerHTML = dimensions.map(dim => {
+        const cls = STATE.filterDimension === dim ? ' on' : '';
+        const label = dimensionDisplayLabel(dim);
+        return `<button class="chip${cls}" data-dim="${dim}">${escapeHTML(label)}</button>`;
+    }).join('');
+
+    // 2. Render Value Chips for active dimension
+    const dim = STATE.filterDimension || 'provider_id';
+    const counts = new Map();
     cards.forEach(c => {
-        const k = c.provider_id || '__other__';
-        provCounts.set(k, (provCounts.get(k) || 0) + 1);
+        const k = c[dim] || '__other__';
+        counts.set(k, (counts.get(k) || 0) + 1);
     });
 
-    const activeVal = STATE.activeFilter?.dimension === 'provider_id' ? STATE.activeFilter.value : null;
+    const activeVal = STATE.activeFilter?.dimension === dim ? STATE.activeFilter.value : null;
 
     const allCls = !activeVal ? ' on' : '';
     let html = `<button class="chip${allCls}" data-prov="">All<span class="n">${cards.length}</span></button>`;
-    for (const [pid, cnt] of [...provCounts.entries()].sort()) {
-        const cls = activeVal === pid ? ' on' : '';
-        const label = providerDisplayLabel(pid);
-        html += `<button class="chip${cls}" data-prov="${escapeHTML(pid)}">${escapeHTML(label)}<span class="n">${cnt}</span></button>`;
+    for (const [val, cnt] of [...counts.entries()].sort()) {
+        const cls = activeVal === val ? ' on' : '';
+        let label = val;
+        if (dim === 'provider_id') label = providerDisplayLabel(val);
+        html += `<button class="chip${cls}" data-prov="${escapeHTML(val)}">${escapeHTML(label)}<span class="n">${cnt}</span></button>`;
     }
 
-    chipsEl.innerHTML = html;
+    valChipsEl.innerHTML = html;
 }
 
-/** Build and inject per-provider sections (the main card grid). */
+/** Build and inject grouped sections (the main card grid). */
 function renderProviderSections(cards) {
     const container = document.getElementById('dashboard-sections');
     if (!container) return;
@@ -187,17 +208,19 @@ function renderProviderSections(cards) {
         return;
     }
 
-    // Group by provider
+    const dim = STATE.filterDimension || 'provider_id';
+
+    // Group by current dimension
     const groups = new Map();
     visible.forEach(card => {
-        const key = card.provider_id || '__other__';
+        const key = card[dim] || '__other__';
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(card);
     });
 
-    // Sort providers by worst health, then alphabetically
+    // Sort groups by worst health, then alphabetically
     const SEVERITY = { critical: 4, warning: 3, good: 2, unknown: 1, unlimited: 0 };
-    const defaultOrder = [...groups.keys()].sort((a, b) => {
+    const sortedKeys = [...groups.keys()].sort((a, b) => {
         if (a === '__other__') return 1;
         if (b === '__other__') return -1;
         const aW = groups.get(a).reduce((m, c) => Math.max(m, SEVERITY[c.health] || 0), 0);
@@ -205,15 +228,19 @@ function renderProviderSections(cards) {
         return bW !== aW ? bW - aW : a.localeCompare(b);
     });
 
-    const sorted = applyOrder(
-        defaultOrder.map(pid => ({ pid })), x => x.pid, STATE.layout?.provider_order ?? []
-    ).map(x => x.pid);
+    // We only apply layout reordering if dimension is provider_id
+    let orderedKeys = sortedKeys;
+    if (dim === 'provider_id') {
+        orderedKeys = applyOrder(
+            sortedKeys.map(pid => ({ pid })), x => x.pid, STATE.layout?.provider_order ?? []
+        ).map(x => x.pid);
+    }
 
     let totalCount = 0;
     let html = '';
-    for (const pid of sorted) {
+    for (const key of orderedKeys) {
         const items = applyOrder(
-            groups.get(pid), cardKey, STATE.layout?.card_orders?.[pid] ?? []
+            groups.get(key), cardKey, (dim === 'provider_id' ? STATE.layout?.card_orders?.[key] : null) ?? []
         );
         let cardsHtml = '';
         for (const card of items) {
@@ -222,8 +249,12 @@ function renderProviderSections(cards) {
             try { cardsHtml += buildHorizonCard(card, fe); } catch (e) { console.error('buildHorizonCard failed:', e); }
         }
         if (!cardsHtml) continue;
-        const label = providerDisplayLabel(pid);
-        html += `<div class="section" data-provider-id="${escapeHTML(pid)}">
+
+        let label = key;
+        if (dim === 'provider_id') label = providerDisplayLabel(key);
+        else if (dim === 'window_type') label = (key.charAt(0).toUpperCase() + key.slice(1)) + ' Window';
+
+        html += `<div class="section" data-group-key="${escapeHTML(key)}">
             <div class="section-head">${escapeHTML(label)}<div class="ln"></div><span class="count">${items.length}</span></div>
             <div class="hz-grid">${cardsHtml}</div>
         </div>`;
@@ -328,7 +359,8 @@ export async function loadDashboard() {
 }
 
 export function setFilter(value) {
-    STATE.activeFilter = value ? { dimension: 'provider_id', value } : null;
+    const dim = STATE.filterDimension || 'provider_id';
+    STATE.activeFilter = value ? { dimension: dim, value } : null;
     localStorage.setItem('runway_active_filter', JSON.stringify(STATE.activeFilter));
     renderFilterBar(STATE.data);
     renderProviderSections(STATE.data);
@@ -345,6 +377,16 @@ export function setFilterDimension(dim) {
 
 export function initDashboardView() {
     window.setFilter = setFilter;
+
+    // Dimension chip click delegation
+    const dimContainer = document.getElementById('dimension-chips');
+    if (dimContainer) {
+        dimContainer.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-dim]');
+            if (!btn) return;
+            setFilterDimension(btn.dataset.dim);
+        });
+    }
 
     // Provider chip click delegation
     const chipsContainer = document.getElementById('provider-chips');
