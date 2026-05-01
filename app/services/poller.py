@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session
 
 from app.core.db import engine
-from app.models.db import UsageSnapshot
+from app.models.db import UsageSnapshot, UsageSnapshotModel
 from app.models.schemas import LimitCard
 from app.services.collector_manager import manager
 
@@ -17,6 +17,48 @@ logger = logging.getLogger(__name__)
 _COMPACTION_INTERVAL_POLLS = 96  # 96 × 15 min ≈ 24 hours
 _SLEEP_INTERVAL = 7200  # 2 hours in seconds
 _DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
+
+
+def _extract_token_fields(card: LimitCard) -> dict:
+    """Extract token fields from LimitCard for UsageSnapshot columns."""
+    if not card.token_usage:
+        return {
+            "tokens_input": None,
+            "tokens_output": None,
+            "tokens_reasoning": None,
+            "tokens_cache_read": None,
+            "tokens_total": None,
+            "msgs": card.msgs,
+        }
+    return {
+        "tokens_input": card.token_usage.get("input"),
+        "tokens_output": card.token_usage.get("output"),
+        "tokens_reasoning": card.token_usage.get("reasoning"),
+        "tokens_cache_read": card.token_usage.get("cache_read"),
+        "tokens_total": card.token_usage.get("total"),
+        "msgs": card.msgs,
+    }
+
+
+def _create_model_records(session, snapshot_id: int, card: LimitCard) -> None:
+    """Create UsageSnapshotModel records from card.by_model."""
+    if not card.by_model:
+        return
+    for model_id, model_data in card.by_model.items():
+        tokens = model_data.get("tokens") or {}
+        total = sum(tokens.get(k, 0) or 0 for k in ["input", "output", "reasoning"])
+        record = UsageSnapshotModel(
+            snapshot_id=snapshot_id,
+            model_id=model_id,
+            cost=model_data.get("cost"),
+            msgs=model_data.get("msgs"),
+            tokens_input=tokens.get("input"),
+            tokens_output=tokens.get("output"),
+            tokens_reasoning=tokens.get("reasoning"),
+            tokens_cache_read=tokens.get("cache_read"),
+            tokens_total=total,
+        )
+        session.add(record)
 
 
 class BackgroundPoller:
@@ -174,9 +216,12 @@ class BackgroundPoller:
                             data_source=card.data_source,
                             error_type=card.error_type,
                             timestamp=datetime.now(UTC),
+                            **_extract_token_fields(card),
                         )
                         snapshot.raw_metadata = card.metadata
                         session.add(snapshot)
+                        session.flush()  # Get snapshot.id for model records
+                        _create_model_records(session, snapshot.id, card)
                     except Exception as e:
                         logger.error(f"Failed to map card to snapshot: {e}")
 

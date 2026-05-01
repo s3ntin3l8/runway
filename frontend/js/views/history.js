@@ -127,16 +127,31 @@ function buildHistorySummary(rawHistory, filteredProviders, metric, days) {
     if (filteredProviders) rows = rows.filter(r => filteredProviders.has(r.provider_id));
     if (rows.length === 0) return '';
 
+    const daysLabel = days >= 30 ? '30D' : days >= 7 ? '7D' : days >= 1 ? '24H' : '6H';
+    const providerCount = new Set(rows.map(r => r.provider_id)).size;
+
+    if (metric === 'tokens') {
+        const tokenRows = rows.filter(r => r.token_usage?.total != null).map(r => r.token_usage.total);
+        if (tokenRows.length === 0) return '';
+        const total = tokenRows.reduce((s, v) => s + v, 0);
+        const avg = total / tokenRows.length;
+        const peak = Math.max(...tokenRows);
+        return `Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${Math.round(avg).toLocaleString()} tokens · peak ${Math.round(peak).toLocaleString()} tokens · total ${Math.round(total).toLocaleString()}`;
+    }
+
+    if (metric === 'cost') {
+        const costRows = rows.filter(r => r.unit_type === 'currency' && r.used_value != null).map(r => r.used_value);
+        if (costRows.length === 0) return '';
+        const total = costRows.reduce((s, v) => s + v, 0);
+        return `Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · total $${total.toFixed(2)}`;
+    }
+
     // Compute from percent-compatible rows only
     const pctRows = rows.filter(r => {
         if (r.used_value == null) return false;
-        if (metric !== 'percent') return r.unit_type === metric;
         return r.unit_type === 'percent' || (r.limit_value > 0);
     }).map(r => {
-        if (metric === 'percent') {
-            return r.unit_type === 'percent' ? r.used_value : (r.used_value / r.limit_value) * 100;
-        }
-        return r.used_value;
+        return r.unit_type === 'percent' ? r.used_value : (r.used_value / r.limit_value) * 100;
     });
 
     if (pctRows.length === 0) return '';
@@ -149,11 +164,8 @@ function buildHistorySummary(rawHistory, filteredProviders, metric, days) {
         if (r.limit_value > 0) return (r.used_value / r.limit_value) >= 0.9;
         return false;
     }).length;
-    const providerCount = new Set(rows.map(r => r.provider_id)).size;
-    const daysLabel = days >= 30 ? '30D' : days >= 7 ? '7D' : days >= 1 ? '24H' : '6H';
-    const unit = metric === 'percent' ? '%' : metric === 'cost' ? ' USD' : '';
 
-    let parts = [`Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${avg.toFixed(1)}${unit} · peak ${peak.toFixed(1)}${unit}`];
+    let parts = [`Showing ${daysLabel} · ${providerCount} provider${providerCount !== 1 ? 's' : ''} · avg ${avg.toFixed(1)}% · peak ${peak.toFixed(1)}%`];
     if (critCount > 0) parts.push(`${critCount} crit events`);
 
     return parts.join(' · ');
@@ -174,13 +186,19 @@ function formatValue(value, unit) {
     const unitStr = unit || '';
     if (unitStr === 'percent') return `${value.toFixed(1)}%`;
     if (unitStr === 'currency') return `$${value.toFixed(2)}`;
-    if (unitStr === 'tokens') return value.toLocaleString();
+    if (unitStr === 'tokens') return Math.round(value).toLocaleString();
     if (unitStr === 'requests') return `${value.toLocaleString()} requests`;
     return `${value.toLocaleString()}${unitStr}`;
 }
 
-function formatWindowValue(entry) {
+function formatWindowValue(entry, metric) {
     if (!entry) return '—';
+    if (metric === 'tokens' && entry.token_usage?.total != null) {
+        return formatValue(entry.token_usage.total, 'tokens');
+    }
+    if (metric === 'cost') {
+        return formatValue(entry.value, 'currency');
+    }
     return formatValue(entry.value, entry.unit);
 }
 
@@ -197,6 +215,10 @@ function adaptEntryToMetric(entry, metric) {
         return null;
     }
     if (metric === 'tokens') {
+        // Check for token_usage object (new backend format)
+        if (entry.token_usage?.total != null) {
+            return { ...entry, value: entry.token_usage.total, unit: 'tokens' };
+        }
         return entry.unit === 'tokens' ? entry : null;
     }
     if (metric === 'cost') {
@@ -220,11 +242,18 @@ function friendlyWindowLabel(entry) {
     return w.replace(/^seven_day_/, '').replace(/_/g, ' ');
 }
 
-function renderAdditional(list) {
+function renderAdditional(list, metric) {
     if (!list || list.length === 0) return '—';
     return list.map(a => {
         const label = escapeHTML(friendlyWindowLabel(a));
-        const val = formatValue(a.value, a.unit);
+        let val;
+        if (metric === 'tokens' && a.token_usage?.total != null) {
+            val = formatValue(a.token_usage.total, 'tokens');
+        } else if (metric === 'cost') {
+            val = formatValue(a.value, 'currency');
+        } else {
+            val = formatValue(a.value, a.unit);
+        }
         return `<span class="ht-extra">${label} ${val}</span>`;
     }).join('');
 }
@@ -246,31 +275,43 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     // Build sparklines from RAW data for chart (each provider+service+window as separate line)
     const sparklineData = [];
     rawHistory.forEach(row => {
-        if (row.used_value == null) return;
         const metric = historyState.metric;
-        let entry = row;
+        let value = row.used_value;
+        let unit_type = row.unit_type;
+
         if (metric === 'percent') {
             if (row.unit_type === 'percent') {
-                // pass through
+                value = row.used_value;
             } else if (row.limit_value && row.limit_value > 0) {
-                // derive percent on the fly (mirrors dashboard sparkline behavior)
-                entry = { ...row, used_value: (row.used_value / row.limit_value) * 100, unit_type: 'percent' };
+                value = (row.used_value / row.limit_value) * 100;
+                unit_type = 'percent';
             } else {
                 return;
             }
-        } else if (metric === 'tokens' && row.unit_type !== 'tokens') {
-            return;
-        } else if (metric === 'cost' && row.unit_type !== 'currency') {
-            return;
+        } else if (metric === 'tokens') {
+            // Use token_usage.total from backend (new format)
+            if (row.token_usage?.total != null) {
+                value = row.token_usage.total;
+                unit_type = 'tokens';
+            } else if (row.unit_type === 'tokens') {
+                value = row.used_value;
+            } else {
+                return;
+            }
+        } else if (metric === 'cost') {
+            if (row.unit_type !== 'currency') return;
         }
+
+        if (value == null) return;
         sparklineData.push({
-            provider_id: entry.provider_id,
-            service_name: entry.service_name,
-            timestamp: entry.timestamp,
-            used_value: entry.used_value,
-            limit_value: entry.limit_value,
-            unit_type: entry.unit_type,
-            window_type: entry.window_type
+            provider_id: row.provider_id,
+            service_name: row.service_name,
+            timestamp: row.timestamp,
+            used_value: value,
+            limit_value: row.limit_value,
+            unit_type: unit_type,
+            window_type: row.window_type,
+            token_usage: row.token_usage,
         });
     });
     if (stripEl) stripEl.innerHTML = buildProviderSparklineStrip(sparklineData, historyState.activeProviders, historyState.days);
@@ -328,31 +369,56 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     const metaEl = document.getElementById('history-table-meta');
     if (metaEl) metaEl.textContent = `${totalItems.toLocaleString()} rows · last ${daysLabel}`;
 
+    const showTokens = metric === 'tokens';
+    const showCost = metric === 'cost';
+
     let html = `<table>
         <thead>
             <tr>
                 <th>Time</th>
                 <th>Provider</th>
                 <th>Account</th>
-                <th class="num">Session</th>
-                <th class="num">Weekly</th>
+                ${showTokens ? '<th class="num">Tokens</th>' : ''}
+                ${showCost ? '<th class="num">Cost</th>' : ''}
+                ${!showTokens && !showCost ? '<th class="num">Session</th><th class="num">Weekly</th>' : ''}
                 <th>Additional</th>
             </tr>
         </thead>
         <tbody>`;
     pageData.forEach(s => {
         const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const session = formatWindowValue(s.session);
-        const weekly = formatWindowValue(s.weekly);
 
-        html += `<tr>
-            <td class="ht-time">${date}</td>
-            <td>${escapeHTML(s.provider_id || '—')}</td>
-            <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
-            <td class="num ht-bold">${session}</td>
-            <td class="num ht-bold">${weekly}</td>
-            <td>${renderAdditional(s.additional.length ? s.additional : null)}</td>
-        </tr>`;
+        if (showTokens) {
+            const totalTokens = s.session?.token_usage?.total || s.weekly?.token_usage?.total || s.additional?.[0]?.token_usage?.total;
+            const tokenVal = totalTokens != null ? formatValue(totalTokens, 'tokens') : '—';
+            html += `<tr>
+                <td class="ht-time">${date}</td>
+                <td>${escapeHTML(s.provider_id || '—')}</td>
+                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
+                <td class="num ht-bold">${tokenVal}</td>
+                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
+            </tr>`;
+        } else if (showCost) {
+            const costVal = formatWindowValue(s.session || s.weekly, metric);
+            html += `<tr>
+                <td class="ht-time">${date}</td>
+                <td>${escapeHTML(s.provider_id || '—')}</td>
+                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
+                <td class="num ht-bold">${costVal}</td>
+                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
+            </tr>`;
+        } else {
+            const session = formatWindowValue(s.session, metric);
+            const weekly = formatWindowValue(s.weekly, metric);
+            html += `<tr>
+                <td class="ht-time">${date}</td>
+                <td>${escapeHTML(s.provider_id || '—')}</td>
+                <td class="ht-italic">${escapeHTML(s.account_label || '—')}</td>
+                <td class="num ht-bold">${session}</td>
+                <td class="num ht-bold">${weekly}</td>
+                <td>${renderAdditional(s.additional.length ? s.additional : null, metric)}</td>
+            </tr>`;
+        }
     });
     html += '</tbody></table>';
 

@@ -94,12 +94,21 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
     const buckets = {};
     for (const snap of snapshots) {
         let value;
+        let maxValue;
         if (metric === 'cost') {
             if (snap.unit_type !== 'currency' || snap.used_value == null) continue;
             value = snap.used_value;
+            maxValue = snap.max_used_value != null ? snap.max_used_value : value;
         } else if (metric === 'tokens') {
-            if (snap.unit_type !== 'tokens' || snap.used_value == null) continue;
-            value = snap.used_value;
+            // Use token_usage.total from backend (populated by poller from card.token_usage)
+            if (snap.token_usage?.total != null) {
+                value = snap.token_usage.total;
+            } else if (snap.unit_type === 'tokens' && snap.used_value != null) {
+                value = snap.used_value;
+            } else {
+                continue;
+            }
+            maxValue = value; // No max for tokens currently
         } else {
             if (snap.unit_type === 'percent' && snap.used_value != null) {
                 value = snap.used_value;
@@ -109,15 +118,13 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
             } else {
                 continue;
             }
-        }
-        // Compute peak in the same unit as value, using server-provided max_used_value when available
-        let maxValue = value;
-        if (snap.max_used_value != null) {
-            const rawMax = snap.max_used_value;
-            if (metric === 'cost' && snap.unit_type === 'currency') maxValue = rawMax;
-            else if (metric === 'tokens' && snap.unit_type === 'tokens') maxValue = rawMax;
-            else if (snap.unit_type === 'percent') maxValue = rawMax;
-            else if (snap.limit_value > 0) maxValue = (rawMax / snap.limit_value) * 100;
+            // Compute peak in the same unit as value, using server-provided max_used_value when available
+            maxValue = value;
+            if (snap.max_used_value != null) {
+                const rawMax = snap.max_used_value;
+                if (snap.unit_type === 'percent') maxValue = rawMax;
+                else if (snap.limit_value > 0) maxValue = (rawMax / snap.limit_value) * 100;
+            }
         }
 
         const bucket = bucketKeyFor(snap.timestamp, bucketSeconds);
@@ -127,7 +134,9 @@ function bucketByMetric(snapshots, metric, bucketSeconds) {
         if (!buckets[bucket][key]) buckets[bucket][key] = { sum: 0, count: 0, max: -Infinity };
         buckets[bucket][key].sum += value;
         buckets[bucket][key].count += 1;
-        buckets[bucket][key].max = Math.max(buckets[bucket][key].max, maxValue);
+        if (maxValue != null) {
+            buckets[bucket][key].max = Math.max(buckets[bucket][key].max, maxValue);
+        }
     }
     return buckets;
 }
