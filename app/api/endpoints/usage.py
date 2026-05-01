@@ -138,6 +138,11 @@ async def get_usage_history(
             func.avg(UsageSnapshot.used_value).label("avg_used"),
             func.max(UsageSnapshot.used_value).label("max_used"),
             func.avg(UsageSnapshot.limit_value).label("avg_limit"),
+            func.avg(UsageSnapshot.tokens_input).label("avg_tokens_input"),
+            func.avg(UsageSnapshot.tokens_output).label("avg_tokens_output"),
+            func.avg(UsageSnapshot.tokens_reasoning).label("avg_tokens_reasoning"),
+            func.avg(UsageSnapshot.tokens_total).label("avg_tokens_total"),
+            func.avg(UsageSnapshot.msgs).label("avg_msgs"),
         )
         .where(UsageSnapshot.timestamp >= since)
         .order_by(desc("bucket_ts"))
@@ -187,6 +192,19 @@ async def get_usage_history(
                 **snapshot_base,
                 used_value=round(r.avg_used, 4) if r.avg_used is not None else None,
                 limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
+                tokens_input=round(r.avg_tokens_input, 4)
+                if r.avg_tokens_input is not None
+                else None,
+                tokens_output=round(r.avg_tokens_output, 4)
+                if r.avg_tokens_output is not None
+                else None,
+                tokens_reasoning=round(r.avg_tokens_reasoning, 4)
+                if r.avg_tokens_reasoning is not None
+                else None,
+                tokens_total=round(r.avg_tokens_total, 4)
+                if r.avg_tokens_total is not None
+                else None,
+                msgs=round(r.avg_msgs, 1) if r.avg_msgs is not None else None,
                 health="good",  # Not used for aggregated data
             )
         )
@@ -197,6 +215,19 @@ async def get_usage_history(
                 **snapshot_base,
                 used_value=round(r.max_used, 4) if r.max_used is not None else None,
                 limit_value=round(r.avg_limit, 4) if r.avg_limit is not None else None,
+                tokens_input=round(r.avg_tokens_input, 4)
+                if r.avg_tokens_input is not None
+                else None,
+                tokens_output=round(r.avg_tokens_output, 4)
+                if r.avg_tokens_output is not None
+                else None,
+                tokens_reasoning=round(r.avg_tokens_reasoning, 4)
+                if r.avg_tokens_reasoning is not None
+                else None,
+                tokens_total=round(r.avg_tokens_total, 4)
+                if r.avg_tokens_total is not None
+                else None,
+                msgs=round(r.avg_msgs, 1) if r.avg_msgs is not None else None,
                 health="good",
             )
         )
@@ -252,6 +283,12 @@ async def get_usage_history_raw(
             func.avg(UsageSnapshot.used_value).label("avg_used"),
             func.max(UsageSnapshot.used_value).label("max_used"),
             func.avg(UsageSnapshot.limit_value).label("avg_limit"),
+            func.avg(UsageSnapshot.tokens_input).label("avg_tokens_input"),
+            func.avg(UsageSnapshot.tokens_output).label("avg_tokens_output"),
+            func.avg(UsageSnapshot.tokens_reasoning).label("avg_tokens_reasoning"),
+            func.avg(UsageSnapshot.tokens_cache_read).label("avg_tokens_cache_read"),
+            func.avg(UsageSnapshot.tokens_total).label("avg_tokens_total"),
+            func.avg(UsageSnapshot.msgs).label("avg_msgs"),
         )
         .where(UsageSnapshot.timestamp >= since)
         .order_by(asc("bucket_ts"))
@@ -295,6 +332,22 @@ async def get_usage_history_raw(
             "window_type": r.window_type,
             "variant": r.variant,
             "data_source": r.data_source,
+            "token_usage": {
+                "input": round(r.avg_tokens_input, 0) if r.avg_tokens_input is not None else None,
+                "output": round(r.avg_tokens_output, 0)
+                if r.avg_tokens_output is not None
+                else None,
+                "reasoning": round(r.avg_tokens_reasoning, 0)
+                if r.avg_tokens_reasoning is not None
+                else None,
+                "cache_read": round(r.avg_tokens_cache_read, 0)
+                if r.avg_tokens_cache_read is not None
+                else None,
+                "total": round(r.avg_tokens_total, 0) if r.avg_tokens_total is not None else None,
+            }
+            if any([r.avg_tokens_input, r.avg_tokens_output, r.avg_tokens_total])
+            else None,
+            "msgs": round(r.avg_msgs, 0) if r.avg_msgs is not None else None,
         }
         for r in raw
     ][:limit]
@@ -422,6 +475,16 @@ def _group_snapshots(
             "value": s.used_value,
             "unit": s.unit_type,
             "limit": s.limit_value,
+            "token_usage": {
+                "input": s.tokens_input,
+                "output": s.tokens_output,
+                "reasoning": s.tokens_reasoning,
+                "cache_read": s.tokens_cache_read,
+                "total": s.tokens_total,
+            }
+            if s.tokens_total is not None
+            else None,
+            "msgs": s.msgs,
         }
 
         if category == "session":

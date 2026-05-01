@@ -35,6 +35,16 @@ class UsageSnapshot(SQLModel, table=True):
     data_source: str
     error_type: str | None = None
 
+    # Token breakdown fields (nullable - only populated when provider reports them)
+    tokens_input: float | None = Field(default=None)
+    tokens_output: float | None = Field(default=None)
+    tokens_reasoning: float | None = Field(default=None)
+    tokens_cache_read: float | None = Field(default=None)
+    tokens_total: float | None = Field(
+        default=None
+    )  # input + output + reasoning (cache_read excluded)
+    msgs: int | None = Field(default=None)  # message count
+
     # Store provider-specific data as (possibly encrypted) JSON string
     raw_metadata_json: str | None = Field(default=None)
 
@@ -167,3 +177,25 @@ class SystemConfig(SQLModel, table=True):
     local_collector_enabled: bool | None = None  # None = use env var default
     local_credential_scraping_enabled: bool | None = None  # None = use env var default
     dashboard_layout_json: str | None = None
+
+
+class UsageSnapshotModel(SQLModel, table=True):
+    """Per-model cost and token breakdown for a snapshot.
+
+    One row per (snapshot, model) pair. Enables SQL-aggregation of per-model
+    spend and token usage across time windows.
+    """
+
+    __tablename__ = "usage_snapshot_models"
+    __table_args__ = (Index("ix_snapshot_model_snapshot", "snapshot_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(index=True)  # FK to UsageSnapshot
+    model_id: str
+    cost: float | None = None  # USD spent for this model in the snapshot window
+    msgs: int | None = None
+    tokens_input: float | None = Field(default=None)
+    tokens_output: float | None = Field(default=None)
+    tokens_reasoning: float | None = Field(default=None)
+    tokens_cache_read: float | None = Field(default=None)
+    tokens_total: float | None = Field(default=None)
