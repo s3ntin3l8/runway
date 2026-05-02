@@ -34,7 +34,13 @@ function toggleExpandRow(rowIndex) {
 }
 
 function computePrimaryValue(row, metric) {
-    const windows = [row.session, row.weekly, ...(row.additional || [])].filter(Boolean);
+    // Flatten arrays: session/weekly/monthly are now arrays of entries
+    const windows = [
+        ...(row.session || []),
+        ...(row.weekly || []),
+        ...(row.monthly || []),
+        ...(row.additional || []),
+    ].filter(Boolean);
     if (windows.length === 0) return null;
 
     if (metric === 'percent') {
@@ -262,8 +268,9 @@ function friendlyWindowLabel(entry) {
 
 function renderWindowsTable(row, metric) {
     const windows = [
-        row.session ? { ...row.session, window: 'session' } : null,
-        row.weekly ? { ...row.weekly, window: 'weekly' } : null,
+        ...(row.session || []).map(e => ({ ...e, window: 'session' })),
+        ...(row.weekly || []).map(e => ({ ...e, window: 'weekly' })),
+        ...(row.monthly || []).map(e => ({ ...e, window: 'monthly' })),
         ...(row.additional || []).map(a => ({ ...a, window: a.window || 'other' })),
     ].filter(Boolean);
 
@@ -590,7 +597,12 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
     // Filter: keep rows that have at least one window with data for the active metric
     const metric = historyState.metric;
     const tableData = filtered.filter(s => {
-        const windows = [s.session, s.weekly, ...(s.additional || [])].filter(Boolean);
+        const windows = [
+            ...(s.session || []),
+            ...(s.weekly || []),
+            ...(s.monthly || []),
+            ...(s.additional || []),
+        ].filter(Boolean);
         if (windows.length === 0) return false;
         if (metric === 'percent') {
             return windows.some(w => w.unit === 'percent' || (w.limit && w.limit > 0));
@@ -604,11 +616,12 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
         return true;
     });
 
-    // Apply window filter (session/weekly)
+    // Apply window filter (session/weekly/monthly)
     if (historyState.windowFilter !== 'all') {
         tableData = tableData.filter(s => {
-            if (historyState.windowFilter === 'session') return !!s.session;
-            if (historyState.windowFilter === 'weekly') return !!s.weekly;
+            if (historyState.windowFilter === 'session') return (s.session || []).length > 0;
+            if (historyState.windowFilter === 'weekly') return (s.weekly || []).length > 0;
+            if (historyState.windowFilter === 'monthly') return (s.monthly || []).length > 0;
             return true;
         });
     }

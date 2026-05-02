@@ -198,31 +198,38 @@ class GeminiLocalMixin:
 
     def _build_enrichment_dict(self, model_id: str | None, agg: dict[str, Any]) -> dict[str, Any]:
         """Build a canonical enrichment dict from aggregated message data."""
+        # Explicit total: sum of all token components for consistency
+        token_total = (
+            agg.get("input", 0)
+            + agg.get("output", 0)
+            + agg.get("thoughts", 0)
+            + agg.get("cached", 0)
+        )
         token_usage = {
             "input": agg.get("input", 0),
             "output": agg.get("output", 0),
             "cache_read": agg.get("cached", 0),
             "reasoning": agg.get("thoughts", 0),
-            "total": agg.get("total", 0),
+            "total": token_total,
         }
-        detail_str = format_token_details(token_usage) or f"{agg['total']:,} tokens"
+        detail_str = format_token_details(token_usage) or f"{token_total:,} tokens"
 
         by_model_formatted = {}
         for model_name, model_data in agg["by_model"].items():
             tokens = model_data.get("tokens", {})
+            model_input = tokens.get("input", 0)
+            model_output = tokens.get("output", 0)
+            model_reasoning = tokens.get("reasoning", 0)
+            model_cache_read = tokens.get("cache_read", 0)
             by_model_formatted[model_name] = {
                 "cost": 0.0,
                 "msgs": model_data["msgs"],
                 "tokens": {
-                    "input": tokens.get("input", 0),
-                    "output": tokens.get("output", 0),
-                    "reasoning": tokens.get("reasoning", 0),
-                    "cache_read": tokens.get("cache_read", 0),
-                    "total": (
-                        tokens.get("input", 0)
-                        + tokens.get("output", 0)
-                        + tokens.get("reasoning", 0)
-                    ),
+                    "input": model_input,
+                    "output": model_output,
+                    "reasoning": model_reasoning,
+                    "cache_read": model_cache_read,
+                    "total": model_input + model_output + model_reasoning + model_cache_read,
                 },
             }
 
@@ -235,7 +242,7 @@ class GeminiLocalMixin:
                 "output": agg["output"],
                 "reasoning": agg["thoughts"],
                 "cache_read": agg["cached"],
-                "total": agg["total"],
+                "total": token_total,
             },
             "msgs": agg["session_count"],
             "by_model": by_model_formatted,

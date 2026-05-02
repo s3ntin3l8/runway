@@ -537,6 +537,7 @@ def _build_by_model_lookup(
         )
         .join(UsageSnapshotModel, UsageSnapshot.id == UsageSnapshotModel.snapshot_id)
         .where(UsageSnapshot.timestamp >= since)
+        .where(UsageSnapshot.window_type.in_(SESSION_WINDOWS))  # type: ignore[attr-defined]
         .group_by(
             bucket_expr,
             UsageSnapshot.provider_id,
@@ -583,7 +584,7 @@ CREDIT_PROVIDERS = {"openrouter", "minimax"}
 # Session-like window types (exact matches only)
 SESSION_WINDOWS = {"session", "daily", "hourly", "prepaid"}
 # Weekly-like window types (exact matches only)
-WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly", "monthly"}
+WEEKLY_WINDOWS = {"weekly", "biweekly", "bi-weekly"}
 
 
 def _classify_window(
@@ -591,7 +592,7 @@ def _classify_window(
     provider_id: str | None = None,
     model_id: str | None = None,
 ) -> str:
-    """Classify window_type into category: 'session', 'weekly', or 'other'.
+    """Classify window_type into category: 'session', 'weekly', 'monthly', or 'other'.
 
     For credit providers (openrouter, minimax):
     - session/daily/hourly → session column
@@ -600,7 +601,8 @@ def _classify_window(
 
     For other providers:
     - session/daily/hourly → session column
-    - weekly/biweekly/monthly → weekly column
+    - weekly/biweekly → weekly column
+    - monthly → monthly column
     - weekly + model_id set (sonnet/opus/design) → Additional (avoids collision in single Weekly cell)
     - Other (model-specific, etc.) → Additional
     """
@@ -614,9 +616,13 @@ def _classify_window(
 
     # For credit providers: monthly = credit bucket = weekly column
     if provider_id and provider_id.lower() in CREDIT_PROVIDERS:
-        if w in WEEKLY_WINDOWS:
+        if w in WEEKLY_WINDOWS or w == "monthly":
             return "weekly"
         return "other"
+
+    # Monthly gets its own slot
+    if w == "monthly":
+        return "monthly"
 
     # For other providers: weekly-like windows go to weekly, unless model-scoped
     if w in WEEKLY_WINDOWS:
@@ -641,8 +647,9 @@ def _group_snapshots(
         "timestamp": "...",
         "provider_id": "...",
         "account_label": "...",
-        "session": {"value": float, "unit": str},  # or null
-        "weekly": {"value": float, "unit": str},   # or null
+        "session": [{"value": float, "unit": str}, ...],   # or null
+        "weekly": [{"value": float, "unit": str}, ...],    # or null
+        "monthly": [{"value": float, "unit": str}, ...],   # or null
         "additional": [ {"window": str, "value": float, "unit": str}, ... ]
     }
     """
@@ -650,8 +657,9 @@ def _group_snapshots(
 
     grouped: dict[tuple, dict] = defaultdict(
         lambda: {
-            "session": None,
-            "weekly": None,
+            "session": [],
+            "weekly": [],
+            "monthly": [],
             "additional": [],
         }
     )
@@ -701,9 +709,11 @@ def _group_snapshots(
         }
 
         if category == "session":
-            grouped[key]["session"] = entry
+            grouped[key]["session"].append(entry)
         elif category == "weekly":
-            grouped[key]["weekly"] = entry
+            grouped[key]["weekly"].append(entry)
+        elif category == "monthly":
+            grouped[key]["monthly"].append(entry)
         else:
             grouped[key]["additional"].append(
                 {
@@ -745,8 +755,9 @@ def _group_snapshots(
                 "timestamp": rep_ts.isoformat(),
                 "provider_id": provider_id,
                 "account_label": account_label,
-                "session": data["session"],
-                "weekly": data["weekly"],
+                "session": data["session"] or None,
+                "weekly": data["weekly"] or None,
+                "monthly": data["monthly"] or None,
                 "additional": data["additional"] or None,
                 "by_model": by_model,
             }
