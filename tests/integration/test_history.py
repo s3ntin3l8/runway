@@ -226,7 +226,7 @@ def test_get_history_includes_by_model(client: TestClient, session: Session):
         used_value=50.0,
         limit_value=100.0,
         unit_type="percent",
-        window_type="monthly",
+        window_type="session",
     )
     session.add(snap)
     session.flush()  # Get snap.id

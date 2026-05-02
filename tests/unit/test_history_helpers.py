@@ -77,7 +77,7 @@ def test_effective_label_real():
         ("hourly", "openai", "session"),
         ("prepaid", "anthropic", "session"),
         ("weekly", "anthropic", "weekly"),
-        ("monthly", "anthropic", "weekly"),
+        ("monthly", "anthropic", "monthly"),
         ("biweekly", "anthropic", "weekly"),
         # Credit providers: monthly = credit bucket = weekly
         ("monthly", "openrouter", "weekly"),
@@ -174,8 +174,10 @@ def test_group_snapshots_session_and_weekly_in_same_row():
     row = rows[0]
     assert row["session"] is not None
     assert row["weekly"] is not None
-    assert row["session"]["value"] == 20.0
-    assert row["weekly"]["value"] == 60.0
+    assert len(row["session"]) == 1
+    assert len(row["weekly"]) == 1
+    assert row["session"][0]["value"] == 20.0
+    assert row["weekly"][0]["value"] == 60.0
 
 
 def test_group_snapshots_label_map_overlay():
@@ -250,7 +252,7 @@ def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
     now = datetime(2026, 4, 22, 10, 30, 0, tzinfo=UTC)
     bucket_seconds = 1800  # 30-min bucket
 
-    # Create two snapshots in the same bucket
+    # Create two snapshots in the same bucket (session window so by_model lookup includes them)
     snap1 = UsageSnapshot(
         provider_id="gemini",
         account_id="user1",
@@ -261,7 +263,7 @@ def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
         used_value=50.0,
         limit_value=100.0,
         unit_type="percent",
-        window_type="monthly",
+        window_type="session",
     )
     snap2 = UsageSnapshot(
         provider_id="gemini",
@@ -273,7 +275,7 @@ def test_build_by_model_lookup_aggregates_per_bucket(session: Session):
         used_value=60.0,
         limit_value=100.0,
         unit_type="percent",
-        window_type="monthly",
+        window_type="session",
     )
     session.add(snap1)
     session.add(snap2)
@@ -351,7 +353,7 @@ def test_build_by_model_lookup_filters_by_provider_and_account(session: Session)
         used_value=50.0,
         limit_value=100.0,
         unit_type="percent",
-        window_type="monthly",
+        window_type="session",
     )
     snap2 = UsageSnapshot(
         provider_id="openai",
@@ -363,7 +365,7 @@ def test_build_by_model_lookup_filters_by_provider_and_account(session: Session)
         used_value=30.0,
         limit_value=100.0,
         unit_type="percent",
-        window_type="monthly",
+        window_type="session",
     )
     session.add(snap1)
     session.add(snap2)
