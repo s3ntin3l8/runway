@@ -369,18 +369,17 @@ async def get_usage_history_deltas(
     provider_id: str | None = None,
     account_id: str | None = None,
     days: float = Query(default=1.0, ge=0.01, le=90.0),
-    limit: int = Query(default=10000, ge=1, le=10000),
     session: Session = Depends(get_session),
 ):
     """Fetch raw snapshots and compute positive deltas per series.
 
     Unlike /history/raw (which buckets and averages), this endpoint returns
     the *actual consumption* within the period by walking each time-series
-    chronologically and summing only positive deltas.  Window resets (where
-    the cumulative counter drops) are ignored, giving a lower-bound on true
-    usage.
+    chronologically and summing only positive deltas.
 
-    A 10 000-row raw limit covers ~60 days of typical 5–10 min polling.
+    To improve fidelity, it employs a 'high-water mark' with glitch filtering:
+    - Minor drops (>50% of previous peak) are ignored as transient API glitches.
+    - Substantial drops (<50% of previous peak) are treated as periodic counter resets.
     """
     since = datetime.now(UTC) - timedelta(days=days)
 
@@ -405,7 +404,7 @@ async def get_usage_history_deltas(
     if account_id:
         stmt = stmt.where(UsageSnapshot.account_id == account_id)
 
-    rows = session.exec(stmt.limit(limit)).all()
+    rows = session.exec(stmt).all()
 
     # Group by series key
     series_groups: dict[str, list[Any]] = {}
@@ -421,26 +420,40 @@ async def get_usage_history_deltas(
     critical_series_count = 0
     series_list = []
 
+    # Glitch filter: drops below 50% are resets; others are ignored as glitches
+    GLITCH_THRESHOLD = 0.5
+
     for key, arr in series_groups.items():
         arr.sort(key=lambda r: r.timestamp)
         token_delta = 0.0
         cost_delta = 0.0
         critical = False
 
+        # Track high-water marks per series to filter glitches
+        max_tokens = arr[0].tokens_total or 0.0
+        max_cost = (arr[0].used_value or 0.0) if arr[0].unit_type == "currency" else 0.0
+
         for i in range(1, len(arr)):
-            prev = arr[i - 1]
             curr = arr[i]
 
-            # Positive token delta
-            prev_tok = prev.tokens_total or 0
-            curr_tok = curr.tokens_total or 0
-            token_delta += max(0.0, curr_tok - prev_tok)
+            # 1. Token Delta with Glitch Filtering
+            curr_tok = curr.tokens_total or 0.0
+            if curr_tok > max_tokens:
+                token_delta += curr_tok - max_tokens
+                max_tokens = curr_tok
+            elif curr_tok < max_tokens * GLITCH_THRESHOLD:
+                # Substantial drop: treat as counter reset
+                max_tokens = curr_tok
 
-            # Positive cost delta (currency only)
+            # 2. Cost Delta (currency only) with Glitch Filtering
             if curr.unit_type == "currency":
-                prev_cost = prev.used_value or 0
-                curr_cost = curr.used_value or 0
-                cost_delta += max(0.0, curr_cost - prev_cost)
+                curr_cost = curr.used_value or 0.0
+                if curr_cost > max_cost:
+                    cost_delta += curr_cost - max_cost
+                    max_cost = curr_cost
+                elif curr_cost < max_cost * GLITCH_THRESHOLD:
+                    # Substantial drop: treat as counter reset
+                    max_cost = curr_cost
 
             # Critical check
             if not critical and curr.used_value is not None:
@@ -478,7 +491,7 @@ async def get_usage_history_deltas(
         "cost_delta_total": round(cost_delta_total, 2),
         "provider_token_deltas": {k: round(v, 2) for k, v in provider_token_deltas.items()},
         "critical_series_count": critical_series_count,
-        "series_sampled": len(rows) >= limit,
+        "series_sampled": False,  # No longer truncated
         "series": series_list,
     }
 
