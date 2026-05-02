@@ -1544,8 +1544,12 @@ class TestChatGPTCollector:
         # msg1: input 100, output 50
         # msg2: input 120 (billed 120, not 20), output 60
         # Total Consumption should be: Input 220, Output 110, Total 330.
-        ts_1 = "2026-04-30T10:00:00Z"
-        ts_2 = "2026-04-30T10:05:00Z"
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        reset_at = now + timedelta(days=5)
+        ts_1 = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        ts_2 = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
 
         entries = [
             # Turn 1
@@ -1558,7 +1562,7 @@ class TestChatGPTCollector:
                         "type": "token_count",
                         "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50}},
                         "rate_limits": {
-                            "primary": {"resets_at": 1777550000, "window_minutes": 10080}
+                            "primary": {"resets_at": reset_at.timestamp(), "window_minutes": 10080}
                         },
                     },
                 }
@@ -1572,7 +1576,7 @@ class TestChatGPTCollector:
                         "type": "token_count",
                         "info": {"last_token_usage": {"input_tokens": 120, "output_tokens": 60}},
                         "rate_limits": {
-                            "primary": {"resets_at": 1777550000, "window_minutes": 10080}
+                            "primary": {"resets_at": reset_at.timestamp(), "window_minutes": 10080}
                         },
                     },
                 }
@@ -1590,6 +1594,100 @@ class TestChatGPTCollector:
         assert enriched["token_usage"]["output"] == 110
         assert enriched["token_usage"]["total"] == 330
         assert "in:220, out:110" in enriched["_enrichment_detail"]
+
+    def test_chatgpt_codex_rolls_forward_old_window(self, tmp_path):
+        """_process_codex_sessions should roll forward an old resets_at to find the current window cutoff."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.collectors.chatgpt import ChatGPTCollector
+
+        collector = ChatGPTCollector()
+
+        now = datetime.now(UTC)
+        # Log event is from 8 days ago.
+        # old_reset is 7.5 days ago.
+        # If we roll it forward 7 days (10080 min), the new reset is 0.5 days ago.
+        # The cutoff is 7 days before that -> 7.5 days ago.
+        # So an event from 8 days ago is BEFORE the cutoff (correctly filtered).
+        old_reset = now - timedelta(days=7.5)
+        ts_old = (now - timedelta(days=8)).isoformat().replace("+00:00", "Z")
+
+        entries = [
+            json.dumps(
+                {"type": "turn_context", "payload": {"model": "gpt-4o"}, "timestamp": ts_old}
+            ),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": ts_old,
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50}},
+                        "rate_limits": {
+                            "primary": {"resets_at": old_reset.timestamp(), "window_minutes": 10080}
+                        },
+                    },
+                }
+            ),
+        ]
+
+        fpath = tmp_path / "codex-test-old.jsonl"
+        fpath.write_text("\n".join(entries) + "\n")
+
+        # The old event should be filtered out because it belongs to a previous window
+        result = collector._process_codex_sessions([str(fpath)])
+        assert len(result) == 0
+
+    def test_chatgpt_codex_uses_primary_metadata_cutoff(self, tmp_path):
+        """_process_codex_sessions should use the primary metadata reset_at for the cutoff."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.collectors.chatgpt import ChatGPTCollector
+
+        collector = ChatGPTCollector()
+        now = datetime.now(UTC)
+
+        # Set the primary reset to the future
+        primary_reset = now + timedelta(days=2)
+        collector._primary_reset_at = primary_reset
+
+        # Log event is from 1 hour ago.
+        # Primary reset is 2 days in the future.
+        # Window is 7 days.
+        # Cutoff is 5 days ago.
+        # Event from 1 hour ago is AFTER cutoff (correctly included).
+        ts_recent = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+
+        entries = [
+            json.dumps(
+                {"type": "turn_context", "payload": {"model": "gpt-4o"}, "timestamp": ts_recent}
+            ),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": ts_recent,
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50}},
+                        "rate_limits": {
+                            # Note: The log file contains a VERY old resets_at that would incorrectly put the event in a past window
+                            # if it were rolled forward using the 10080 min logic blindly without primary metadata.
+                            "primary": {
+                                "resets_at": (now - timedelta(days=20)).timestamp(),
+                                "window_minutes": 10080,
+                            }
+                        },
+                    },
+                }
+            ),
+        ]
+
+        fpath = tmp_path / "codex-test-primary.jsonl"
+        fpath.write_text("\n".join(entries) + "\n")
+
+        result = collector._process_codex_sessions([str(fpath)])
+        assert len(result) == 1
+        assert result[0]["token_usage"]["total"] == 150
 
 
 class TestAntigravityCollector:
