@@ -281,11 +281,21 @@ class ChatGPTLocalMixin:
         resets_at_ts = primary_limits.get("resets_at")
         window_minutes = int(primary_limits.get("window_minutes", 10080))
 
-        reset_at = datetime.fromtimestamp(resets_at_ts, tz=UTC) if resets_at_ts else None
+        log_reset_at = datetime.fromtimestamp(resets_at_ts, tz=UTC) if resets_at_ts else None
+
+        # Roll forward the log reset time if it's in the past
+        now = datetime.now(UTC)
+        if log_reset_at and log_reset_at < now:
+            while log_reset_at < now:
+                log_reset_at += timedelta(minutes=window_minutes)
+
+        # Use primary metadata if available, otherwise use the rolled-forward log reset
+        effective_reset = getattr(self, "_primary_reset_at", None) or log_reset_at
+
         cutoff = (
-            reset_at - timedelta(minutes=window_minutes)
-            if reset_at
-            else datetime.now(UTC) - timedelta(minutes=window_minutes)
+            effective_reset - timedelta(minutes=window_minutes)
+            if effective_reset
+            else now - timedelta(minutes=window_minutes)
         )
 
         # Filter messages for the current window
