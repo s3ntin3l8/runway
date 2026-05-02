@@ -366,21 +366,37 @@ function groupBySeries(rows) {
 }
 
 function positiveTokenDeltas(seriesRows) {
+    if (seriesRows.length === 0) return 0;
     let total = 0;
+    let maxSeen = seriesRows[0].token_usage?.total ?? seriesRows[0].used_value ?? 0;
+    const GLITCH_THRESHOLD = 0.5;
+
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].token_usage?.total ?? seriesRows[i].used_value ?? 0;
-        const prev = seriesRows[i - 1].token_usage?.total ?? seriesRows[i - 1].used_value ?? 0;
-        total += Math.max(0, curr - prev);
+        if (curr > maxSeen) {
+            total += curr - maxSeen;
+            maxSeen = curr;
+        } else if (curr < maxSeen * GLITCH_THRESHOLD) {
+            maxSeen = curr;
+        }
     }
     return total;
 }
 
 function positiveCurrencyDeltas(seriesRows) {
+    if (seriesRows.length === 0) return 0;
     let total = 0;
+    let maxSeen = seriesRows[0].used_value ?? 0;
+    const GLITCH_THRESHOLD = 0.5;
+
     for (let i = 1; i < seriesRows.length; i++) {
         const curr = seriesRows[i].used_value ?? 0;
-        const prev = seriesRows[i - 1].used_value ?? 0;
-        total += Math.max(0, curr - prev);
+        if (curr > maxSeen) {
+            total += curr - maxSeen;
+            maxSeen = curr;
+        } else if (curr < maxSeen * GLITCH_THRESHOLD) {
+            maxSeen = curr;
+        }
     }
     return total;
 }

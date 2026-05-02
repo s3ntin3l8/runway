@@ -138,3 +138,50 @@ def test_multiple_providers_compacted_independently(session):
     assert len(rows) == 2
     providers = {r.provider_id for r in rows}
     assert providers == {"anthropic", "openai"}
+
+
+def test_compaction_preserves_tokens_and_breakdown(session):
+    """Compaction should average token fields and preserve UsageSnapshotModel entries."""
+    from app.models.db import UsageSnapshotModel
+    from app.services.compaction import compact_snapshots
+
+    old = datetime.now(UTC) - timedelta(days=90)
+
+    # Snapshot 1
+    s1 = _snap(old, 100.0, 1000.0)
+    s1.tokens_total = 1000.0
+    s1.msgs = 10
+    session.add(s1)
+    session.flush()
+    session.add(UsageSnapshotModel(snapshot_id=s1.id, model_id="gpt-4", tokens_total=500.0, msgs=5))
+    session.add(UsageSnapshotModel(snapshot_id=s1.id, model_id="gpt-3.5", tokens_total=500.0, msgs=5))
+
+    # Snapshot 2
+    s2 = _snap(old + timedelta(minutes=5), 200.0, 1000.0)
+    s2.tokens_total = 2000.0
+    s2.msgs = 20
+    session.add(s2)
+    session.flush()
+    session.add(UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-4", tokens_total=1000.0, msgs=10))
+    session.add(UsageSnapshotModel(snapshot_id=s2.id, model_id="gpt-3.5", tokens_total=1000.0, msgs=10))
+
+    session.commit()
+
+    result = compact_snapshots(session)
+
+    assert result["hourly_compacted"] == 1
+
+    # Verify UsageSnapshot
+    rows = session.exec(select(UsageSnapshot)).all()
+    assert len(rows) == 1
+    assert rows[0].tokens_total == pytest.approx(1500.0)
+    assert rows[0].msgs == 15
+
+    # Verify UsageSnapshotModel
+    models = session.exec(select(UsageSnapshotModel)).all()
+    assert len(models) == 2
+    model_map = {m.model_id: m for m in models}
+    assert model_map["gpt-4"].tokens_total == pytest.approx(750.0)
+    assert model_map["gpt-4"].msgs == 7  # int(7.5) -> 7
+    assert model_map["gpt-3.5"].tokens_total == pytest.approx(750.0)
+    assert model_map["gpt-4"].snapshot_id == rows[0].id
