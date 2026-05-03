@@ -1865,17 +1865,49 @@ def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
 # --- Main Loop ---
 
 
-def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+class DeltaTracker:
+    """Track usage deltas between cycles to support authoritative accounting."""
+
+    def __init__(self):
+        self._last_values: dict[str, float] = {}
+
+    def get_delta(self, provider_id: str, account_id: str, unit_type: str, current_value: float) -> float:
+        key = f"{provider_id}:{account_id}:{unit_type}"
+        previous = self._last_values.get(key)
+        
+        # Update baseline for next cycle
+        self._last_values[key] = current_value
+        
+        if previous is None:
+            # First read - we don't know the delta yet, but we have a baseline now.
+            # To be safe, we report 0 delta for the first observation to avoid massive 
+            # spikes if the account already has high usage.
+            return 0.0
+            
+        if current_value < previous:
+            # Reset detected (e.g. quota window rollover).
+            # The delta is the entire current value (starting from 0).
+            return current_value
+            
+        return current_value - previous
+
+
+# Global delta tracker
+delta_tracker = DeltaTracker()
+
+
+def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Run collection for all enabled providers.
 
-    Returns (metrics, error_count) where error_count is the number of providers
-    that raised an exception during collection.
+    Returns (metrics, deltas, error_count).
     """
     all_metrics: list[dict[str, Any]] = []
+    all_deltas: list[dict[str, Any]] = []
     error_count = 0
     enabled_providers = config.get("providers", ["all"])
 
     registry_providers = __REGISTRY__.get("providers", {})
+    now_iso = datetime.datetime.now(datetime.UTC).isoformat()
 
     for provider_id, provider_config in registry_providers.items():
         if "all" in enabled_providers or provider_id in enabled_providers:
@@ -1884,6 +1916,22 @@ def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
                 metrics = GenericCollector.collect_provider(provider_id, provider_config)
                 if metrics:
                     logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
+                    for card in metrics:
+                        # If card has used_value and unit_type, track delta
+                        u_val = card.get("used_value")
+                        u_type = card.get("unit_type")
+                        acc_id = card.get("account_id") or "default"
+                        
+                        if u_val is not None and u_type:
+                            delta = delta_tracker.get_delta(provider_id, acc_id, u_type, float(u_val))
+                            if delta > 0:
+                                all_deltas.append({
+                                    "provider_id": provider_id,
+                                    "account_id": acc_id,
+                                    "unit_type": u_type,
+                                    "value": delta,
+                                    "timestamp": now_iso
+                                })
                 else:
                     logging.info(f"  [{provider_id}] no data")
                 all_metrics.extend(metrics)
@@ -1891,7 +1939,7 @@ def run_collection(config: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
                 logging.error(f"  [{provider_id}] error: {e}")
                 error_count += 1
 
-    return all_metrics, error_count
+    return all_metrics, all_deltas, error_count
 
 
 class DaemonRunner:
@@ -1971,15 +2019,16 @@ class DaemonRunner:
 
         try:
             logging.info("Starting collection cycle...")
-            metrics, collection_errors = run_collection(self._config)
+            metrics, deltas, collection_errors = run_collection(self._config)
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version", "unknown")
 
-            if metrics:
+            if metrics or deltas:
                 payload = {
                     "provider": f"sidecar-{get_hostname()}",
                     "metrics": metrics,
+                    "deltas": deltas,
                     "sidecar_id": get_hostname(),
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
