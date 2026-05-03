@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -38,12 +39,22 @@ _CSV_COLUMNS = [
 
 @router.get("/limits")
 @limiter.limit("10/minute")
-async def fetch_all_limits(request: Request) -> dict[str, Any]:
-    """Fetch all AI service usage limits from the in-memory registry."""
-    results = manager.get_registry_snapshot()
+async def fetch_all_limits(
+    request: Request, session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    """Fetch all AI service usage limits from the LatestUsage database table."""
+    from app.models.db import LatestUsage
+
+    records = session.exec(select(LatestUsage)).all()
+    results = []
+    for r in records:
+        try:
+            results.append(json.loads(r.card_json))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
     if not results:
-        # Bootstrap fallback: registry not yet populated (first request races startup)
-        # _do_collect() updates manager._registry, so no external write needed here.
+        # Bootstrap fallback: table not yet populated
         results = await manager.collect_all()
 
     # Validate and serialize with None values included
@@ -64,9 +75,18 @@ async def get_usage_forecast(
     session: Session = Depends(get_session),
 ) -> ForecastResponse:
     """Project quota usage to reset time using linear extrapolation in the current window."""
-    results = manager.get_registry_snapshot()
+    from app.models.db import LatestUsage
+
+    records = session.exec(select(LatestUsage)).all()
+    results = []
+    for r in records:
+        try:
+            results.append(json.loads(r.card_json))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
     if not results:
-        # Bootstrap fallback: registry not yet populated (first request races startup)
+        # Bootstrap fallback
         results = await manager.collect_all()
 
     cards = [LimitCard(**item) for item in results]

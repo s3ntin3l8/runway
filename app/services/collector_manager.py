@@ -74,8 +74,6 @@ class CollectorManager:
         self._collect_future: asyncio.Future | None = None
         # Concurrency limit: max 10 collectors running at once
         self._semaphore = asyncio.Semaphore(10)
-        # In-memory registry: latest snapshot of all cards (populated by poller + startup)
-        self._registry: list[dict[str, Any]] = []
 
         logger.info(
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
@@ -159,8 +157,6 @@ class CollectorManager:
                 if db_cfg is not None and not db_cfg.enabled:
                     # Remove existing collector if it was previously running
                     self.smart_collectors.pop(f"{p_id}:default", None)
-                    # Purge stale cards so the dashboard reflects the change immediately
-                    self._registry = [c for c in self._registry if c.get("provider_id") != p_id]
                     continue
                 effective_ttl = (
                     db_cfg.poll_interval_seconds
@@ -210,13 +206,8 @@ class CollectorManager:
                     db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
 
                     if db_cfg is not None and not db_cfg.enabled:
-                        # Remove existing dynamic collector and purge its stale cards
+                        # Remove existing dynamic collector and its stale cards
                         self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
-                        self._registry = [
-                            c
-                            for c in self._registry
-                            if not (c.get("provider_id") == p_id and c.get("account_id") == acc_id)
-                        ]
                         continue
                     effective_ttl = (
                         db_cfg.poll_interval_seconds
@@ -392,9 +383,6 @@ class CollectorManager:
         logger.info(
             f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts"
         )
-        # Update registry atomically inside _do_collect so all callers (startup,
-        # poller, fallback) share one authoritative write path.
-        self._registry = flattened
         return flattened
 
     async def _collect_with_semaphore(
@@ -404,10 +392,6 @@ class CollectorManager:
         async with self._semaphore:
             return await asyncio.wait_for(self.smart_collectors[key].collect(client), timeout=25.0)
 
-    def get_registry_snapshot(self) -> list[dict[str, Any]]:
-        """Return current in-memory card registry. Never blocks."""
-        return list(self._registry)  # shallow copy prevents external mutation
-
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""
         return {"collectors": [sc.get_stats() for sc in self.smart_collectors.values()]}
@@ -415,7 +399,7 @@ class CollectorManager:
     async def collect_one(
         self, provider_id: str, account_id: str | None = None
     ) -> list[dict[str, Any]]:
-        """Reset and immediately re-collect a single provider, merging results into the registry."""
+        """Reset and immediately re-collect a single provider."""
         target_prefix = f"{provider_id}:"
         results: list[dict[str, Any]] = []
         client = await self._get_client()
@@ -431,16 +415,6 @@ class CollectorManager:
                     except Exception as e:
                         logger.error(f"Error collecting {key}: {e}")
 
-        # Merge: replace old cards for this provider (and account if specified)
-        if account_id:
-            kept = [
-                c
-                for c in self._registry
-                if not (c.get("provider_id") == provider_id and c.get("account_id") == account_id)
-            ]
-        else:
-            kept = [c for c in self._registry if c.get("provider_id") != provider_id]
-        self._registry = kept + results
         return results
 
     def _create_collector(self, provider_id: str) -> Any:
