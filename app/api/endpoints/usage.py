@@ -12,7 +12,7 @@ from sqlmodel import Session, asc, desc, select
 
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.models.db import ProviderConfig, UsageSnapshot
+from app.models.db import CumulativeUsage, ProviderConfig, UsageSnapshot
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.forecast import compute_all_forecasts
@@ -63,6 +63,78 @@ async def fetch_all_limits(
 
     # Return dict with None values included (needed for tier field)
     return response.model_dump(exclude_none=False)
+
+
+@router.get("/cumulative")
+@limiter.limit("30/minute")
+async def get_cumulative_usage(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    period_type: str | None = None,
+    period_key: str | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Authoritative cumulative usage rolled up across sidecars.
+
+    Default: returns one entry per (provider_id, account_id) with
+    `lifetime`, current-year, and current-month totals summed across all
+    contributing sidecars (matches spec §4 GROUP BY rollup).
+
+    Query params narrow the scope:
+    - provider_id / account_id: identity filter
+    - period_type: one of 'lifetime' | 'year' | 'month'
+    - period_key: a specific bucket (e.g. '2026', '2026-05', 'all')
+    """
+    stmt = select(CumulativeUsage)
+    if provider_id:
+        stmt = stmt.where(CumulativeUsage.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(CumulativeUsage.account_id == account_id)
+    if period_type:
+        stmt = stmt.where(CumulativeUsage.period_type == period_type)
+    if period_key:
+        stmt = stmt.where(CumulativeUsage.period_key == period_key)
+
+    rows = session.exec(stmt).all()
+
+    now = datetime.now(UTC)
+    current_year = now.strftime("%Y")
+    current_month = now.strftime("%Y-%m")
+
+    # Group by (provider_id, account_id). Within a group, rows for the same
+    # (period_type, period_key, unit_type) tuple are summed across sidecar_id.
+    grouped: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
+    for r in rows:
+        ident = (r.provider_id, r.account_id)
+        bucket_key = _cumulative_bucket_label(r.period_type, r.period_key)
+        bucket = grouped.setdefault(ident, {}).setdefault(bucket_key, {})
+        bucket[r.unit_type] = bucket.get(r.unit_type, 0.0) + r.total_value
+
+    # Stable shape: each entry always exposes lifetime + current-year +
+    # current-month keys (empty dicts when nothing matches), so consumers
+    # don't have to special-case missing buckets.
+    expected_keys = ["lifetime", f"year_{current_year}", f"month_{current_month}"]
+
+    cumulative = []
+    for (pid, aid), buckets in sorted(grouped.items()):
+        entry: dict[str, Any] = {"provider_id": pid, "account_id": aid}
+        for k in expected_keys:
+            entry[k] = buckets.get(k, {})
+        # Surface any other (historical) buckets the caller didn't filter out
+        for k, v in buckets.items():
+            if k not in entry:
+                entry[k] = v
+        cumulative.append(entry)
+
+    return {"cumulative": cumulative, "generated_at": now.isoformat()}
+
+
+def _cumulative_bucket_label(period_type: str, period_key: str) -> str:
+    """Map (period_type, period_key) into a stable response field name."""
+    if period_type == "lifetime":
+        return "lifetime"
+    return f"{period_type}_{period_key}"
 
 
 @router.get("/forecast")
