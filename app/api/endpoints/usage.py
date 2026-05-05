@@ -65,6 +65,94 @@ async def fetch_all_limits(
     return response.model_dump(exclude_none=False)
 
 
+@router.get("/fleet")
+@limiter.limit("30/minute")
+async def fetch_fleet_view(
+    request: Request, session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    """Fleet HUD aggregation: one Fleet Commander per (provider_id, account_id).
+
+    For each account group:
+    - critical_gauge: the LatestUsage card with the highest pct_used (or
+      first card with a quota gauge if pct_used is unavailable). This is
+      the spec's "Most Restrictive Wins" gauge.
+    - secondary_limits: every other card in the same group, used for the
+      LED row.
+    - sidecar_contributions: per-sidecar token totals from CumulativeUsage
+      (current month), used by the Fuel Dump bar.
+    """
+    from app.models.db import LatestUsage
+
+    records = session.exec(select(LatestUsage)).all()
+    cards: list[dict[str, Any]] = []
+    for r in records:
+        try:
+            cards.append(json.loads(r.card_json))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # Group cards by (provider_id, account_id)
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for c in cards:
+        pid = c.get("provider_id") or ""
+        aid = c.get("account_id") or ""
+        if not pid:
+            continue
+        groups.setdefault((pid, aid), []).append(c)
+
+    # Per-sidecar contribution lookup from CumulativeUsage (current month)
+    now = datetime.now(UTC)
+    month_key = now.strftime("%Y-%m")
+    contrib_rows = session.exec(
+        select(CumulativeUsage).where(
+            CumulativeUsage.period_type == "month",
+            CumulativeUsage.period_key == month_key,
+        )
+    ).all()
+    contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
+    for cr in contrib_rows:
+        ident = (cr.provider_id, cr.account_id)
+        sb = contrib.setdefault(ident, {}).setdefault(cr.sidecar_id, {})
+        sb[cr.unit_type] = sb.get(cr.unit_type, 0.0) + cr.total_value
+
+    fleet = []
+    for (pid, aid), gcards in sorted(groups.items()):
+        critical = _pick_critical_card(gcards)
+        secondary = [c for c in gcards if c is not critical]
+        fleet.append(
+            {
+                "provider_id": pid,
+                "account_id": aid,
+                "critical_gauge": critical,
+                "secondary_limits": secondary,
+                "sidecar_contributions": contrib.get((pid, aid), {}),
+            }
+        )
+
+    return {"fleet": fleet, "generated_at": now.isoformat()}
+
+
+def _pick_critical_card(cards: list[dict[str, Any]]) -> dict[str, Any]:
+    """Spec §5.1 'Most Restrictive Wins' — return the card most exhausted.
+
+    Uses pct_used when available, else falls back to (used_value / limit_value).
+    Cards without quota signal are deprioritized but not dropped.
+    """
+
+    def score(c: dict[str, Any]) -> float:
+        pct = c.get("pct_used")
+        if pct is not None:
+            return float(pct)
+        used = c.get("used_value")
+        limit = c.get("limit_value")
+        if used is not None and limit and limit > 0:
+            return (used / limit) * 100.0
+        # Unlimited / no-quota cards score below any real bar
+        return -1.0
+
+    return max(cards, key=score)
+
+
 @router.get("/cumulative")
 @limiter.limit("30/minute")
 async def get_cumulative_usage(
