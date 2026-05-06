@@ -11,8 +11,13 @@ def resolve_account_id(
     """Canonical account_id used by both LatestUsage and CumulativeUsage."""
     email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
 
-    if account_label and re.match(email_pattern, account_label):
-        return account_label.lower()
+    # Pre-process "email @ org" format (e.g. "user@company.com @ MyOrg")
+    label = account_label
+    if label and " @ " in label:
+        label = label.split(" @ ")[0].strip()
+
+    if label and re.match(email_pattern, label):
+        return label.lower()
 
     if raw_account_id and raw_account_id != "default" and re.match(email_pattern, raw_account_id):
         return raw_account_id.lower()
