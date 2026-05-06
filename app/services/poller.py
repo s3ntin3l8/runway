@@ -10,6 +10,8 @@ from sqlmodel import Session, select
 from app.core.db import engine
 from app.models.db import LatestUsage, UsageSnapshot, UsageSnapshotModel
 from app.models.schemas import LimitCard
+from app.services.account_identity import resolve_account_id
+from app.services.accumulator import merge_card_json
 from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -205,9 +207,12 @@ class BackgroundPoller:
                             continue
                         if card.data_source == "cache":
                             continue
+                        canonical_account_id = resolve_account_id(
+                            card.provider_id, card.account_id, card.account_label
+                        )
                         snapshot = UsageSnapshot(
                             provider_id=card.provider_id,
-                            account_id=card.account_id,
+                            account_id=canonical_account_id,
                             account_label=card.account_label,
                             service_name=card.service_name,
                             used_value=card.used_value,
@@ -235,41 +240,43 @@ class BackgroundPoller:
                         # reads from. Wrap in a savepoint so a single bad
                         # card (e.g. unique-constraint collision) can't
                         # roll back the whole poll cycle.
-                        card_json_str = card.model_dump_json(exclude_none=False)
                         sidecar_id = card.sidecar_id or "local"
                         variant = card.variant or "default"
                         model_id = card.model_id or ""
+                        incoming_partial = card.model_dump(exclude_none=True)
                         try:
                             with session.begin_nested():
                                 existing = session.exec(
                                     select(LatestUsage).where(
                                         LatestUsage.provider_id == card.provider_id,
-                                        LatestUsage.account_id == card.account_id,
-                                        LatestUsage.sidecar_id == sidecar_id,
+                                        LatestUsage.account_id == canonical_account_id,
                                         LatestUsage.window_type == card.window_type,
                                         LatestUsage.variant == variant,
                                         LatestUsage.model_id == model_id,
                                     )
                                 ).first()
                                 if existing:
-                                    existing.card_json = card_json_str
+                                    existing.card_json = merge_card_json(
+                                        existing.card_json, incoming_partial
+                                    )
+                                    existing.sidecar_id = sidecar_id  # update audit field
                                     existing.updated_at = datetime.now(UTC)
                                 else:
                                     session.add(
                                         LatestUsage(
                                             provider_id=card.provider_id,
-                                            account_id=card.account_id,
+                                            account_id=canonical_account_id,
                                             sidecar_id=sidecar_id,
                                             window_type=card.window_type,
                                             variant=variant,
                                             model_id=model_id,
-                                            card_json=card_json_str,
+                                            card_json=merge_card_json(None, incoming_partial),
                                         )
                                     )
                         except Exception as e:
                             logger.warning(
                                 f"LatestUsage upsert failed for "
-                                f"{card.provider_id}/{card.account_id}/{card.window_type}: {e}"
+                                f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
                             )
                     except Exception as e:
                         logger.error(f"Failed to map card to snapshot: {e}")

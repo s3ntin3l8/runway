@@ -155,3 +155,12 @@ class TestResolveAccountId:
             account_label="user@example.photography",
         )
         assert result == "user@example.photography"
+
+    def test_email_at_org_format_extracts_email(self):
+        """Anthropic sets account_label = 'email @ org' — extract the email part."""
+        result = resolve_account_id(
+            provider_id="anthropic",
+            raw_account_id="default",
+            account_label="user@company.com @ MyOrg",
+        )
+        assert result == "user@company.com"

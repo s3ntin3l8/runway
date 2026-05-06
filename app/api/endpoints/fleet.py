@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.models.db import SidecarRegistry
+from app.models.db import ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
 from app.services.external_metrics import external_metric_service
 from app.services.fleet_registry import fleet_registry
@@ -212,16 +212,38 @@ async def ingest_metrics(
                 logger.error(f"Failed to process delta: {e}")
         logger.info(f"Processed {len(request.deltas)} deltas from {request.sidecar_id}")
 
-    # Check if a remote trigger is pending for this sidecar
-    trigger = (
-        fleet_registry.consume_pending_trigger(request.sidecar_id) if request.sidecar_id else False
-    )
+    # Determine which providers this sidecar should poll right now.
+    # Logic: Centralized orchestration based on UI-configured intervals.
+    poll_providers: list[str] = []
+    trigger: bool = False
+    if request.sidecar_id:
+        # Fetch configurations to determine intervals
+        sys_cfg = session.exec(select(SystemConfig)).first()
+        global_interval = (
+            sys_cfg.default_poll_interval_seconds if sys_cfg else None
+        ) or 1800  # Fallback to 30 mins
+
+        enabled_provider_rows = session.exec(
+            select(ProviderConfig).where(ProviderConfig.enabled)
+        ).all()
+
+        provider_intervals = [
+            (row.provider_id, row.poll_interval_seconds or global_interval)
+            for row in enabled_provider_rows
+        ]
+
+        poll_providers, trigger = fleet_registry.get_due_providers(
+            request.sidecar_id, provider_intervals
+        )
+        if poll_providers:
+            logger.info(f"Instructing sidecar '{request.sidecar_id}' to poll: {poll_providers}")
 
     return {
         "status": "ok",
         "provider": request.provider,
         "tokens_received": tokens_received_count,
         "metrics_stored": len(local_cards),
+        "poll_providers": poll_providers,
         "trigger": trigger,
     }
 

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 from app.models.db import CumulativeUsage
+from app.services.account_identity import resolve_account_id
 
 
 def _join_distinct(a: str | None, b: str | None) -> str | None:
@@ -51,6 +52,8 @@ class UsageAccumulator:
         if delta_value <= 0:
             return
 
+        canonical_account_id = resolve_account_id(provider_id, account_id, None)
+
         dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         year_key = dt.strftime("%Y")
         month_key = dt.strftime("%Y-%m")
@@ -60,8 +63,7 @@ class UsageAccumulator:
         for p_type, p_key in periods:
             stmt = select(CumulativeUsage).where(
                 CumulativeUsage.provider_id == provider_id,
-                CumulativeUsage.account_id == account_id,
-                CumulativeUsage.sidecar_id == sidecar_id,
+                CumulativeUsage.account_id == canonical_account_id,
                 CumulativeUsage.period_type == p_type,
                 CumulativeUsage.period_key == p_key,
                 CumulativeUsage.unit_type == unit_type,
@@ -71,7 +73,7 @@ class UsageAccumulator:
             if not record:
                 record = CumulativeUsage(
                     provider_id=provider_id,
-                    account_id=account_id,
+                    account_id=canonical_account_id,
                     sidecar_id=sidecar_id,
                     period_type=p_type,
                     period_key=p_key,
