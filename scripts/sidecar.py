@@ -153,10 +153,7 @@ __REGISTRY__ = {
                         "clientId": "client_id",
                     },
                 },
-                {
-                    "type": "jsonl_log_sum",
-                    "paths": ["~/.gemini/sessions", "{{CONFIG_DIR:gemini}}/sessions"],
-                },
+                {"type": "gemini_jsonl_enrichment"},
             ],
         },
         "chatgpt": {
@@ -175,10 +172,7 @@ __REGISTRY__ = {
                     "format": "json",
                     "mapping": {"tokens.access_token": "oauth_token"},
                 },
-                {
-                    "type": "jsonl_log_sum",
-                    "paths": ["~/.codex/sessions", "{{CONFIG_DIR:codex}}/sessions"],
-                },
+                {"type": "codex_jsonl_enrichment"},
                 {
                     "type": "env",
                     "variable": "CHATGPT_OAUTH_TOKEN",
@@ -1410,6 +1404,300 @@ def _anthropic_short_model(model: str) -> str:
     return base.split("-")[0] if base else m
 
 
+# --- Gemini JSONL Enrichment ---
+
+
+def _gemini_map_model_class(model_name: str) -> str:
+    lower = (model_name or "").lower()
+    if "flash-lite" in lower:
+        return "flash-lite"
+    if "flash" in lower:
+        return "flash"
+    if "pro" in lower:
+        return "pro"
+    if "ultra" in lower:
+        return "ultra"
+    return model_name or "unknown"
+
+
+def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
+    """Scan Gemini session files and append per-model-class token breakdown cards."""
+    candidate_dirs = [
+        os.path.expanduser("~/.gemini/tmp/ai-usage-tracker/chats"),
+        os.path.expanduser("~/.gemini/tmp/gemini/chats"),
+        os.path.expanduser("~/.gemini/tmp/sessions"),
+        os.path.expanduser("~/.gemini/sessions"),
+        os.path.expanduser("~/.config/gemini/sessions"),
+    ]
+
+    session_files: list[Path] = []
+    for d in candidate_dirs:
+        dp = Path(d)
+        if dp.is_dir():
+            session_files.extend(dp.glob("session-*.json"))
+            session_files.extend(dp.glob("session-*.jsonl"))
+            session_files.extend(dp.glob("**/*.jsonl"))
+
+    if not session_files:
+        return
+
+    # model_class → {input, output, cached, thoughts, msgs, by_model}
+    class_totals: dict[str, dict] = {}
+
+    for fpath in session_files:
+        try:
+            msgs: list[dict] = []
+            if fpath.suffix == ".jsonl":
+                with open(fpath, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            m = json.loads(line)
+                            if m.get("type") == "gemini" and m.get("tokens"):
+                                msgs.append(m)
+                        except Exception:
+                            continue
+            else:
+                with open(fpath, encoding="utf-8") as f:
+                    data = json.load(f)
+                msgs = [
+                    m
+                    for m in data.get("messages", [])
+                    if m.get("type") == "gemini" and m.get("tokens")
+                ]
+
+            for msg in msgs:
+                raw_tokens = msg.get("tokens", {})
+                raw_model = msg.get("model") or "unknown"
+                model_class = _gemini_map_model_class(raw_model)
+
+                t_in = int(raw_tokens.get("input", 0))
+                t_out = int(raw_tokens.get("output", 0))
+                t_cached = int(raw_tokens.get("cached", 0))
+                t_thoughts = int(raw_tokens.get("thoughts", 0))
+                t_total = int(raw_tokens.get("total", 0)) or (t_in + t_out + t_cached + t_thoughts)
+
+                ct = class_totals.setdefault(
+                    model_class,
+                    {
+                        "input": 0,
+                        "output": 0,
+                        "cached": 0,
+                        "thoughts": 0,
+                        "total": 0,
+                        "msgs": 0,
+                        "by_model": {},
+                    },
+                )
+                ct["input"] += t_in
+                ct["output"] += t_out
+                ct["cached"] += t_cached
+                ct["thoughts"] += t_thoughts
+                ct["total"] += t_total
+                ct["msgs"] += 1
+
+                bm = ct["by_model"].setdefault(
+                    raw_model,
+                    {
+                        "msgs": 0,
+                        "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                    },
+                )
+                bm["msgs"] += 1
+                bm["tokens"]["input"] += t_in
+                bm["tokens"]["output"] += t_out
+                bm["tokens"]["reasoning"] += t_thoughts
+                bm["tokens"]["cache_read"] += t_cached
+        except Exception:
+            continue
+
+    hostname = get_hostname()
+    for model_class, ct in class_totals.items():
+        if ct["total"] == 0:
+            continue
+        token_total = ct["input"] + ct["output"] + ct["thoughts"] + ct["cached"]
+        by_model_out = {}
+        for raw_model, bm in ct["by_model"].items():
+            t = bm["tokens"]
+            by_model_out[raw_model] = {
+                "cost": 0.0,
+                "msgs": bm["msgs"],
+                "tokens": {
+                    "input": t["input"],
+                    "output": t["output"],
+                    "reasoning": t["reasoning"],
+                    "cache_read": t["cache_read"],
+                    "total": t["input"] + t["output"] + t["reasoning"] + t["cache_read"],
+                },
+            }
+        results.append(
+            {
+                "provider_id": provider_id,
+                "account_id": "default",
+                "service_name": "Gemini",
+                "icon": icon,
+                "used_value": token_total,
+                "limit_value": None,
+                "unit_type": "tokens",
+                "window_type": "session",
+                "variant": model_class,
+                "model_id": model_class,
+                "health": "good",
+                "data_source": "local",
+                "msgs": ct["msgs"],
+                "token_usage": {
+                    "input": ct["input"],
+                    "output": ct["output"],
+                    "reasoning": ct["thoughts"],
+                    "cache_read": ct["cached"],
+                    "total": token_total,
+                },
+                "by_model": by_model_out,
+                "remaining": f"{token_total:,}",
+                "unit": "tokens",
+                "reset": "Rolling",
+                "pace": "Stable",
+                "detail": f"{token_total:,} tokens ({model_class}) · {hostname} [Sidecar]",
+            }
+        )
+
+
+# --- ChatGPT/Codex JSONL Enrichment ---
+
+
+def _codex_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
+    """Scan ~/.codex/sessions/**/*.jsonl and append weekly Codex token breakdown card."""
+    candidate_dirs = [
+        os.path.expanduser("~/.codex/sessions"),
+        os.path.expanduser("~/.config/codex/sessions"),
+    ]
+
+    session_files: list[Path] = []
+    for d in candidate_dirs:
+        dp = Path(d)
+        if dp.is_dir():
+            session_files.extend(dp.glob("**/*.jsonl"))
+
+    if not session_files:
+        return
+
+    now = datetime.datetime.now(datetime.UTC)
+    weekly_cutoff = now - datetime.timedelta(days=7)
+
+    # Per-model aggregation within the weekly window
+    by_model: dict[str, dict] = {}
+    total_in = total_out = total_reason = total_cache_r = total_msgs = 0
+
+    for fpath in session_files:
+        try:
+            current_model = "unknown"
+            with open(fpath, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except Exception:
+                        continue
+
+                    # Track current model from turn_context records
+                    if record.get("type") == "turn_context":
+                        payload = record.get("payload", {})
+                        m = payload.get("model") or payload.get("modelId")
+                        if m:
+                            current_model = m
+
+                    # Token count events
+                    payload = record.get("payload", {})
+                    if not (
+                        record.get("type") == "event_msg" and payload.get("type") == "token_count"
+                    ):
+                        continue
+
+                    # Window filter
+                    ts_raw = record.get("timestamp") or record.get("ts")
+                    if ts_raw:
+                        try:
+                            ts = datetime.datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                            if ts < weekly_cutoff:
+                                continue
+                        except Exception:
+                            pass
+
+                    info = payload.get("info", {})
+                    last_usage = info.get("last_token_usage", {})
+                    inp = int(last_usage.get("input_tokens", 0))
+                    out = int(last_usage.get("output_tokens", 0))
+                    rea = int(last_usage.get("reasoning_output_tokens", 0))
+                    cac = int(last_usage.get("cached_input_tokens", 0))
+
+                    total_in += inp
+                    total_out += out
+                    total_reason += rea
+                    total_cache_r += cac
+                    total_msgs += 1
+
+                    bm = by_model.setdefault(
+                        current_model,
+                        {
+                            "msgs": 0,
+                            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0},
+                        },
+                    )
+                    bm["msgs"] += 1
+                    bm["tokens"]["input"] += inp
+                    bm["tokens"]["output"] += out
+                    bm["tokens"]["reasoning"] += rea
+                    bm["tokens"]["cache_read"] += cac
+        except Exception:
+            continue
+
+    if total_msgs == 0:
+        return
+
+    token_total = total_in + total_out + total_reason
+    for bm in by_model.values():
+        t = bm["tokens"]
+        t["total"] = t["input"] + t["output"] + t["reasoning"]
+
+    by_model_out = {
+        m: {"cost": 0.0, "msgs": bm["msgs"], "tokens": bm["tokens"]} for m, bm in by_model.items()
+    }
+
+    results.append(
+        {
+            "provider_id": provider_id,
+            "account_id": "default",
+            "service_name": "ChatGPT Codex",
+            "icon": icon,
+            "used_value": token_total,
+            "limit_value": None,
+            "unit_type": "tokens",
+            "window_type": "weekly",
+            "variant": "Codex",
+            "health": "good",
+            "data_source": "local",
+            "msgs": total_msgs,
+            "token_usage": {
+                "input": total_in,
+                "output": total_out,
+                "reasoning": total_reason,
+                "cache_read": total_cache_r,
+                "total": token_total,
+            },
+            "by_model": by_model_out,
+            "remaining": f"{token_total:,}",
+            "unit": "tokens",
+            "reset": "Rolling 7d",
+            "pace": "Stable",
+            "detail": f"{token_total:,} tokens (Codex) · {get_hostname()} [Sidecar]",
+        }
+    )
+
+
 # --- Generic Collector Engine ---
 
 
@@ -1938,6 +2226,20 @@ class GenericCollector:
                     _anthropic_jsonl_enrich(provider_id, icon, results)
                 except Exception as e:
                     logging.debug(f"Anthropic JSONL enrichment error: {e}")
+
+            # 8b. Specialized: Gemini session enrichment (per-model token breakdown)
+            elif rule_type == "gemini_jsonl_enrichment":
+                try:
+                    _gemini_jsonl_enrich(provider_id, icon, results)
+                except Exception as e:
+                    logging.debug(f"Gemini JSONL enrichment error: {e}")
+
+            # 8c. Specialized: ChatGPT/Codex session enrichment (weekly token breakdown)
+            elif rule_type == "codex_jsonl_enrichment":
+                try:
+                    _codex_jsonl_enrich(provider_id, icon, results)
+                except Exception as e:
+                    logging.debug(f"Codex JSONL enrichment error: {e}")
 
             elif rule_type == "file_json_data":
                 for path_str in rule.get("paths", []):
