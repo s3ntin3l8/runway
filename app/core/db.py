@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -63,6 +64,11 @@ def _run_migrations():
         "ALTER TABLE provider_configs ADD COLUMN collection_strategies_json TEXT",
         # usage_snapshots: per-card disambiguator under same (provider, account, model_id, window_type)
         "ALTER TABLE usage_snapshots ADD COLUMN variant TEXT",
+        # latest_usage gained model_id in the identity tuple — collectors emit
+        # multiple cards for the same window with different models (Claude
+        # Sonnet vs Claude Design), and the original constraint without
+        # model_id collided.
+        "ALTER TABLE latest_usage ADD COLUMN model_id TEXT NOT NULL DEFAULT ''",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -71,6 +77,60 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass  # Column already exists or table doesn't exist yet — both are fine
+
+        # latest_usage: ensure the unique constraint includes model_id.
+        # SQLite cannot DROP an embedded UNIQUE constraint — only way to change it is
+        # to rename the table, create a replacement, copy data, then drop the old.
+        try:
+            sa = __import__("sqlalchemy").text
+            row = conn.execute(
+                sa("SELECT sql FROM sqlite_master WHERE type='table' AND name='latest_usage'")
+            ).first()
+            if row and row[0]:
+                old_sql: str = row[0]
+                # Recreate if the embedded UNIQUE constraint omits model_id.
+                # model_id may appear as a column definition but not in the constraint tuple.
+                m = re.search(r"CONSTRAINT\s+\S+\s+UNIQUE\s*\(([^)]+)\)", old_sql, re.IGNORECASE)
+                constraint_cols = m.group(1) if m else ""
+                needs_recreate = bool(m) and "model_id" not in constraint_cols
+                if needs_recreate:
+                    logger.info("Recreating latest_usage to add model_id to unique constraint")
+                    conn.execute(sa("ALTER TABLE latest_usage RENAME TO latest_usage_old"))
+                    conn.execute(
+                        sa(
+                            """
+                            CREATE TABLE latest_usage (
+                                id INTEGER PRIMARY KEY,
+                                provider_id TEXT NOT NULL,
+                                account_id TEXT NOT NULL,
+                                sidecar_id TEXT NOT NULL DEFAULT 'local',
+                                window_type TEXT NOT NULL DEFAULT 'unknown',
+                                variant TEXT NOT NULL DEFAULT 'default',
+                                model_id TEXT NOT NULL DEFAULT '',
+                                card_json TEXT NOT NULL,
+                                updated_at TIMESTAMP,
+                                CONSTRAINT uq_latest_usage_identity UNIQUE
+                                    (provider_id, account_id, sidecar_id, window_type, variant, model_id)
+                            )
+                            """
+                        )
+                    )
+                    conn.execute(
+                        sa(
+                            "INSERT OR IGNORE INTO latest_usage "
+                            "  (id, provider_id, account_id, sidecar_id, window_type, "
+                            "   variant, model_id, card_json, updated_at) "
+                            "SELECT id, provider_id, account_id, sidecar_id, window_type, "
+                            "       variant, COALESCE(model_id, '') as model_id, "
+                            "       card_json, updated_at "
+                            "FROM latest_usage_old"
+                        )
+                    )
+                    conn.execute(sa("DROP TABLE latest_usage_old"))
+                    conn.commit()
+                    logger.info("latest_usage recreated with model_id in unique constraint")
+        except Exception as e:
+            logger.error(f"latest_usage constraint migration failed: {e}")
 
         # Pre-release: refuse to boot if the legacy `window_label` column is still present.
         # The schema rework removed it; carrying both columns silently would split aggregation.

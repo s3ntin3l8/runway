@@ -204,12 +204,19 @@ class UsageSnapshotModel(SQLModel, table=True):
 class LatestUsage(SQLModel, table=True):
     __tablename__ = "latest_usage"
     __table_args__ = (
+        # model_id must be in the identity tuple — collectors legitimately
+        # emit multiple cards for the same (provider, account, sidecar,
+        # window, variant) tuple that differ only by model (e.g. Claude
+        # Sonnet weekly vs Claude Design weekly). The original spec's
+        # constraint without model_id caused IntegrityError on commit
+        # and rolled back the whole poll cycle.
         UniqueConstraint(
             "provider_id",
             "account_id",
             "sidecar_id",
             "window_type",
             "variant",
+            "model_id",
             name="uq_latest_usage_identity",
         ),
     )
@@ -220,6 +227,7 @@ class LatestUsage(SQLModel, table=True):
     sidecar_id: str = Field(default="local", index=True)
     window_type: str = Field(default="unknown")
     variant: str = Field(default="default")
+    model_id: str = Field(default="")
     card_json: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
