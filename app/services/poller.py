@@ -232,33 +232,44 @@ class BackgroundPoller:
                         _create_model_records(session, snapshot.id, card)
 
                         # Upsert into LatestUsage — the table the dashboard
-                        # reads from. Without this, snapshots accumulate but
-                        # /api/v1/usage/limits returns nothing.
+                        # reads from. Wrap in a savepoint so a single bad
+                        # card (e.g. unique-constraint collision) can't
+                        # roll back the whole poll cycle.
                         card_json_str = card.model_dump_json(exclude_none=False)
                         sidecar_id = card.sidecar_id or "local"
                         variant = card.variant or "default"
-                        existing = session.exec(
-                            select(LatestUsage).where(
-                                LatestUsage.provider_id == card.provider_id,
-                                LatestUsage.account_id == card.account_id,
-                                LatestUsage.sidecar_id == sidecar_id,
-                                LatestUsage.window_type == card.window_type,
-                                LatestUsage.variant == variant,
-                            )
-                        ).first()
-                        if existing:
-                            existing.card_json = card_json_str
-                            existing.updated_at = datetime.now(UTC)
-                        else:
-                            session.add(
-                                LatestUsage(
-                                    provider_id=card.provider_id,
-                                    account_id=card.account_id,
-                                    sidecar_id=sidecar_id,
-                                    window_type=card.window_type,
-                                    variant=variant,
-                                    card_json=card_json_str,
-                                )
+                        model_id = card.model_id or ""
+                        try:
+                            with session.begin_nested():
+                                existing = session.exec(
+                                    select(LatestUsage).where(
+                                        LatestUsage.provider_id == card.provider_id,
+                                        LatestUsage.account_id == card.account_id,
+                                        LatestUsage.sidecar_id == sidecar_id,
+                                        LatestUsage.window_type == card.window_type,
+                                        LatestUsage.variant == variant,
+                                        LatestUsage.model_id == model_id,
+                                    )
+                                ).first()
+                                if existing:
+                                    existing.card_json = card_json_str
+                                    existing.updated_at = datetime.now(UTC)
+                                else:
+                                    session.add(
+                                        LatestUsage(
+                                            provider_id=card.provider_id,
+                                            account_id=card.account_id,
+                                            sidecar_id=sidecar_id,
+                                            window_type=card.window_type,
+                                            variant=variant,
+                                            model_id=model_id,
+                                            card_json=card_json_str,
+                                        )
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                f"LatestUsage upsert failed for "
+                                f"{card.provider_id}/{card.account_id}/{card.window_type}: {e}"
                             )
                     except Exception as e:
                         logger.error(f"Failed to map card to snapshot: {e}")
