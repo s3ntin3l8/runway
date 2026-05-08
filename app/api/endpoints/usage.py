@@ -85,10 +85,10 @@ async def fetch_fleet_view(
       the spec's "Most Restrictive Wins" gauge.
     - secondary_limits: every other card in the same group, used for the
       LED row.
-    - sidecar_contributions: per-sidecar token totals from CumulativeUsage
-      (current month), used by the Fuel Dump bar.
+    - sidecar_contributions: per-sidecar token totals from usage_period_rollup
+      (current month, all-models grain), used by the Fuel Dump bar.
     """
-    from app.models.db import LatestUsage
+    from app.models.db import LatestUsage, UsagePeriodRollup
 
     records = session.exec(select(LatestUsage)).all()
     cards: list[dict[str, Any]] = []
@@ -108,9 +108,27 @@ async def fetch_fleet_view(
         groups.setdefault((pid, aid), []).append(c)
 
     now = datetime.now(UTC)
-    # Phase 7 will rewire sidecar_contributions from usage_period_rollup table.
-    # CumulativeUsage was removed in the Phase 1 schema reset.
+    # Per-sidecar contribution lookup from usage_period_rollup (current month)
+    month_key = now.strftime("%Y-%m")
+    contrib_rows = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "month",
+            UsagePeriodRollup.period_key == month_key,
+            UsagePeriodRollup.model_id == "",  # all-models grain
+            UsagePeriodRollup.sidecar_id != "",  # only per-sidecar rows
+        )
+    ).all()
     contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
+    for cr in contrib_rows:
+        ident = (cr.provider_id, cr.account_id)
+        sb = contrib.setdefault(ident, {}).setdefault(cr.sidecar_id, {})
+        sb["tokens_input"] = cr.tokens_input
+        sb["tokens_output"] = cr.tokens_output
+        sb["tokens_cache_read"] = cr.tokens_cache_read
+        sb["tokens_cache_create"] = cr.tokens_cache_create
+        sb["tokens_reasoning"] = cr.tokens_reasoning
+        sb["cost_usd"] = cr.cost_usd
+        sb["msgs"] = cr.msgs
 
     fleet = []
     for (pid, aid), gcards in sorted(groups.items()):
