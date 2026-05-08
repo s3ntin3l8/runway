@@ -16,6 +16,12 @@ from app.core.rate_limit import limiter
 from app.models.db import ProviderConfig
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
+from app.services.event_query import (
+    query_events,
+    query_heatmap,
+    query_sessions,
+    query_window_history,
+)
 from app.services.forecast import compute_all_forecasts
 
 router = APIRouter()
@@ -592,6 +598,132 @@ def _history_as_csv(results: Sequence[Any]) -> StreamingResponse:  # UsageSnapsh
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/events")
+@limiter.limit("30/minute")
+async def get_usage_events(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    model_id: str | None = Query(default=None),
+    sidecar_id: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    order: str = Query(default="desc"),
+    include_raw: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Recent event tail for a (provider_id, account_id) pair.
+
+    Supports filtering by time range, model, and sidecar. Returns events
+    newest-first by default. raw_json is excluded unless include_raw=true.
+    """
+    since_dt: datetime | None = None
+    until_dt: datetime | None = None
+    if since:
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    if until:
+        until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+
+    events = query_events(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since_dt,
+        until=until_dt,
+        model_id=model_id,
+        sidecar_id=sidecar_id,
+        limit=limit,
+        order=order,
+    )
+
+    rows = []
+    for ev in events:
+        d = ev.model_dump()
+        if not include_raw:
+            d.pop("raw_json", None)
+        rows.append(d)
+
+    return {"events": rows, "total": len(rows), "limit": limit}
+
+
+@router.get("/window-history")
+@limiter.limit("30/minute")
+async def get_window_history(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    window_type: str = Query(...),
+    limit: int = Query(default=12, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Closed-window history with per-model and per-sidecar splits.
+
+    Returns up to N most recent closed windows for the given
+    (provider_id, account_id, window_type) triple, ordered newest-first.
+    """
+    windows = query_window_history(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        window_type=window_type,
+        limit=limit,
+    )
+    return {"windows": windows}
+
+
+@router.get("/heatmap")
+@limiter.limit("30/minute")
+async def get_usage_heatmap(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    days: int = Query(default=14, ge=1, le=90),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """7×24 hour-of-day token activity grid over the last N days.
+
+    Always returns all 168 cells (7 days × 24 hours). Cells with no events
+    have tokens=0. dow follows SQLite convention: 0=Sunday … 6=Saturday.
+    """
+    cells = query_heatmap(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+    )
+    return {"cells": cells}
+
+
+@router.get("/sessions")
+@limiter.limit("30/minute")
+async def get_usage_sessions(
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    since: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Top-N sessions by token total within the requested time window.
+
+    Defaults to the last 7 days when 'since' is not provided. Events
+    without a session_id are excluded. Returned in descending token order.
+    """
+    since_dt: datetime | None = None
+    if since:
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+
+    sessions = query_sessions(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since_dt,
+        limit=limit,
+    )
+    return {"sessions": sessions}
 
 
 @router.post("/reset/{provider}")
