@@ -45,6 +45,7 @@ node_modules/
 *.db
 *.sqlite
 *.jsonl
+!tests/fixtures/*.jsonl
 data/
 sessions/
 metrics/
