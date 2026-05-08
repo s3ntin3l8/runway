@@ -14,7 +14,7 @@ from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.models.db import ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
-from app.services.external_metrics import external_metric_service
+from app.services.accumulator import upsert_latest_usage
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -174,10 +174,19 @@ async def ingest_metrics(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {request.provider}"
         )
 
-    # Store local data metrics
+    # Store local data cards directly into LatestUsage (unified with server-scraped cards)
     if local_cards:
-        await external_metric_service.metrics_update_from_ingest(request.provider, local_cards)
-        logger.info(f"Stored {len(local_cards)} metrics from {request.provider}")
+        for card in local_cards:
+            card_dict = card.model_dump(exclude_none=True)
+            upsert_latest_usage(
+                session,
+                card_dict,
+                sidecar_id_override=card.sidecar_id or request.sidecar_id or "local",
+            )
+        session.commit()
+        logger.info(
+            f"Stored {len(local_cards)} local cards into LatestUsage from {request.provider}"
+        )
 
     # Wake the poller whenever the sidecar pushes anything actionable —
     # tokens or local cards. Without this, token-only payloads (the common

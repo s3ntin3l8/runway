@@ -4,15 +4,14 @@ import hashlib
 import json
 import logging
 from collections import deque
-from datetime import UTC, datetime
+from datetime import datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.core.db import engine
 from app.models.db import LatestUsage
 from app.models.schemas import LimitCard
-from app.services.account_identity import resolve_account_id
-from app.services.accumulator import merge_card_json
+from app.services.accumulator import upsert_latest_usage
 from app.services.collector_manager import manager
 from app.services.window_closer import WINDOW_DURATION, close_window
 
@@ -207,110 +206,9 @@ class BackgroundPoller:
             with Session(engine) as session:
                 for card_dict in cards:
                     try:
-                        card = LimitCard(**card_dict)
-                        if not card.provider_id or not card.account_id:
-                            continue
-                        if card.data_source == "cache":
-                            continue
-                        canonical_account_id = resolve_account_id(
-                            card.provider_id, card.account_id, card.account_label
-                        )
-
-                        # Upsert into LatestUsage — the table the dashboard
-                        # reads from. Wrap in a savepoint so a single bad
-                        # card (e.g. unique-constraint collision) can't
-                        # roll back the whole poll cycle.
-                        sidecar_id = card.sidecar_id or "local"
-                        variant = card.variant or "default"
-                        model_id = card.model_id or ""
-                        incoming_partial = card.model_dump(exclude_none=True)
-                        # Always embed the canonical account_id so the card_json
-                        # grouping key matches the column (fleet API groups by
-                        # card_json, not by the column).
-                        incoming_partial["account_id"] = canonical_account_id
-                        try:
-                            with session.begin_nested():
-                                existing = session.exec(
-                                    select(LatestUsage).where(
-                                        LatestUsage.provider_id == card.provider_id,
-                                        LatestUsage.account_id == canonical_account_id,
-                                        LatestUsage.window_type == card.window_type,
-                                        LatestUsage.variant == variant,
-                                        LatestUsage.model_id == model_id,
-                                    )
-                                ).first()
-                                # Window-close detection: if reset_at has advanced,
-                                # archive the just-closed window before overwriting.
-                                if existing and card.reset_at:
-                                    try:
-                                        new_reset_dt = datetime.fromisoformat(
-                                            card.reset_at.replace("Z", "+00:00")
-                                            if isinstance(card.reset_at, str)
-                                            else card.reset_at.isoformat()
-                                        )
-                                        _maybe_close_previous_window(
-                                            session,
-                                            existing=existing,
-                                            provider_id=card.provider_id,
-                                            account_id=canonical_account_id,
-                                            window_type=card.window_type,
-                                            new_reset_at=new_reset_dt,
-                                        )
-                                    except Exception as exc:
-                                        logger.debug(
-                                            f"Window-close detection skipped for "
-                                            f"{card.provider_id}/{canonical_account_id}: {exc}"
-                                        )
-                                if existing:
-                                    existing.card_json = merge_card_json(
-                                        existing.card_json, incoming_partial
-                                    )
-                                    existing.sidecar_id = sidecar_id  # update audit field
-                                    existing.updated_at = datetime.now(UTC)
-                                else:
-                                    session.add(
-                                        LatestUsage(
-                                            provider_id=card.provider_id,
-                                            account_id=canonical_account_id,
-                                            sidecar_id=sidecar_id,
-                                            window_type=card.window_type,
-                                            variant=variant,
-                                            model_id=model_id,
-                                            card_json=merge_card_json(None, incoming_partial),
-                                        )
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                f"LatestUsage upsert failed for "
-                                f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
-                            )
-
-                        # Evict any pre-canonicalization row stored under the raw
-                        # account_id (typically "default") when resolve_account_id
-                        # mapped it to a different canonical identity (e.g. an email).
-                        # Avoids duplicate fleet entries for the same user.
-                        raw_account_id = card.account_id or "default"
-                        if raw_account_id != canonical_account_id:
-                            try:
-                                with session.begin_nested():
-                                    stale = session.exec(
-                                        select(LatestUsage).where(
-                                            LatestUsage.provider_id == card.provider_id,
-                                            LatestUsage.account_id == raw_account_id,
-                                            LatestUsage.window_type == card.window_type,
-                                            LatestUsage.variant == variant,
-                                            LatestUsage.model_id == model_id,
-                                        )
-                                    ).first()
-                                    if stale:
-                                        session.delete(stale)
-                            except Exception as e:
-                                logger.warning(
-                                    f"Stale row eviction failed for "
-                                    f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
-                                )
+                        upsert_latest_usage(session, card_dict)
                     except Exception as e:
-                        logger.error(f"Failed to map card to snapshot: {e}")
+                        logger.error(f"Failed to upsert card to LatestUsage: {e}")
 
                 session.commit()
                 logger.info(f"Background poll complete. Snapshotted {len(cards)} metrics.")
