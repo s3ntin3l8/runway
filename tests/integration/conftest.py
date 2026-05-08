@@ -8,7 +8,6 @@ from app.core.rate_limit import limiter
 # Excluded from collection until then.
 collect_ignore = [
     "test_csv_export.py",
-    "test_fleet_endpoint.py",
     "test_history.py",
     "test_fleet_hud_browser.py",
     "test_forecast_endpoint.py",
