@@ -160,21 +160,116 @@ async def get_cumulative_usage(
     period_key: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Authoritative cumulative usage rolled up across sidecars.
+    """Authoritative cumulative usage rolled up across sidecars from usage_period_rollup.
 
     Default: returns one entry per (provider_id, account_id) with
-    `lifetime`, current-year, and current-month totals summed across all
-    contributing sidecars (matches spec §4 GROUP BY rollup).
+    `lifetime`, current-year, and current-month totals, plus per-model and
+    per-sidecar breakdowns (matches spec §8.6).
 
     Query params narrow the scope:
     - provider_id / account_id: identity filter
     - period_type: one of 'lifetime' | 'year' | 'month'
     - period_key: a specific bucket (e.g. '2026', '2026-05', 'all')
     """
-    # Phase 8 will rewire from usage_period_rollup table.
-    # CumulativeUsage was removed in the Phase 1 schema reset.
+    from app.models.db import UsagePeriodRollup
+
+    stmt = select(UsagePeriodRollup)
+    if provider_id:
+        stmt = stmt.where(UsagePeriodRollup.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
+    if period_type:
+        stmt = stmt.where(UsagePeriodRollup.period_type == period_type)
+    if period_key:
+        stmt = stmt.where(UsagePeriodRollup.period_key == period_key)
+    rows = session.exec(stmt).all()
+
     now = datetime.now(UTC)
-    return {"cumulative": [], "generated_at": now.isoformat()}
+    current_year = now.strftime("%Y")
+    current_month = now.strftime("%Y-%m")
+
+    # Group by (provider_id, account_id) → bucket label → totals + by_model + by_sidecar
+    grouped: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for r in rows:
+        ident = (r.provider_id, r.account_id)
+        bucket_key = _cumulative_bucket_label(r.period_type, r.period_key)
+        bucket = grouped.setdefault(ident, {}).setdefault(
+            bucket_key,
+            {
+                "tokens_input": 0,
+                "tokens_output": 0,
+                "tokens_cache_read": 0,
+                "tokens_cache_create": 0,
+                "tokens_reasoning": 0,
+                "cost_usd": 0.0,
+                "msgs": 0,
+                "by_model": {},
+                "by_sidecar": {},
+            },
+        )
+        if r.model_id == "" and r.sidecar_id == "":
+            # Top-level totals row
+            bucket["tokens_input"] = r.tokens_input
+            bucket["tokens_output"] = r.tokens_output
+            bucket["tokens_cache_read"] = r.tokens_cache_read
+            bucket["tokens_cache_create"] = r.tokens_cache_create
+            bucket["tokens_reasoning"] = r.tokens_reasoning
+            bucket["cost_usd"] = r.cost_usd
+            bucket["msgs"] = r.msgs
+        elif r.model_id != "" and r.sidecar_id == "":
+            # Per-model grain (all sidecars combined)
+            bucket["by_model"][r.model_id] = {
+                "tokens_input": r.tokens_input,
+                "tokens_output": r.tokens_output,
+                "tokens_cache_read": r.tokens_cache_read,
+                "tokens_cache_create": r.tokens_cache_create,
+                "tokens_reasoning": r.tokens_reasoning,
+                "cost_usd": r.cost_usd,
+                "msgs": r.msgs,
+            }
+        elif r.model_id == "" and r.sidecar_id != "":
+            # Per-sidecar grain (all models combined)
+            bucket["by_sidecar"][r.sidecar_id] = {
+                "tokens_input": r.tokens_input,
+                "tokens_output": r.tokens_output,
+                "tokens_cache_read": r.tokens_cache_read,
+                "tokens_cache_create": r.tokens_cache_create,
+                "tokens_reasoning": r.tokens_reasoning,
+                "cost_usd": r.cost_usd,
+                "msgs": r.msgs,
+            }
+        # Cross-product rows (model_id != '' AND sidecar_id != '') are skipped —
+        # those are for detailed analytics, not needed at this endpoint.
+
+    # Stable shape: every entry always exposes lifetime + current year + current month
+    # (filled with zero-value buckets when absent from the rollup table).
+    expected_keys = ["lifetime", f"year_{current_year}", f"month_{current_month}"]
+
+    def _empty_bucket() -> dict[str, Any]:
+        return {
+            "tokens_input": 0,
+            "tokens_output": 0,
+            "tokens_cache_read": 0,
+            "tokens_cache_create": 0,
+            "tokens_reasoning": 0,
+            "cost_usd": 0.0,
+            "msgs": 0,
+            "by_model": {},
+            "by_sidecar": {},
+        }
+
+    cumulative = []
+    for (pid, aid), buckets in sorted(grouped.items()):
+        entry: dict[str, Any] = {"provider_id": pid, "account_id": aid}
+        for k in expected_keys:
+            entry[k] = buckets.get(k, _empty_bucket())
+        # Surface any additional historical buckets the caller didn't filter out
+        for k, v in buckets.items():
+            if k not in entry:
+                entry[k] = v
+        cumulative.append(entry)
+
+    return {"cumulative": cumulative, "generated_at": now.isoformat()}
 
 
 def _cumulative_bucket_label(period_type: str, period_key: str) -> str:
