@@ -761,6 +761,8 @@ def human_delta(target_dt):
     if not target_dt:
         return "—"
     now = datetime.datetime.now(datetime.UTC)
+    if isinstance(target_dt, (int, float)):
+        target_dt = datetime.datetime.fromtimestamp(target_dt, tz=datetime.UTC)
     if target_dt.tzinfo is None:
         target_dt = target_dt.replace(tzinfo=datetime.UTC)
     diff = target_dt - now
@@ -772,6 +774,35 @@ def human_delta(target_dt):
     if seconds < 3600:
         return f"{seconds // 60}m"
     return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+
+
+def _fmt_tokens(tokens: dict) -> str:
+    """Format token counts compactly (matches server-side format_token_details)."""
+
+    def _f(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1000:
+            return f"{n / 1000:.1f}k"
+        return str(n)
+
+    parts = []
+    if tokens.get("input"):
+        parts.append(f"in:{_f(tokens['input'])}")
+    if tokens.get("output"):
+        parts.append(f"out:{_f(tokens['output'])}")
+    if tokens.get("cache_read"):
+        parts.append(f"cached:{_f(tokens['cache_read'])}")
+    if tokens.get("reasoning"):
+        parts.append(f"reasoning:{_f(tokens['reasoning'])}")
+
+    total = tokens.get("total", 0)
+    if not total:
+        total = tokens.get("input", 0) + tokens.get("output", 0)
+
+    if parts:
+        return ", ".join(parts)
+    return f"{_f(total)} tokens"
 
 
 # --- Platform Utilities ---
@@ -1214,201 +1245,6 @@ def discover_anthropic_email() -> str:
     return ""
 
 
-def _anthropic_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
-    """Scan ~/.claude/projects/**/*.jsonl and append token-breakdown cards to results."""
-    dirs: list[str] = []
-    config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
-    if config_env:
-        for p in config_env.split(","):
-            p = p.strip()
-            if not p:
-                continue
-            proj = os.path.join(p, "projects") if not p.endswith("/projects") else p
-            if os.path.isdir(proj) and proj not in dirs:
-                dirs.append(proj)
-
-    default_candidates = [
-        os.path.expanduser("~/.claude/projects"),
-        os.path.expanduser("~/.config/claude/projects"),
-    ]
-    for p in default_candidates:
-        if os.path.isdir(p) and p not in dirs:
-            dirs.append(p)
-
-    if not dirs:
-        return
-
-    # Discover account email from credentials file
-    email = discover_anthropic_email()
-
-    # Collect all .jsonl files
-    all_files: list[Path] = []
-    for d in dirs:
-        all_files.extend(Path(d).glob("**/*.jsonl"))
-
-    if not all_files:
-        return
-
-    # Parse assistant messages, deduplicate by (msg_id, request_id)
-    now = datetime.datetime.now(datetime.UTC)
-    seen: set = set()
-    messages: list[dict] = []
-
-    for fpath in all_files:
-        try:
-            with open(fpath, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                    except Exception:
-                        continue
-                    if entry.get("type") != "assistant":
-                        continue
-                    ts_raw = entry.get("timestamp")
-                    if not ts_raw:
-                        continue
-                    try:
-                        ts = datetime.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                    except ValueError:
-                        continue
-                    msg_data = entry.get("message", {})
-                    dedup_key = (msg_data.get("id", ""), msg_data.get("requestId", ""))
-                    if dedup_key in seen:
-                        continue
-                    seen.add(dedup_key)
-                    usage = msg_data.get("usage", {})
-                    model = msg_data.get("model", "")
-                    short_model = _anthropic_short_model(model) if model else ""
-                    messages.append(
-                        {
-                            "ts": ts,
-                            "model_id": short_model,
-                            "tokens": {
-                                "input": int(usage.get("input_tokens", 0)),
-                                "output": int(usage.get("output_tokens", 0)),
-                                "cache_read": int(usage.get("cache_read_input_tokens", 0)),
-                                "cache_creation": int(usage.get("cache_creation_input_tokens", 0)),
-                            },
-                        }
-                    )
-        except Exception:
-            continue
-
-    if not messages:
-        return
-
-    def _aggregate(msgs: list[dict], model_filter: str | None = None) -> dict:
-        b = {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0,
-            "cache_creation": 0,
-            "models": {},
-            "model_msgs": {},
-            "msg_count": 0,
-        }
-        for m in msgs:
-            if model_filter and m["model_id"] != model_filter:
-                continue
-            t = m["tokens"]
-            b["input"] += t["input"]
-            b["output"] += t["output"]
-            b["cache_read"] += t["cache_read"]
-            b["cache_creation"] += t["cache_creation"]
-            mid = m["model_id"]
-            if mid:
-                tok_sum = t["input"] + t["output"] + t["cache_read"] + t["cache_creation"]
-                b["models"][mid] = b["models"].get(mid, 0) + tok_sum
-                b["model_msgs"][mid] = b["model_msgs"].get(mid, 0) + 1
-            b["msg_count"] += 1
-        return b
-
-    def _make_card(bucket: dict, window_type: str, model_id: str | None) -> dict | None:
-        if bucket["msg_count"] == 0:
-            return None
-        # input_tokens in Anthropic logs EXCLUDES cached tokens — add them back
-        total_input = bucket["input"] + bucket["cache_read"] + bucket["cache_creation"]
-        total_tokens = total_input + bucket["output"]
-        by_model = {
-            m: {
-                "cost": 0.0,
-                "msgs": c,
-                "tokens": {
-                    "input": 0,
-                    "output": 0,
-                    "reasoning": 0,
-                    "cache_read": 0,
-                    "total": bucket["models"].get(m, 0),
-                },
-            }
-            for m, c in bucket["model_msgs"].items()
-        }
-        svc = "Claude Design" if model_id == "design" else "Claude"
-        return {
-            "provider_id": provider_id,
-            "account_id": email or "default",
-            "account_label": email or None,
-            "service_name": svc,
-            "icon": icon,
-            "used_value": total_tokens,
-            "limit_value": None,
-            "unit_type": "tokens",
-            "window_type": window_type,
-            "variant": model_id,
-            "model_id": model_id,
-            "health": "good",
-            "data_source": "local",
-            "msgs": bucket["msg_count"],
-            "token_usage": {
-                "input": total_input,
-                "output": bucket["output"],
-                "reasoning": 0,
-                "cache_read": bucket["cache_read"],
-                "total": total_tokens,
-            },
-            "by_model": by_model,
-            "remaining": f"{total_tokens:,}",
-            "unit": "tokens",
-            "reset": "Rolling window",
-            "pace": "Stable",
-            "detail": f"{total_tokens:,} tokens · {get_hostname()} [Sidecar]",
-        }
-
-    session_cutoff = now - datetime.timedelta(hours=5)
-    weekly_cutoff = now - datetime.timedelta(days=7)
-
-    session_msgs = [m for m in messages if m["ts"] >= session_cutoff]
-    weekly_msgs = [m for m in messages if m["ts"] >= weekly_cutoff]
-
-    card = _make_card(_aggregate(session_msgs), "session", None)
-    if card:
-        results.append(card)
-
-    card = _make_card(_aggregate(weekly_msgs), "weekly", None)
-    if card:
-        results.append(card)
-
-    # Per-model weekly cards
-    for mid in sorted({m["model_id"] for m in weekly_msgs if m["model_id"]}):
-        card = _make_card(_aggregate(weekly_msgs, mid), "weekly", mid)
-        if card:
-            results.append(card)
-
-
-def _anthropic_short_model(model: str) -> str:
-    m = model.lower()
-    if "opus" in m:
-        return "opus"
-    if "sonnet" in m:
-        return "sonnet"
-    if "haiku" in m:
-        return "haiku"
-    if "omelette" in m or "design" in m:
-        return "design"
-    base = m.replace("claude-", "")
-    return base.split("-")[0] if base else m
-
-
 # --- Account Email Helpers (JWT id_token extraction) ---
 
 
@@ -1483,13 +1319,21 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
         os.path.expanduser("~/.config/gemini/sessions"),
     ]
 
+    # Support worktree-specific tmp dirs surgically to avoid node_modules
+    tmp_base = os.path.expanduser("~/.gemini/tmp")
+    if os.path.isdir(tmp_base):
+        for item in os.listdir(tmp_base):
+            item_path = os.path.join(tmp_base, item)
+            chats_dir = os.path.join(item_path, "chats")
+            if os.path.isdir(chats_dir):
+                candidate_dirs.append(chats_dir)
+
     session_files: list[Path] = []
     for d in candidate_dirs:
         dp = Path(d)
         if dp.is_dir():
             session_files.extend(dp.glob("session-*.json"))
             session_files.extend(dp.glob("session-*.jsonl"))
-            session_files.extend(dp.glob("**/*.jsonl"))
 
     if not session_files:
         return
@@ -1600,6 +1444,13 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
                     "total": t["input"] + t["output"] + t["reasoning"] + t["cache_read"],
                 },
             }
+        token_usage = {
+            "input": ct["input"],
+            "output": ct["output"],
+            "reasoning": ct["thoughts"],
+            "cache_read": ct["cached"],
+            "total": token_total,
+        }
         results.append(
             {
                 "provider_id": provider_id,
@@ -1614,13 +1465,8 @@ def _gemini_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
                 "health": "good",
                 "data_source": "local",
                 "msgs": ct["msgs"],
-                "token_usage": {
-                    "input": ct["input"],
-                    "output": ct["output"],
-                    "reasoning": ct["thoughts"],
-                    "cache_read": ct["cached"],
-                    "total": token_total,
-                },
+                "token_usage": token_usage,
+                "_enrichment_detail": _fmt_tokens(token_usage),
                 "by_model": by_model_out,
                 "remaining": f"{token_total:,}",
                 "unit": "tokens",
@@ -1735,6 +1581,13 @@ def _codex_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
     }
 
     codex_account_id = _codex_account_email()
+    token_usage = {
+        "input": total_in,
+        "output": total_out,
+        "reasoning": total_reason,
+        "cache_read": total_cache_r,
+        "total": token_total,
+    }
     results.append(
         {
             "provider_id": provider_id,
@@ -1749,13 +1602,8 @@ def _codex_jsonl_enrich(provider_id: str, icon: str, results: list) -> None:
             "health": "good",
             "data_source": "local",
             "msgs": total_msgs,
-            "token_usage": {
-                "input": total_in,
-                "output": total_out,
-                "reasoning": total_reason,
-                "cache_read": total_cache_r,
-                "total": token_total,
-            },
+            "token_usage": token_usage,
+            "_enrichment_detail": _fmt_tokens(token_usage),
             "by_model": by_model_out,
             "remaining": f"{token_total:,}",
             "unit": "tokens",
@@ -2299,10 +2147,8 @@ class GenericCollector:
                     )
             # 8a. Specialized: Anthropic JSONL enrichment (token breakdown from ~/.claude logs)
             elif rule_type == "anthropic_jsonl_enrichment":
-                try:
-                    _anthropic_jsonl_enrich(provider_id, icon, results)
-                except Exception as e:
-                    logging.debug(f"Anthropic JSONL enrichment error: {e}")
+                # Replaced by event extraction in run_collection; no-op here.
+                pass
 
             # 8b. Specialized: Gemini session enrichment (per-model token breakdown)
             elif rule_type == "gemini_jsonl_enrichment":
@@ -2736,97 +2582,28 @@ def collect_antigravity_lsp(icon: str) -> list[dict[str, Any]]:
 # --- Main Loop ---
 
 
-_WINDOW_RANK: dict[str, int] = {
-    "monthly": 5,
-    "weekly": 4,
-    "daily": 3,
-    "rolling": 2,
-    "session": 1,
-    "unknown": 0,
-}
-
-# Source token field → wire unit_type. "total" is omitted: it equals
-# input+output+reasoning+cache_read, so emitting it would double-count.
-_TOKEN_KEY_MAP: dict[str, str] = {
-    "input": "tokens_input",
-    "output": "tokens_output",
-    "reasoning": "tokens_reasoning",
-    "cache_read": "tokens_cache_read",
-}
-
-
-def _card_rank(card: dict) -> tuple[int, int]:
-    wt = (card.get("window_type") or "unknown").lower()
-    return (_WINDOW_RANK.get(wt, 0), 1 if card.get("token_usage") else 0)
-
-
-def _pick_primary_cards(cards: list[dict]) -> list[dict]:
-    """One card per model_id (None is its own bucket); highest window rank wins."""
-    buckets: dict = {}
-    for c in cards:
-        mid = c.get("model_id")
-        cur = buckets.get(mid)
-        if cur is None or _card_rank(c) > _card_rank(cur):
-            buckets[mid] = c
-    return list(buckets.values())
-
-
-def _extract_card_metrics(card: dict) -> dict[str, float]:
-    """Return {wire_unit_type: cumulative_value} from a card's token_usage / by_model."""
-    out: dict[str, float] = {}
-    tu = card.get("token_usage") or {}
-    for src, wire in _TOKEN_KEY_MAP.items():
-        v = tu.get(src)
-        if v is not None:
-            try:
-                out[wire] = float(v)
-            except (TypeError, ValueError):
-                pass
-
-    # cost_usd: prefer used_value when unit is "currency", else sum by_model[*].cost
-    if card.get("unit_type") == "currency" and card.get("used_value") is not None:
-        try:
-            out["cost_usd"] = float(card["used_value"])
-        except (TypeError, ValueError):
-            pass
-    elif card.get("by_model"):
-        total_cost, had_any = 0.0, False
-        for mdata in (card["by_model"] or {}).values():
-            c = (mdata or {}).get("cost")
-            if c is not None:
-                try:
-                    total_cost += float(c)
-                    had_any = True
-                except (TypeError, ValueError):
-                    pass
-        if had_any:
-            out["cost_usd"] = total_cost
-    return out
-
-
-class DeltaTracker:
-    """Track usage deltas between cycles.
-
-    Key: (provider_id, account_id, model_id, window_type, variant, unit_type)
-    — richer than the old 3-tuple so overlapping windows on the same account
-    each have their own baseline and don't corrupt each other.
-    """
-
-    def __init__(self):
-        self._last: dict[tuple, float] = {}
-
-    def get_delta(self, key: tuple, current: float) -> float:
-        prev = self._last.get(key)
-        self._last[key] = current
-        if prev is None:
-            return 0.0  # first observation — establish baseline only
-        if current < prev:
-            return current  # window reset — credit from zero
-        return current - prev
-
-
-# Global delta tracker
-delta_tracker = DeltaTracker()
+def _discover_anthropic_log_paths() -> list[Path]:
+    """Return all .jsonl files under ~/.claude/projects (and CLAUDE_CONFIG_DIR)."""
+    dirs: list[str] = []
+    config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
+    if config_env:
+        for p in config_env.split(","):
+            p = p.strip()
+            if not p:
+                continue
+            proj = os.path.join(p, "projects") if not p.endswith("/projects") else p
+            if os.path.isdir(proj) and proj not in dirs:
+                dirs.append(proj)
+    for candidate in [
+        os.path.expanduser("~/.claude/projects"),
+        os.path.expanduser("~/.config/claude/projects"),
+    ]:
+        if os.path.isdir(candidate) and candidate not in dirs:
+            dirs.append(candidate)
+    paths: list[Path] = []
+    for d in dirs:
+        paths.extend(Path(d).glob("**/*.jsonl"))
+    return paths
 
 
 def run_collection(
@@ -2835,10 +2612,25 @@ def run_collection(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Run collection for specified or enabled providers.
 
-    Returns (metrics, deltas, error_count).
+    Returns (metrics, events, error_count) where events is a list of
+    serialised UsageEventPush dicts ready for the wire payload.
     """
+    # Lazy import — avoids requiring app/ in environments that only use metrics path.
+    try:
+        from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+        from scripts.sidecar_pkg.event_watermark import EventWatermark
+
+        _watermark = EventWatermark(
+            Path(os.path.expanduser("~/.config/runway-sidecar/event-watermark.json"))
+        )
+        _events_enabled = True
+    except Exception as _e:
+        logging.warning(f"Event extraction unavailable: {_e}")
+        _watermark = None
+        _events_enabled = False
+
     all_metrics: list[dict[str, Any]] = []
-    all_deltas: list[dict[str, Any]] = []
+    all_events: list[dict[str, Any]] = []
     error_count = 0
 
     if providers:
@@ -2847,58 +2639,44 @@ def run_collection(
         enabled_providers = config.get("providers", ["all"])
 
     registry_providers = __REGISTRY__.get("providers", {})
-    now_iso = datetime.datetime.now(datetime.UTC).isoformat()
+    bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
 
     for provider_id, provider_config in registry_providers.items():
-        if "all" in enabled_providers or provider_id in enabled_providers:
-            try:
-                logging.info(f"  [{provider_id}] collecting...")
-                metrics = GenericCollector.collect_provider(provider_id, provider_config)
-                if not metrics:
-                    logging.info(f"  [{provider_id}] no data")
-                    all_metrics.extend(metrics)
-                    continue
-
+        if "all" not in enabled_providers and provider_id not in enabled_providers:
+            continue
+        try:
+            logging.info(f"  [{provider_id}] collecting...")
+            metrics = GenericCollector.collect_provider(provider_id, provider_config)
+            if metrics:
                 logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
+            else:
+                logging.info(f"  [{provider_id}] no data")
+            all_metrics.extend(metrics)
 
-                # Group cards by account, pick primary per model_id, emit
-                # token/cost deltas. One wire delta per (provider, account, unit_type)
-                # to prevent double-counting across overlapping windows.
-                by_account: dict[str, list[dict]] = {}
-                for card in metrics:
-                    acc = card.get("account_id") or "default"
-                    by_account.setdefault(acc, []).append(card)
-
-                for acc_id, acards in by_account.items():
-                    primaries = _pick_primary_cards(acards)
-                    wire_sums: dict[str, float] = {}
-                    for card in primaries:
-                        mid = card.get("model_id")
-                        wt = (card.get("window_type") or "unknown").lower()
-                        var = card.get("variant")
-                        for ut, cumulative in _extract_card_metrics(card).items():
-                            key = (provider_id, acc_id, mid, wt, var, ut)
-                            d = delta_tracker.get_delta(key, cumulative)
-                            if d > 0:
-                                wire_sums[ut] = wire_sums.get(ut, 0.0) + d
-                    for ut, total_d in wire_sums.items():
-                        if total_d > 0:
-                            all_deltas.append(
-                                {
-                                    "provider_id": provider_id,
-                                    "account_id": acc_id,
-                                    "unit_type": ut,
-                                    "value": total_d,
-                                    "timestamp": now_iso,
-                                }
+            # --- Anthropic event extraction ---
+            if provider_id == "anthropic" and _events_enabled and _watermark is not None:
+                try:
+                    account_id = discover_anthropic_email() or "default"
+                    since = _watermark.last_pushed("anthropic", account_id) or (
+                        datetime.datetime.now(datetime.UTC)
+                        - datetime.timedelta(days=bootstrap_days)
+                    )
+                    log_paths = _discover_anthropic_log_paths()
+                    if log_paths:
+                        evts = parse_anthropic_events(log_paths, account_id=account_id, since=since)
+                        if evts:
+                            logging.info(
+                                f"  [anthropic] {len(evts)} new event(s) since {since.isoformat()}"
                             )
+                            all_events.extend(e.model_dump(mode="json") for e in evts)
+                except Exception as e:
+                    logging.warning(f"  [anthropic] event extraction error: {e}")
 
-                all_metrics.extend(metrics)
-            except Exception as e:
-                logging.error(f"  [{provider_id}] error: {e}")
-                error_count += 1
+        except Exception as e:
+            logging.error(f"  [{provider_id}] error: {e}")
+            error_count += 1
 
-    return all_metrics, all_deltas, error_count
+    return all_metrics, all_events, error_count
 
 
 class DaemonRunner:
@@ -2984,16 +2762,16 @@ class DaemonRunner:
             else:
                 logging.info("Starting heartbeat/collection cycle...")
 
-            metrics, deltas, collection_errors = run_collection(self._config, providers=providers)
+            metrics, events, collection_errors = run_collection(self._config, providers=providers)
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version", "unknown")
 
-            # Prepare payload (might be empty heartbeat if no metrics/deltas and no providers requested)
+            # Prepare payload (might be empty heartbeat if no metrics/events and no providers requested)
             payload = {
                 "provider": f"sidecar-{get_hostname()}",
                 "metrics": metrics,
-                "deltas": deltas,
+                "events": events,
                 "sidecar_id": get_hostname(),
                 "sidecar_version": sidecar_version,
                 "os_platform": os_platform,
@@ -3020,10 +2798,33 @@ class DaemonRunner:
                 self.last_http_code = code
 
             if success:
-                if metrics or deltas:
-                    logging.info(f"Successfully sent {len(metrics)} metrics")
+                if metrics or events:
+                    logging.info(f"Successfully sent {len(metrics)} metrics, {len(events)} events")
                 else:
                     logging.debug("Heartbeat successful")
+
+                # Advance watermark for successfully pushed events.
+                if events:
+                    try:
+                        from scripts.sidecar_pkg.event_watermark import EventWatermark
+
+                        wm = EventWatermark(
+                            Path(
+                                os.path.expanduser("~/.config/runway-sidecar/event-watermark.json")
+                            )
+                        )
+                        for ev in events:
+                            ts_str = ev.get("ts")
+                            if ts_str:
+                                try:
+                                    ts = datetime.datetime.fromisoformat(
+                                        ts_str.replace("Z", "+00:00")
+                                    )
+                                    wm.advance(ev["provider_id"], ev["account_id"], ts)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        logging.warning(f"Failed to advance event watermark: {e}")
 
                 with self._lock:
                     self.last_error = None
@@ -3068,7 +2869,7 @@ class DaemonRunner:
                 logging.error(f"Failed to send metrics (HTTP {code}): {result}")
 
             # Only queue metrics payloads; heartbeats don't need to be queued
-            if metrics or deltas:
+            if metrics or events:
                 queue_push(payload)
 
             with self._lock:
