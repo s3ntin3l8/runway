@@ -67,7 +67,9 @@ class LimitCard(BaseModel):
 
     model_config = ConfigDict(
         # Include None values in serialized output so frontend can check for tier field
-        serialize_default_excluded=False  # type: ignore
+        serialize_default_excluded=False,  # type: ignore
+        # Allow extra fields so transport metadata like _enrichment_detail aren't stripped
+        extra="allow",
     )
 
 
@@ -75,28 +77,41 @@ class LimitsResponse(BaseModel):
     limits: list[LimitCard]
 
 
-class UsageDelta(BaseModel):
+class UsageEventPush(BaseModel):
+    """One usage event pushed by a sidecar."""
+
     provider_id: str
     account_id: str
-    account_label: str | None = (
-        None  # Human-readable label (email) for canonical_account_id resolution
-    )
+    event_id: str  # dedup key
+    ts: str  # ISO-8601 (UTC) of the actual event
     model_id: str | None = None
-    unit_type: str  # "tokens_input", "tokens_output", "cost_usd", etc.
-    value: float
-    timestamp: str  # ISO-8601
+    session_id: str | None = None
+    tokens_input: int = 0
+    tokens_output: int = 0
+    tokens_cache_read: int = 0
+    tokens_cache_create: int = 0
+    tokens_reasoning: int = 0
+    stop_reason: str | None = None
+    tool_calls: int = 0
+    latency_ms: int | None = None
+    raw_json: str | None = None
+    # cost_usd intentionally NOT pushed — server computes from pricing table
+    # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
 
 
 class IngestRequest(BaseModel):
+    """Updated body for /api/v1/fleet/ingest."""
+
     provider: str
-    metrics: list[LimitCard]
-    deltas: list[UsageDelta] = Field(default_factory=list)
+    metrics: list[LimitCard] = Field(default_factory=list)
+    events: list[UsageEventPush] = Field(default_factory=list)  # NEW
     sidecar_id: str | None = None  # Originating host identifier (Phase 4B fleet mgmt)
     sidecar_version: str | None = None  # App version from package.json
     os_platform: str | None = None  # platform.system() + "/" + platform.release()
     collection_errors: int = 0  # Number of provider collection failures in this cycle
-    last_log_lines: list[str] = []  # Tail of sidecar log from the sending machine
+    last_log_lines: list[str] = Field(default_factory=list)
     # api_key is now passed via X-Signature header for security
+    # NOTE: deltas field removed — replaced by events[]
 
 
 class ForecastEntry(BaseModel):

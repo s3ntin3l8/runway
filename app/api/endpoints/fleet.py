@@ -193,13 +193,6 @@ async def ingest_metrics(
         manager._last_sync_time = 0.0
         poller.wake()
 
-    # Deltas accepted but ignored until Phase 3 event ingestor lands.
-    if request.deltas:
-        logger.warning(
-            f"Received {len(request.deltas)} deltas from {request.sidecar_id} — "
-            "delta ingestion not implemented in this build (Phase 3)"
-        )
-
     # Determine which providers this sidecar should poll right now.
     # Logic: Centralized orchestration based on UI-configured intervals.
     poll_providers: list[str] = []
