@@ -2832,6 +2832,11 @@ class DaemonRunner:
                 self._fire_status_change()
 
                 if isinstance(result, dict):
+                    # Log reset_anchors for visibility (Phase 6)
+                    reset_anchors = result.get("reset_anchors")
+                    if reset_anchors:
+                        logging.debug(f"Server reset_anchors: {reset_anchors}")
+
                     # 1. Manual trigger (Global refresh) - Highest precedence
                     if result.get("trigger"):
                         logging.info(
