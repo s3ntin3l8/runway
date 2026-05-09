@@ -333,7 +333,27 @@ export function buildOverviewPane(entry, cumData, heatmapCells, recentEvents) {
             : `<span class="ontrack">✓ on glide path</span>`;
 
     // Countdown / burn rate
-    const resetIn = critical.reset_in || critical.reset || '—';
+    // Prefer a live countdown computed from reset_at — `critical.reset` is
+    // sometimes a duration label (e.g. OpenCode emits "7d") rather than a
+    // countdown, which would render as "Window resets in 7d weekly" — wrong.
+    let resetIn = critical.reset_in || '—';
+    if (critical.reset_at) {
+        try {
+            const ms = new Date(critical.reset_at).getTime() - Date.now();
+            if (Number.isFinite(ms) && ms > 0) {
+                const totalMin = Math.floor(ms / 60000);
+                const d = Math.floor(totalMin / (60 * 24));
+                const h = Math.floor((totalMin % (60 * 24)) / 60);
+                const m = totalMin % 60;
+                resetIn = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+            } else if (Number.isFinite(ms) && ms <= 0) {
+                resetIn = 'now';
+            }
+        } catch (_) {
+            // fall through to critical.reset
+        }
+    }
+    if (resetIn === '—') resetIn = critical.reset || '—';
     const windowLabel = critical.window_type ? critical.window_type.replace(/_/g, ' ') : '—';
     const usedAbs = critical.used_value != null && critical.limit_value
         ? `${_fmtTokens(critical.used_value)} / ${_fmtTokens(critical.limit_value)} tok`
