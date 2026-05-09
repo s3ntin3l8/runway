@@ -30,7 +30,8 @@ dev: ## Run development server (hot reload, port 8765)
 run: ## Run production server
 	$(PYTHON) -m app.main
 
-sidecar: ## Run the sidecar agent
+sidecar: ## Run the sidecar agent (sources .env so RUNWAY_CONFIG_DIR + INGEST_API_KEY align with the dev server)
+	set -a; [ -f .env ] && . ./.env; set +a; \
 	$(PYTHON) scripts/sidecar.py
 
 test: ## Run test suite (matches CI)

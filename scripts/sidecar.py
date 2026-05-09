@@ -338,7 +338,16 @@ _windows_cred_ttl_seconds: int = 300
 
 
 def get_sidecar_dir() -> Path:
-    """Get the sidecar configuration directory."""
+    """Get the sidecar configuration directory.
+
+    Honours RUNWAY_CONFIG_DIR for parity with the server (set via .env in
+    dev) so `make dev` and `make sidecar` share the same project-local
+    config when invoked from the repo. Falls back to the platform default
+    otherwise.
+    """
+    override = os.getenv("RUNWAY_CONFIG_DIR")
+    if override:
+        return Path(override) / "sidecar"
     if platform.system() == "Windows":
         app_data = os.getenv("APPDATA")
         if app_data:
@@ -423,11 +432,13 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         sys.exit(1)
 
     # Environment variable overrides (useful for dev / docker / CI without
-    # editing the config file).
+    # editing the config file). INGEST_API_KEY is the server-side name for
+    # the same secret, so sourcing the project .env file works for both.
     if os.environ.get("RUNWAY_API_URL"):
         config["api_url"] = os.environ["RUNWAY_API_URL"]
-    if os.environ.get("RUNWAY_API_KEY"):
-        config["api_key"] = os.environ["RUNWAY_API_KEY"]
+    api_key_env = os.environ.get("RUNWAY_API_KEY") or os.environ.get("INGEST_API_KEY")
+    if api_key_env:
+        config["api_key"] = api_key_env
 
     # Validate required fields
     missing = [f for f in REQUIRED_CONFIG_FIELDS if f not in config or not config[f]]
