@@ -10,6 +10,10 @@ Each window-close emits the cartesian product:
   - (model, sidecar)  full breakdown cells
 
 All inserts are idempotent via UNIQUE constraint + IntegrityError catch.
+
+Session contract: caller owns commit. close_window never commits or rolls back
+the outer session — it uses per-row SAVEPOINTs (begin_nested) to absorb
+IntegrityError on duplicate inserts without disturbing the caller's transaction.
 """
 
 from datetime import datetime, timedelta
@@ -98,7 +102,8 @@ def close_window(
             totals["tokens_reasoning"] += ev.tokens_reasoning
             totals["cost_usd"] += ev.cost_usd
 
-    # Write rows — one per grain, idempotent via INSERT OR IGNORE
+    # Write rows — one per grain, idempotent via SAVEPOINT + IntegrityError catch.
+    # Caller owns commit; we must not commit or rollback the outer session.
     inserted = 0
     for (model_id, sidecar_id), totals in agg.items():
         row = UsageWindow(
@@ -120,15 +125,12 @@ def close_window(
             pct_used=pct_used,
         )
         try:
-            session.add(row)
-            session.flush()
+            with session.begin_nested():
+                session.add(row)
+                session.flush()
             inserted += 1
         except IntegrityError:
-            session.rollback()
-            # Duplicate — idempotent skip; continue with next grain
+            # Duplicate — SAVEPOINT already rolled back; skip this grain
             continue
-
-    if inserted > 0:
-        session.commit()
 
     return inserted

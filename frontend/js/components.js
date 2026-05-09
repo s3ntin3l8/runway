@@ -1690,11 +1690,15 @@ function _firstNonEmpty(values) {
 }
 
 function _authorityLabel(dataSource, inputSource) {
-    const ds = (dataSource || '').toLowerCase();
-    const isApi = ds === 'api' || ds === 'oauth';
-    if (isApi) return 'AUTHORITATIVE · API';
-    if (ds === 'web') return 'WEB · SCRAPED';
-    if (ds === 'local' || (inputSource || '').toLowerCase() === 'sidecar') return 'LOCAL · SIDECAR';
+    const tokens = new Set(
+        (dataSource || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean)
+    );
+    const hasApi   = tokens.has('api') || tokens.has('oauth');
+    const hasWeb   = tokens.has('web');
+    const hasLocal = tokens.has('local');
+    if (hasWeb)  return 'WEB · SCRAPED';
+    if (hasApi)  return 'AUTHORITATIVE · API';
+    if (hasLocal || (inputSource || '').toLowerCase().includes('sidecar')) return 'LOCAL · SIDECAR';
     return 'UNKNOWN';
 }
 

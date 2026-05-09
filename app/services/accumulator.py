@@ -8,10 +8,13 @@ from sqlmodel import Session, select
 logger = logging.getLogger(__name__)
 
 
-def _join_distinct(a: str | None, b: str | None) -> str | None:
-    if a == b or b is None:
-        return a
-    parts = dict.fromkeys(p for s in (a, b) for p in (s or "").split(",") if p)
+def _join_distinct(
+    a: str | None, b: str | None, *, drop: frozenset[str] = frozenset()
+) -> str | None:
+    if not drop:
+        if a == b or b is None:
+            return a
+    parts = dict.fromkeys(p for s in (a, b) for p in (s or "").split(",") if p and p not in drop)
     return ",".join(parts) or None
 
 
@@ -34,13 +37,24 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     # quota row) protect the quota fields so the existing quota data is preserved.
     unit_mismatch = bool(existing_unit and incoming_unit and existing_unit != incoming_unit)
 
+    # Error cards represent transient poll failures — don't let them overwrite the
+    # source provenance of a previously successful card. Any other fields (health,
+    # detail, error_type) still merge so the UI surfaces the error state.
+    is_error_card = incoming.get("data_source") == "error" or incoming.get("remaining") == "ERR"
+
     for key, value in incoming.items():
         if key == "by_model":
             # {} means "not populated by this source" — legitimate empty resets are unrepresentable
             if isinstance(value, dict) and value:
                 merged[key] = value
         elif key in ("data_source", "input_source"):
-            merged[key] = _join_distinct(existing_dict.get(key), value)
+            if is_error_card:
+                pass  # preserve existing provenance; don't join "error"/"unknown" in
+            else:
+                # Drop stale "error" tokens accumulated from past failure cards.
+                merged[key] = _join_distinct(
+                    existing_dict.get(key), value, drop=frozenset({"error"})
+                )
         elif value is not None:
             if unit_mismatch and key in _QUOTA_FIELDS:
                 continue
