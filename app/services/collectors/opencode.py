@@ -68,11 +68,6 @@ class OpenCodeCollector(BaseCollector):
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
         "web": ("Web API (session cookie)", "_get_opencode_web"),
-        "sidecar": (
-            "Sidecar Aggregation (Multi-Host)",
-            "_strategy_sidecar_aggregation",
-            {"enrich": True},
-        ),
     }
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
@@ -130,10 +125,8 @@ class OpenCodeCollector(BaseCollector):
         return bool(session_cookie)
 
     def _fallback_strategies(self) -> list[Any]:
-        """Return fallback strategies for OpenCode (sidecar aggregation only)."""
-        return [
-            self._strategy_sidecar_aggregation,
-        ]
+        """No server-side fallback — sidecar event extractor handles per-message data."""
+        return []
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """OpenCode Web API strategy."""
@@ -142,98 +135,6 @@ class OpenCodeCollector(BaseCollector):
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return empty list on failure (OpenCode is non-critical)."""
         return []
-
-    async def _strategy_sidecar_aggregation(
-        self, client: httpx.AsyncClient
-    ) -> list[dict[str, Any]]:
-        """Second tier: Sidecar aggregation of multi-host data.
-
-        Queries UsageEvent rows for provider_id='opencode' and aggregates cost
-        across all sidecars into per-account Combined cards for the session (5h),
-        weekly (7d), and monthly (30d) windows.
-        """
-        from sqlmodel import Session, select
-
-        from app.core.db import engine
-        from app.models.db import UsageEvent
-
-        now = datetime.now(UTC)
-        cutoffs = {
-            "session": (now - timedelta(hours=5), 12.0),
-            "weekly": (now - timedelta(days=7), 30.0),
-            "monthly": (now - timedelta(days=30), 60.0),
-        }
-
-        # SQLite stores datetimes as naive strings; use naive UTC cutoff for the WHERE clause.
-        cutoff_30d_naive = (now - timedelta(days=30)).replace(tzinfo=None)
-        try:
-            with Session(engine) as session:
-                events = session.exec(
-                    select(UsageEvent).where(
-                        UsageEvent.provider_id == "opencode",
-                        UsageEvent.ts >= cutoff_30d_naive,
-                    )
-                ).all()
-        except Exception as e:
-            logger.warning(f"OpenCode sidecar aggregation DB query failed: {e}")
-            return []
-
-        if not events:
-            return []
-
-        # Aggregate cost and message count per (account_id, window_type)
-        # Structure: {account_id: {window_type: {"cost": float, "msgs": int}}}
-        agg: dict[str, dict[str, dict[str, Any]]] = {}
-        for event in events:
-            acc = event.account_id or "default"
-            if acc not in agg:
-                agg[acc] = {wt: {"cost": 0.0, "msgs": 0} for wt in cutoffs}
-            # SQLite may return timezone-naive datetimes; treat them as UTC for comparison.
-            event_ts = event.ts
-            if event_ts.tzinfo is None:
-                event_ts = event_ts.replace(tzinfo=UTC)
-            for window_type, (cutoff, _limit) in cutoffs.items():
-                if event_ts >= cutoff:
-                    agg[acc][window_type]["cost"] += event.cost_usd
-                    agg[acc][window_type]["msgs"] += 1
-
-        cards: list[dict[str, Any]] = []
-        now_iso = now.isoformat()
-        for acc_id, windows in agg.items():
-            for window_type, (cutoff, limit) in cutoffs.items():
-                data = windows[window_type]
-                if data["msgs"] == 0:
-                    continue
-                used = data["cost"]
-                msgs = data["msgs"]
-                remaining = max(0.0, limit - used)
-                pct = (used / limit * 100) if limit > 0 else 0.0
-                cards.append(
-                    {
-                        "provider_id": "opencode",
-                        "account_id": acc_id,
-                        "service_name": "OpenCode",
-                        "variant": "Combined",
-                        "window_type": window_type,
-                        "icon": "⚡",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": f"${limit:.0f} limit",
-                        "reset": "Rolling",
-                        "health": "good" if pct < 70 else "warning" if pct < 90 else "critical",
-                        "pace": "Stable" if pct < 50 else "High" if pct < 80 else "Fatigue",
-                        "detail": f"${used:.2f} used · {msgs} msgs · Combined",
-                        "used_value": used,
-                        "limit_value": limit,
-                        "pct_used": pct,
-                        "msgs": msgs,
-                        "unit_type": "currency",
-                        "currency": "USD",
-                        "data_source": "local",
-                        "updated_at": now_iso,
-                    }
-                )
-
-        return cards
 
     async def _get_opencode_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """
