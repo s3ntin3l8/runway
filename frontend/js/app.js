@@ -585,6 +585,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.key === 'Escape') closeModal();
     });
 
+    // Stash app-config (user_timezone, env_timezone) on window.runwayConfig so
+    // tz.js can resolve the user's display zone before any timestamp renders.
+    try {
+        const cfg = await fetchAppConfig();
+        const { setRunwayConfig } = await import('./utils/tz.js');
+        setRunwayConfig(cfg);
+    } catch (_) {
+        // Fall through — getUserTz() will use browser auto-detect.
+    }
+
     // initUI awaits switchView('dashboard') → loadDashboard on cold start.
     // checkAuth runs after so it can't race and double-fire loadDashboard.
     await initUI();

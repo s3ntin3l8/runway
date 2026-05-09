@@ -15,6 +15,7 @@ from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
+from app.models._datetime import iso_utc
 from app.models.db import (
     LatestUsage,
     ProviderConfig,
@@ -342,7 +343,7 @@ async def list_webhooks(session: Session = Depends(get_session)) -> dict:
                 "url": c.url,
                 "channel": c.channel,
                 "active": c.active,
-                "last_fired_at": c.last_fired_at.isoformat() if c.last_fired_at else None,
+                "last_fired_at": iso_utc(c.last_fired_at),
             }
             for c in configs
         ]
@@ -463,6 +464,8 @@ class _AppConfigUpdate(BaseModel):
     browser_preference: str | None = None
     default_poll_interval_seconds: int | None = None  # 0 = clear override
     default_sidecar_interval_seconds: int | None = None  # 0 = clear override
+    # IANA tz name (e.g. "Europe/Berlin"); "" or null = clear override (use TZ env / browser detect)
+    user_timezone: str | None = None
 
 
 class _DashboardLayout(BaseModel):
@@ -710,6 +713,8 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
         "default_sidecar_interval_seconds": cfg.default_sidecar_interval_seconds if cfg else None,
+        "user_timezone": cfg.user_timezone if cfg else None,
+        "env_timezone": settings.env_timezone,
     }
 
 
@@ -738,6 +743,20 @@ async def upsert_app_config(
             if body.default_sidecar_interval_seconds > 0
             else None
         )
+    if body.user_timezone is not None:
+        if body.user_timezone == "":
+            cfg.user_timezone = None
+        else:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+            try:
+                ZoneInfo(body.user_timezone)
+            except (ZoneInfoNotFoundError, ValueError) as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid IANA timezone: {body.user_timezone!r}",
+                ) from e
+            cfg.user_timezone = body.user_timezone
     session.commit()
 
     # Wake poller so the new interval applies on the next tick rather than

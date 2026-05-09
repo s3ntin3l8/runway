@@ -1,4 +1,26 @@
 import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
+import { setRunwayConfig } from '../utils/tz.js';
+
+const COMMON_TIMEZONES = [
+    'UTC',
+    'Europe/London',
+    'Europe/Berlin',
+    'Europe/Paris',
+    'Europe/Madrid',
+    'Europe/Rome',
+    'Europe/Moscow',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'America/Sao_Paulo',
+    'Asia/Tokyo',
+    'Asia/Singapore',
+    'Asia/Shanghai',
+    'Asia/Kolkata',
+    'Asia/Dubai',
+    'Australia/Sydney',
+];
 import { STATE } from '../state.js';
 import { ensureSortable } from '../sortable.js';
 
@@ -709,6 +731,18 @@ async function renderSystemSection(pane) {
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
         const sidecarIvVal = cfg.default_sidecar_interval_seconds ?? '';
+        const userTz = cfg.user_timezone || '';
+        const envTz = cfg.env_timezone || '';
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+        const tzList = COMMON_TIMEZONES.includes(userTz) || !userTz
+            ? COMMON_TIMEZONES
+            : [...COMMON_TIMEZONES, userTz];
+        const tzOpts = tzList.map(z =>
+            `<option value="${escapeHTMLAttr(z)}" ${userTz === z ? 'selected' : ''}>${escapeHTML(z)}</option>`
+        ).join('');
+        const autoLabel = envTz
+            ? `Auto (TZ env: ${escapeHTML(envTz)})`
+            : `Auto (browser: ${escapeHTML(browserTz)})`;
         const pollSelectOpts = POLL_OPTIONS.map(o =>
             `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
         ).join('');
@@ -776,6 +810,19 @@ async function renderSystemSection(pane) {
                         <button id="save-browser-pref-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
                     </div>
                 </div>
+                <div class="sys-row">
+                    <div>
+                        <div class="sys-k">Display Timezone</div>
+                        <div class="sys-s">How timestamps render in the dashboard (heatmap, recent events, sessions, history). Falls back to <code style="background:var(--surface-2);padding:1px 4px;color:var(--accent);">TZ</code> env var, then your browser zone.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="field-user-tz" class="inp" style="width:auto;">
+                            <option value="" ${!userTz ? 'selected' : ''}>${autoLabel}</option>
+                            ${tzOpts}
+                        </select>
+                        <button id="save-user-tz-btn" class="btn-ghost" style="padding:4px 10px;font-size:9px;white-space:nowrap;">Save</button>
+                    </div>
+                </div>
             </div>
             <div class="glass" style="margin-top:16px;padding:14px;border-left:2px solid var(--accent);font-size:11px;line-height:1.6;">
                 <strong>Tip:</strong> Core configuration is still managed via <code style="background:var(--surface-2);padding:1px 5px;color:var(--accent);">.env</code>. Provider-specific overrides can be set in the Providers section above.
@@ -818,6 +865,22 @@ async function renderSystemSection(pane) {
                 setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 1500);
             } catch {
                 this.textContent = 'Error'; this.disabled = false;
+            }
+        });
+
+        pane.querySelector('#save-user-tz-btn')?.addEventListener('click', async function () {
+            const select = pane.querySelector('#field-user-tz');
+            // Empty string = clear override; backend treats "" as null.
+            const val = select?.value || '';
+            this.textContent = 'Saving…'; this.disabled = true;
+            try {
+                await putAppConfig({ user_timezone: val });
+                setRunwayConfig({ user_timezone: val || null });
+                this.textContent = 'Saved · reload to apply';
+                setTimeout(() => { this.textContent = 'Save'; this.disabled = false; }, 2500);
+            } catch (err) {
+                this.textContent = 'Error'; this.disabled = false;
+                console.error('user_timezone save failed:', err);
             }
         });
 

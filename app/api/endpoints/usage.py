@@ -557,20 +557,26 @@ async def get_usage_heatmap(
     provider_id: str = Query(...),
     account_id: str = Query(...),
     days: int = Query(default=14, ge=1, le=90),
+    tz: str | None = Query(default=None, description="IANA timezone (e.g. Europe/Berlin)"),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """7×24 hour-of-day token activity grid over the last N days.
 
     Always returns all 168 cells (7 days × 24 hours). Cells with no events
     have tokens=0. dow follows SQLite convention: 0=Sunday … 6=Saturday.
+
+    When `tz` is a valid IANA name, events are bucketed in that zone (so the
+    grid reflects local hour-of-day). Invalid or missing `tz` falls back to
+    UTC bucketing.
     """
     cells = query_heatmap(
         session,
         provider_id=provider_id,
         account_id=account_id,
         days=days,
+        tz=tz,
     )
-    return {"cells": cells}
+    return {"cells": cells, "tz": tz or "UTC"}
 
 
 @router.get("/sessions")

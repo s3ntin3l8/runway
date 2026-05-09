@@ -2,6 +2,7 @@ import { fetchHistory, fetchHistoryRaw, fetchHistoryDeltas } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
 import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
+import { formatLocalDateTime } from '../utils/tz.js';
 
 const historyState = {
     days: 1,
@@ -688,7 +689,7 @@ export function renderHistoryFromCache(skipChartUpdate = false) {
 
     pageData.forEach((s, idx) => {
         const rowIndex = `${historyState.page}-${idx}`;
-        const date = new Date(s.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const date = formatLocalDateTime(s.timestamp, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const primary = computePrimaryValue(s, metric);
         const primaryVal = primary != null ? formatValue(primary, metric === 'percent' ? 'percent' : metric === 'tokens' ? 'tokens' : 'currency') : '—';
         const isExpanded = _expandedRows.has(rowIndex);

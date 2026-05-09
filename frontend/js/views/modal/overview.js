@@ -9,6 +9,7 @@
  */
 
 import { providerDisplayLabel } from '../../components.js';
+import { formatLocalTime } from '../../utils/tz.js';
 
 function _esc(str) {
     if (!str) return '';
@@ -249,7 +250,7 @@ function _buildEventsLog(events) {
         return '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No recent events</span><span class="v"></span></div>';
     }
     return events.slice(0, 10).map(ev => {
-        const ts = ev.ts ? new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+        const ts = formatLocalTime(ev.ts);
         const model = ev.model_id || ev.model || '';
         const toks = ev.tokens_total ? _fmtTokens(ev.tokens_total) + ' tok' : '';
         const cost = ev.cost_usd ? _fmtCost(ev.cost_usd) : '';
