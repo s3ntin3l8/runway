@@ -87,7 +87,6 @@ __REGISTRY__ = {
                     "type": "file_json_statusline",
                     "paths": ["~/.claude/statusline.json", "{{CONFIG_DIR:claude}}/statusline.json"],
                 },
-                {"type": "anthropic_jsonl_enrichment"},
             ],
         },
         "openrouter": {
@@ -160,7 +159,6 @@ __REGISTRY__ = {
                         "clientId": "client_id",
                     },
                 },
-                {"type": "gemini_jsonl_enrichment"},
             ],
         },
         "chatgpt": {
@@ -179,7 +177,6 @@ __REGISTRY__ = {
                     "format": "json",
                     "mapping": {"tokens.access_token": "oauth_token"},
                 },
-                {"type": "codex_jsonl_enrichment"},
                 {
                     "type": "env",
                     "variable": "CHATGPT_OAUTH_TOKEN",
