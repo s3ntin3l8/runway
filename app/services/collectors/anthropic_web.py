@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from app.core.config import is_local_collector_enabled, settings
+from app.core.config import settings
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
@@ -48,9 +48,6 @@ class AnthropicWebMixin:
         Choice #1: Read the local Claude statusline file (Fast Path).
         Returns metrics if the file exists and is fresh (< 5 mins old).
         """
-        if not is_local_collector_enabled():
-            return []
-
         # Try multiple potential paths
         home = os.path.expanduser("~")
         paths = [

@@ -18,7 +18,6 @@ import httpx
 import pytest
 
 from app.services.collectors.anthropic import AnthropicCollector
-from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
@@ -54,8 +53,6 @@ class TestAnthropicCollector:
             patch("app.services.collectors.anthropic.settings") as mock_settings,
         ):
             mock_settings.CLAUDE_PROJECTS_DIR = "/home/user/.claude/projects"
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
 
@@ -136,8 +133,6 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with (
                 patch(
@@ -200,8 +195,6 @@ class TestAnthropicCollector:
         mock_http_client.request.return_value = mock_response
 
         with patch("app.services.collectors.anthropic.settings") as mock_settings:
-            mock_settings.LOCAL_COLLECTOR_ENABLED = False
-
             with patch.object(collector, "_get_valid_token", return_value="test_token"):
                 result = await collector.collect(mock_http_client)
 
@@ -290,8 +283,6 @@ class TestAnthropicCollector:
                     mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
                     mock_settings.CLAUDE_PRO_LIMIT = 2000000
                     mock_settings.CLAUDE_FREE_LIMIT = 500000
-                    mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-                    mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
                     # Return False for expiration check so we hit the reactive path (401 response)
                     with patch.object(collector, "_is_token_expired", return_value=False):
@@ -365,8 +356,6 @@ class TestAnthropicCollector:
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
             mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-            mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
             with (
                 patch(
@@ -413,8 +402,6 @@ class TestAnthropicCollector:
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with (
                 patch(
@@ -565,8 +552,6 @@ class TestAnthropicCollector:
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with (
                 patch(
@@ -715,8 +700,6 @@ class TestAnthropicCollector:
             ),
             patch("app.services.collectors.anthropic.settings") as mock_settings,
         ):
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-            mock_settings.LOCAL_COLLECTOR_ENABLED = False
             with (
                 patch(
                     "app.services.collectors.anthropic_web.get_claude_session_cookie",
@@ -786,8 +769,6 @@ class TestAnthropicCollector:
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
-            mock_settings.LOCAL_COLLECTOR_ENABLED = False
 
             with (
                 patch(
@@ -1282,7 +1263,6 @@ class TestGeminiCollector:
         with patch("app.services.collectors.gemini.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with (
                 patch(
@@ -1349,7 +1329,6 @@ class TestGeminiCollector:
         with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with (
                 patch(
@@ -1383,7 +1362,6 @@ class TestGeminiCollector:
         with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
             mock_settings.GEMINI_OAUTH_PATH = "/fake/missing.json"
             mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-            mock_settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED = False
 
             with patch("app.services.collectors.oauth_base.os.path.exists", return_value=False):
                 result = await collector.collect(mock_http_client)
@@ -1548,7 +1526,6 @@ class TestChatGPTCollector:
 
         with patch("app.services.collectors.chatgpt_oauth.settings") as mock_settings:
             mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
-            mock_settings.LOCAL_COLLECTOR_ENABLED = True
 
             with patch("builtins.open", side_effect=FileNotFoundError):
                 result = await collector.collect(mock_http_client)
@@ -1713,199 +1690,6 @@ class TestChatGPTCollector:
         result = collector._process_codex_sessions([str(fpath)])
         assert len(result) == 1
         assert result[0]["token_usage"]["total"] == 150
-
-
-class TestAntigravityCollector:
-    """Test suite for Antigravity IDE collector."""
-
-    @pytest.mark.asyncio
-    async def test_collect_file_success(self, mock_http_client):
-        """Test successful collection from Antigravity quota file."""
-        collector = AntigravityCollector()
-
-        quota_data = {
-            "models": {
-                "claude-3-opus": {"remaining_percent": 65.5, "resets_at": 1744876800},
-                "claude-3-sonnet": {"remaining_percent": 72.3, "resets_at": 1744876800},
-            }
-        }
-
-        with patch("builtins.open", mock_open(read_data=json.dumps(quota_data))):
-            with patch("app.services.collectors.antigravity.settings") as mock_settings:
-                mock_settings.ANTIGRAVITY_QUOTA_PATH = "/fake/quota.json"
-                result = await collector.collect(mock_http_client)
-
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert all("AG:" not in card.get("service_name", "") for card in result)
-        assert all(card.get("provider_id") == "antigravity" for card in result)
-        assert all(card.get("model_id") is not None for card in result)
-        assert all(
-            card.get("used_value") == pytest.approx(100.0 - card_rem, abs=0.01)
-            for card in result
-            for card_rem in [float(card["remaining"].rstrip("%"))]
-        )
-
-    @pytest.mark.asyncio
-    async def test_collect_missing_file(self, mock_http_client):
-        """Test graceful handling when quota file missing."""
-        collector = AntigravityCollector()
-
-        with patch("builtins.open", side_effect=FileNotFoundError):
-            with patch("app.services.collectors.antigravity.settings") as mock_settings:
-                mock_settings.ANTIGRAVITY_QUOTA_PATH = "/fake/missing.json"
-                result = await collector.collect(mock_http_client)
-
-        # Should return empty list
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_collect_lsp_with_credits(self, mock_http_client):
-        """Test Antigravity collection from LSP including AI credits."""
-        collector = AntigravityCollector()
-
-        mock_response_data = {
-            "userStatus": {
-                "email": "test@example.com",
-                "planStatus": {"planInfo": {"planName": "Pro"}},
-                "cascadeModelConfigData": {
-                    "clientModelConfigs": [
-                        {
-                            "label": "claude-3-opus",
-                            "quotaInfo": {"remainingFraction": 0.5, "resetTime": 1744876800},
-                        }
-                    ]
-                },
-                "userTier": {
-                    "name": "Pro",
-                    "availableCredits": [{"creditType": "GOOGLE_ONE_AI", "creditAmount": "854"}],
-                },
-            }
-        }
-
-        mock_resp = MagicMock(spec=httpx.Response)
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-        mock_http_client.post.return_value = mock_resp
-
-        # Mock LSP detection to return a PID
-        with patch.object(collector, "_detect_lsp_proc_info", return_value={9999: ["token"]}):
-            with patch.object(collector, "_find_listening_ports", return_value=[5000]):
-                with patch("app.services.collectors.antigravity.settings") as mock_settings:
-                    mock_settings.LOCAL_COLLECTOR_ENABLED = True
-                    result = await collector.collect(mock_http_client)
-
-        assert isinstance(result, list)
-        assert len(result) == 2, (
-            f"Expected 2 cards, got {len(result)}: {[c['service_name'] for c in result]}"
-        )
-
-        # Check quota card (model-specific, no variant)
-        quota_cards = [c for c in result if c.get("model_id") and not c.get("variant")]
-        assert len(quota_cards) == 1, (
-            f"Quota card not found in {[(c['service_name'], c.get('variant'), c.get('model_id')) for c in result]}"
-        )
-        assert quota_cards[0]["remaining"] == "50.0%"
-
-        # Check credits card (variant carries the credit type)
-        credit_cards = [c for c in result if c.get("variant") and "credit" in c["variant"].lower()]
-        assert len(credit_cards) == 1, "Credits card not found"
-        assert credit_cards[0]["remaining"] == "854"
-        assert credit_cards[0]["service_name"] == "Antigravity"
-        assert credit_cards[0]["variant"] == "Google AI Credits"
-        assert credit_cards[0]["icon"] == "💰"
-        assert credit_cards[0]["unit"] == "credits"
-        assert credit_cards[0]["provider_id"] == "antigravity"
-        assert credit_cards[0]["account_label"] == "test@example.com"
-        assert credit_cards[0]["used_value"] is None
-        assert credit_cards[0]["limit_value"] is None
-
-        # Check quota card enriched fields
-        assert quota_cards[0]["provider_id"] == "antigravity"
-        assert quota_cards[0]["account_label"] == "test@example.com"
-        assert quota_cards[0]["used_value"] == pytest.approx(50.0, abs=0.01)
-        assert quota_cards[0]["limit_value"] == 100.0
-        assert quota_cards[0]["unit_type"] == "percent"
-        assert quota_cards[0]["window_type"] == "session"
-        assert quota_cards[0]["reset_at"] is not None
-        assert quota_cards[0]["reset"] == "Expired"  # resetTime: 1744876800 is in the past
-
-    def test_format_reset_with_future_timestamp(self):
-        """_format_reset returns display string and ISO string for future timestamps."""
-        import time
-
-        from app.services.collectors.antigravity import _format_reset
-
-        future_ts = int(time.time()) + 7320  # 2 hours 2 minutes from now
-        display, reset_at = _format_reset(future_ts)
-
-        assert "2h" in display
-        assert reset_at is not None
-        assert "T" in reset_at  # ISO 8601 contains T separator
-
-    def test_format_reset_with_none(self):
-        """_format_reset returns Dynamic and None for missing timestamps."""
-        from app.services.collectors.antigravity import _format_reset
-
-        display, reset_at = _format_reset(None)
-        assert display == "Dynamic"
-        assert reset_at is None
-
-    def test_format_reset_with_near_future_timestamp(self):
-        """_format_reset returns '< 1m' for timestamps less than 60 seconds away."""
-        import time
-
-        from app.services.collectors.antigravity import _format_reset
-
-        near_future_ts = int(time.time()) + 30
-        display, reset_at = _format_reset(near_future_ts)
-        assert display == "< 1m"
-        assert reset_at is not None
-
-    def test_format_reset_with_past_timestamp(self):
-        """_format_reset returns 'Expired' for timestamps in the past."""
-        import time
-
-        from app.services.collectors.antigravity import _format_reset
-
-        past_ts = int(time.time()) - 3600
-        display, reset_at = _format_reset(past_ts)
-        assert display == "Expired"
-        assert reset_at is not None
-
-    @pytest.mark.asyncio
-    async def test_local_file_includes_reset_at(self, mock_http_client):
-        """Local file cards include reset_at when resets_at is present."""
-        import time
-        from unittest.mock import mock_open, patch
-
-        collector = AntigravityCollector()
-
-        quota_data = {
-            "models": {
-                "claude-sonnet-4": {
-                    "remaining_percent": 75.5,
-                    "resets_at": int(time.time()) + 3600,
-                }
-            }
-        }
-
-        with patch("builtins.open", mock_open(read_data=json.dumps(quota_data))):
-            with patch("app.services.collectors.antigravity.settings") as mock_settings:
-                mock_settings.ANTIGRAVITY_QUOTA_PATH = "/fake/quota.json"
-                mock_settings.LOCAL_COLLECTOR_ENABLED = True
-                result = await collector.collect(mock_http_client)
-
-        assert len(result) == 1
-        card = result[0]
-        assert card["service_name"] == "Antigravity"
-        assert card["provider_id"] == "antigravity"
-        assert card["model_id"] == "claude-sonnet-4"
-        assert card["reset_at"] is not None
-        assert card["used_value"] == pytest.approx(24.5, abs=0.1)
-        assert (
-            card["account_label"] == "Default"
-        )  # no email from file; base collector fills in "Default"
 
 
 class TestOpenCodeCollector:

@@ -117,11 +117,6 @@ class Settings(BaseSettings):
     CHATGPT_SESSIONS_DIR: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("codex"), "sessions")
     )
-    ANTIGRAVITY_QUOTA_PATH: str = Field(
-        default_factory=lambda: os.path.join(
-            get_platform_data_dir("antigravity"), "state", "quota.json"
-        )
-    )
 
     @computed_field
     @property
@@ -140,8 +135,6 @@ class Settings(BaseSettings):
         default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "runway.db")
     )
 
-    LOCAL_COLLECTOR_ENABLED: bool = True
-    LOCAL_CREDENTIAL_SCRAPING_ENABLED: bool = True
     BROWSER_PREFERENCE: str = "safari,chrome,chromium,edge,firefox"
 
     # Network
@@ -190,38 +183,6 @@ if settings.APP_HOST not in ("127.0.0.1", "localhost") and not settings.DB_ENCRY
         "SECURITY ERROR: Server bound to non-localhost without DB_ENCRYPTION_KEY. Refusing to start."
     )
     raise RuntimeError("DB_ENCRYPTION_KEY must be set when binding to non-localhost interfaces")
-
-
-def _get_system_config_flag(field: str, default: bool) -> bool:
-    """Read a bool flag from SystemConfig DB, falling back to the env-var default."""
-    try:
-        from sqlmodel import Session
-        from sqlmodel import select as sqlselect
-
-        from app.core.db import engine
-        from app.models.db import SystemConfig
-
-        with Session(engine) as _s:
-            cfg = _s.exec(sqlselect(SystemConfig)).first()
-            if cfg is not None:
-                val = getattr(cfg, field, None)
-                if val is not None:
-                    return bool(val)
-    except Exception:
-        pass
-    return default
-
-
-def is_local_collector_enabled() -> bool:
-    """DB override > LOCAL_COLLECTOR_ENABLED env var."""
-    return _get_system_config_flag("local_collector_enabled", settings.LOCAL_COLLECTOR_ENABLED)
-
-
-def is_local_credential_scraping_enabled() -> bool:
-    """DB override > LOCAL_CREDENTIAL_SCRAPING_ENABLED env var."""
-    return _get_system_config_flag(
-        "local_credential_scraping_enabled", settings.LOCAL_CREDENTIAL_SCRAPING_ENABLED
-    )
 
 
 # Security check: Warn if using a missing or default ingest secret

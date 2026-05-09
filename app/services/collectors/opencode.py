@@ -9,13 +9,9 @@ Collection Strategy:
    - Shows rolling 5-hour and weekly windows
 
 2. Sidecar Aggregation (FALLBACK)
-   - Aggregates local DB data from multiple hosts via external metrics
+   - Aggregates local DB data from multiple hosts via the sidecar push pipeline
    - Used when web API fails (no Chrome login, cookie decryption fails)
    - Each host runs sidecar script to push local data
-
-Local DB Collection:
-- Controlled by LOCAL_COLLECTOR_ENABLED env var
-- Only used as additional data source, not primary
 """
 
 import asyncio
