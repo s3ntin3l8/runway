@@ -2472,7 +2472,7 @@ def _ag_probe_lsp(port: int, csrf: str, icon: str) -> list[dict[str, Any]]:
 
 
 def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, Any]]:
-    """Parse LSP GetUserStatus response into metric cards (mirrors AntigravityCollector)."""
+    """Parse LSP GetUserStatus response into metric cards."""
     results = []
     user_status = data.get("userStatus", {})
     email = user_status.get("email", "")
@@ -2518,6 +2518,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "detail": f"{plan} | {email} [LSP]",
                 "data_source": "lsp",
                 "provider_id": "antigravity",
+                "account_id": email or "default",
                 "account_label": email or None,
                 "model_id": model_id,
                 "used_value": round(100.0 - rem_pct, 4),
@@ -2549,6 +2550,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "detail": f"{display} | {email} [LSP]",
                 "data_source": "lsp",
                 "provider_id": "antigravity",
+                "account_id": email or "default",
                 "account_label": email or None,
                 "model_id": None,
                 "used_value": None,

@@ -14,7 +14,6 @@ from typing import Any
 import httpx
 
 from app.services.collectors.anthropic import AnthropicCollector
-from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.gemini import GeminiCollector
 from app.services.collectors.github import GitHubCollector
@@ -50,7 +49,6 @@ class CollectorManager:
             "gemini": (GeminiCollector, "Gemini", 900),
             "github": (GitHubCollector, "GitHub Copilot", 900),
             "chatgpt": (ChatGPTCollector, "ChatGPT", 300),
-            "antigravity": (AntigravityCollector, "Antigravity", 60),
             "opencode": (OpenCodeCollector, "OpenCode", 60),
             "zai": (ZaiCollector, "zAI", 900),
             "kimi_api": (KimiApiCollector, "Kimi API", 900),

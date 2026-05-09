@@ -3,9 +3,9 @@
 Runway is a local-first monitoring tool for AI provider quotas with SQLite-backed history.
 
 ## Architecture
-- **Three Modes**: Standalone, Multi-Host (Sidecar), Docker (Sidecar required).
-- **Docker Rule**: No native desktop UI/keychains — use ENV vars or sidecar-fed data.
-- **Cookie Collectors**: Claude, ChatGPT, Ollama, Kimi Coding, OpenCode need browser cookies; in Docker provide via ENV.
+- **Two Topologies**: Local (server + sidecar on same host) and Multi-Host/Docker (server + one or more remote sidecars). The server never performs local detection itself — all LSP probes, browser cookies, and IDE/file introspection live in the sidecar.
+- **Docker Rule**: No native desktop UI/keychains in the server container — credentials come from ENV vars or sidecar payloads.
+- **Cookie Collectors**: Claude, ChatGPT, Ollama, Kimi Coding, OpenCode need browser cookies; the sidecar extracts them and ships them to the server.
 
 ## Commands
 A `Makefile` wraps all common tasks — run `make help` for the full list. Key targets:
