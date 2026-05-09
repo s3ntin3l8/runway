@@ -94,9 +94,13 @@ async def fetch_fleet_view(
     # ingested events but no LatestUsage card — typical case is OpenCode Free,
     # where the sidecar pushes events tagged provider_id="opencode-free" but
     # there's no quota-bearing card to scrape. Render as PAYG-style entries.
+    # Query usage_events directly (not the rollup) so the card survives a
+    # rollup rebuild.
+    from app.models.db import UsageEvent
+
     events_pairs = session.exec(
-        select(UsagePeriodRollup.provider_id, UsagePeriodRollup.account_id)
-        .where(UsagePeriodRollup.period_type == "lifetime")
+        select(UsageEvent.provider_id, UsageEvent.account_id)
+        .where(UsageEvent.kind == "message")
         .distinct()
     ).all()
     for pid, aid in events_pairs:
