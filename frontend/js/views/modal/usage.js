@@ -7,6 +7,8 @@
  *   - throughputCells : same cells array reused for throughput sparkline
  */
 
+import { formatLocalTime, getUserTz } from '../../utils/tz.js';
+
 function _esc(str) {
     if (!str) return '';
     return String(str)
@@ -104,8 +106,8 @@ function _buildSessionsHtml(sessions) {
         return '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No sessions yet</span><span class="v"></span></div>';
     }
     return sessions.slice(0, 8).map(s => {
-        const start = s.started_at ? new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-        const end   = s.ended_at   ? new Date(s.ended_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '…';
+        const start = formatLocalTime(s.started_at);
+        const end   = s.ended_at ? formatLocalTime(s.ended_at) : '…';
         const time = `${start}–${end}`;
         const model = s.model_id || '';
         const sid   = s.session_id ? s.session_id.slice(0, 8) : (s.id || '');
@@ -139,12 +141,14 @@ export function buildUsagePane(entry, heatmapData, sessions) {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const sparkHtml = _buildSparkSvg(rawCells, '24h');
 
+    const tzLabel = getUserTz();
+
     return `
     <!-- HEATMAP -->
     <div class="m-block">
         <div class="head">
             <h4>Hour-of-day pattern · last 14 days</h4>
-            <span class="meta">peak <b style="color:var(--ink)">${_esc(peakStr)}</b></span>
+            <span class="meta">peak <b style="color:var(--ink)">${_esc(peakStr)}</b> · times in ${_esc(tzLabel)}</span>
         </div>
         <div class="m-heat-wrap">
             <div class="m-heat-axis">${days.map(d => `<span>${_esc(d)}</span>`).join('')}</div>

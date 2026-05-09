@@ -9,6 +9,7 @@
  */
 
 import { fetchEvents, fetchHeatmap, fetchSessions } from '../../api.js';
+import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
 import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
@@ -77,7 +78,7 @@ async function _renderPane(tab) {
         if (tab === 'overview') {
             if (!_modalCache.heatmap) {
                 try {
-                    const hd = await fetchHeatmap({ provider_id: providerId, account_id: accountId, days: 14 });
+                    const hd = await fetchHeatmap({ provider_id: providerId, account_id: accountId, days: 14, tz: getUserTz() });
                     _modalCache.heatmap = hd.cells || [];
                 } catch { _modalCache.heatmap = []; }
             }
@@ -93,7 +94,7 @@ async function _renderPane(tab) {
         } else if (tab === 'usage') {
             if (!_modalCache.heatmap) {
                 try {
-                    const hd = await fetchHeatmap({ provider_id: providerId, account_id: accountId, days: 14 });
+                    const hd = await fetchHeatmap({ provider_id: providerId, account_id: accountId, days: 14, tz: getUserTz() });
                     _modalCache.heatmap = hd.cells || [];
                 } catch { _modalCache.heatmap = []; }
             }

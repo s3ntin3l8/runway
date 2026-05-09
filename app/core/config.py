@@ -2,6 +2,7 @@
 import logging
 import os
 import platform
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -146,6 +147,28 @@ class Settings(BaseSettings):
 
     # Logging format: "plain" (default) or "json"
     LOG_FORMAT: str = "plain"
+
+    # Display timezone — IANA name (e.g. "Europe/Berlin"). Standard Linux/Docker
+    # env var. Used as a fallback display tz when no SystemConfig override is
+    # set; the dashboard further falls back to the browser's auto-detected zone.
+    TZ: str | None = None
+
+    @computed_field
+    @property
+    def env_timezone(self) -> str | None:
+        """Validated `TZ` env var, or None if unset/invalid."""
+        if not self.TZ:
+            return None
+        try:
+            ZoneInfo(self.TZ)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning(
+                "Invalid TZ env var %r — ignoring for dashboard display. "
+                "Use an IANA name like 'Europe/Berlin'.",
+                self.TZ,
+            )
+            return None
+        return self.TZ
 
     @property
     def INGEST_API_KEY_IS_INSECURE_DEFAULT(self) -> bool:

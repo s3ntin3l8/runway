@@ -1,5 +1,6 @@
 import { ensureECharts } from '../charts.js';
 import { fetchForecast } from '../api.js';
+import { formatLocalTime, formatLocalDate } from '../utils/tz.js';
 
 const STATUS_COLOR = {
     exhausted: 'var(--crit)',
@@ -106,14 +107,13 @@ function _renderTable(forecasts) {
         let projPct = (f.status === 'stable' || f.status === 'exhausted' || f.projected_pct == null) ? '—' : f.projected_pct.toFixed(1) + '%';
         if (f.projected_limit_hit_at) {
 
-            const hitAt = new Date(f.projected_limit_hit_at);
-            const timeStr = hitAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const dateStr = hitAt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            const timeStr = formatLocalTime(f.projected_limit_hit_at);
+            const dateStr = formatLocalDate(f.projected_limit_hit_at);
             projPct = `100% (${dateStr} ${timeStr})`;
         }
 
         const conf = _confidenceLabel(f.confidence);
-        const resetDate = f.reset_at ? new Date(f.reset_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
+        const resetDate = formatLocalDate(f.reset_at);
         const baseLabel = f.service_name || f.provider_id;
         const sub = _forecastSubtitle(f);
         const label = sub ? `${baseLabel} · ${sub}` : baseLabel;

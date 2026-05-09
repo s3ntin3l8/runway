@@ -7,6 +7,7 @@
  */
 
 import { providerDisplayLabel } from '../../components.js';
+import { formatLocalDateTime } from '../../utils/tz.js';
 
 function _esc(str) {
     if (!str) return '';
@@ -132,7 +133,7 @@ export function buildDebugPane(entry, tokenHealth) {
         if (myTokens.length) {
             tokenHealthHtml = myTokens.map(t => {
                 const expiresIn = t.expires_at ? _fmtUntil(t.expires_at) + ' remaining' : 'unknown expiry';
-                const issueDate = t.issued_at ? new Date(t.issued_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '—';
+                const issueDate = formatLocalDateTime(t.issued_at, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                 const scopes = t.scopes ? t.scopes.join(' · ') : '—';
                 const healthCls = t.health === 'good' ? 'good' : t.health === 'warn' ? 'warn' : '';
                 return `<div class="m-event ${healthCls}">

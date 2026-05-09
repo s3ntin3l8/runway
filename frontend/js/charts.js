@@ -2,6 +2,8 @@
 // Apache ECharts wrapper for the History tab usage panel.
 // ECharts is lazy-loaded on first use of the History view.
 
+import { getUserTz } from './utils/tz.js';
+
 let _chart = null;
 let _echarts = null;
 
@@ -65,13 +67,14 @@ export function bucketKeyFor(isoTs, bucketSeconds) {
 
 export function formatBucketLabel(bucketEpoch, bucketSeconds) {
     const d = new Date(bucketEpoch * 1000);
+    const tz = getUserTz();
     if (bucketSeconds >= 86400) {
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: tz });
     }
     if (bucketSeconds >= 3600) {
-        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' });
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', timeZone: tz });
     }
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz });
 }
 
 /**

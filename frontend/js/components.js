@@ -1,6 +1,7 @@
 import { HEALTH_CONFIG, STATE, ERROR_TYPES } from './state.js';
 import { pickBucketSeconds } from './charts.js';
 import { cardKey, applyOrder } from './layout.js';
+import { formatLocalDateTime } from './utils/tz.js';
 
 /**
  * Escapes HTML special characters to prevent XSS
@@ -525,7 +526,7 @@ export function buildModalContent(item) {
 
     const sourceLabel = SOURCE_LABELS[item.data_source] || item.data_source;
     const sourceColor = SOURCE_COLORS[item.data_source] || 'text-zinc-400';
-    const resetTime = item.reset_at ? new Date(item.reset_at).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
+    const resetTime = item.reset_at ? formatLocalDateTime(item.reset_at, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
     const updatedTime = formatRelativeTime(item.updated_at);
 
     const isAuthFailed = item.error_type === 'auth_failed';
@@ -827,7 +828,7 @@ export function buildTokenHealthPanel(tokens) {
         }
         const typesHTML = types.join('');
         const expiryStr = t.expires_at
-            ? new Date(t.expires_at).toLocaleString()
+            ? formatLocalDateTime(t.expires_at)
             : t.ttl_remaining_seconds > 0
             ? `cache TTL ${t.ttl_remaining_seconds}s`
             : '';
@@ -903,7 +904,7 @@ export function buildFleetView(sidecars) {
 
         const displayName = s.custom_name || s.hostname || s.sidecar_id;
         const tags = (s.tags || []).map(t => `<span class="tag-pill">${escapeHTML(t)}</span>`).join('');
-        const lastSeenStr = lastSeen ? lastSeen.toLocaleString() : '—';
+        const lastSeenStr = lastSeen ? formatLocalDateTime(s.last_seen) : '—';
         const staleBanner = s.stale
             ? `<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent);font-size:10px;color:var(--warn);">
                    <span class="lamp lamp-warn" style="flex-shrink:0;"></span>
