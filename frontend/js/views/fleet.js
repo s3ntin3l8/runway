@@ -55,21 +55,31 @@ export async function deleteSidecar(sidecarId) {
 }
 
 export async function triggerSidecarCollect(sidecarId) {
+    const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
+    const btn = card?.querySelector('button[title^="Run Now"]');
+
+    const SVG_PLAY = btn?.innerHTML ?? '';
+    const SVG_SPIN = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin .7s linear infinite"><circle cx="12" cy="12" r="10" stroke-opacity=".25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+    const SVG_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+    const SVG_ERR   = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+    function setBtnState(svg, cls) {
+        if (!btn) return;
+        btn.innerHTML = svg;
+        btn.className = btn.className.replace(/\btext-good-c\b|\btext-crit-c\b/g, '').trim();
+        if (cls) btn.classList.add(cls);
+        btn.disabled = cls === null; // null = loading
+    }
+
+    setBtnState(SVG_SPIN, null); // loading: spinner + disabled
+
     try {
         await triggerSidecarCollectAPI(sidecarId);
-        // Brief visual feedback — no full reload needed
-        const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
-        if (card) {
-            const btn = card.querySelector('button[title^="Run Now"]');
-            if (btn) {
-                const orig = btn.innerHTML;
-                btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-                btn.classList.add('text-green-400');
-                setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('text-green-400'); }, 2000);
-            }
-        }
+        setBtnState(SVG_CHECK, 'text-good-c');
+        setTimeout(() => setBtnState(SVG_PLAY, ''), 1800);
     } catch (err) {
-        alert('Failed to trigger collection: ' + err.message);
+        setBtnState(SVG_ERR, 'text-crit-c');
+        setTimeout(() => setBtnState(SVG_PLAY, ''), 2500);
     }
 }
 
