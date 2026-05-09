@@ -15,9 +15,14 @@ from app.services.event_query import (
     query_events,
     query_heatmap,
     query_sessions,
+    query_window_aggregation,
     query_window_history,
 )
 from app.services.forecast import compute_all_forecasts
+
+# Window type rank for selecting the "longest" window among multiple cards.
+# Higher rank = longer / more authoritative window.
+WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 router = APIRouter()
 
@@ -112,6 +117,25 @@ async def fetch_fleet_view(
     for (pid, aid), gcards in sorted(groups.items()):
         critical = _pick_critical_card(gcards)
         secondary = [c for c in gcards if c is not critical]
+
+        # Pick the longest-window default card that has a reset_at, then
+        # compute a live aggregation over usage_events for that window.
+        window_aggregations: dict[str, Any] = {}
+        longest = _longest_window_card(gcards)
+        if longest:
+            raw_reset = longest.get("reset_at", "")
+            try:
+                reset_at = datetime.fromisoformat(raw_reset.replace("Z", "+00:00"))
+                window_aggregations["longest"] = query_window_aggregation(
+                    session,
+                    provider_id=pid,
+                    account_id=aid,
+                    window_type=longest["window_type"],
+                    reset_at=reset_at,
+                )
+            except (ValueError, KeyError):
+                pass  # Malformed reset_at — leave window_aggregations empty
+
         fleet.append(
             {
                 "provider_id": pid,
@@ -119,10 +143,33 @@ async def fetch_fleet_view(
                 "critical_gauge": critical,
                 "secondary_limits": secondary,
                 "sidecar_contributions": contrib.get((pid, aid), {}),
+                "window_aggregations": window_aggregations,
             }
         )
 
     return {"fleet": fleet, "generated_at": now.isoformat()}
+
+
+def _longest_window_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the default, model-agnostic card with the highest-ranking window that has reset_at.
+
+    Considers only cards where variant='default' and model_id is empty.
+    Returns None if no eligible card exists.
+    """
+    best: dict[str, Any] | None = None
+    best_rank = -1
+    for c in cards:
+        variant = c.get("variant", "default")
+        model_id = (c.get("model_id") or "").lower()
+        if variant != "default" or (model_id and model_id != "default"):
+            continue
+        if not c.get("reset_at"):
+            continue
+        wt = (c.get("window_type") or "").lower()
+        rank = WINDOW_RANK.get(wt, -1)
+        if rank > best_rank:
+            best, best_rank = c, rank
+    return best
 
 
 def _pick_critical_card(cards: list[dict[str, Any]]) -> dict[str, Any]:

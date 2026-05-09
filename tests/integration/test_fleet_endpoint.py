@@ -5,7 +5,7 @@ the deleted CumulativeUsage table.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +14,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage, UsagePeriodRollup
+from app.models.db import LatestUsage, UsageEvent, UsagePeriodRollup
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -269,3 +269,188 @@ def test_empty_db_returns_empty_fleet(session: Session):
     body = resp.json()
     assert body["fleet"] == []
     assert "generated_at" in body
+
+
+# ---------------------------------------------------------------------------
+# Phase 15.2 — window_aggregations field
+# ---------------------------------------------------------------------------
+
+
+def _seed_card_with_reset(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    window_type: str = "weekly",
+    variant: str = "default",
+    model_id: str = "",
+    pct_used: float | None = None,
+    reset_at: str | None = None,
+) -> None:
+    """Seed a LatestUsage card that includes a reset_at field in the card_json."""
+    card: dict = {
+        "service_name": f"{provider_id}-{window_type}",
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "window_type": window_type,
+        "variant": variant,
+        "pct_used": pct_used,
+    }
+    if reset_at is not None:
+        card["reset_at"] = reset_at
+    session.add(
+        LatestUsage(
+            provider_id=provider_id,
+            account_id=account_id,
+            sidecar_id="local",
+            window_type=window_type,
+            variant=variant,
+            model_id=model_id,
+            card_json=json.dumps(card),
+        )
+    )
+    session.commit()
+
+
+def _seed_event(
+    session: Session,
+    event_id: str,
+    ts: datetime,
+    *,
+    provider_id: str = "anthropic",
+    account_id: str = "u@x.com",
+    model_id: str = "sonnet",
+    sidecar_id: str = "dev-01",
+    tokens_input: int = 100,
+    tokens_output: int = 200,
+    tokens_cache_read: int = 10,
+    tokens_cache_create: int = 5,
+    tokens_reasoning: int = 3,
+    cost_usd: float = 0.01,
+    kind: str = "message",
+) -> None:
+    session.add(
+        UsageEvent(
+            provider_id=provider_id,
+            account_id=account_id,
+            sidecar_id=sidecar_id,
+            event_id=event_id,
+            ts=ts,
+            kind=kind,
+            model_id=model_id,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            tokens_cache_read=tokens_cache_read,
+            tokens_cache_create=tokens_cache_create,
+            tokens_reasoning=tokens_reasoning,
+            cost_usd=cost_usd,
+        )
+    )
+    session.commit()
+
+
+def test_fleet_includes_window_aggregations(session: Session):
+    """Fleet entry has window_aggregations.longest with by_model, by_sidecar, total."""
+    # reset_at for the weekly window: window covers [reset_at - 7d, reset_at)
+    reset_at = datetime(2026, 5, 12, 18, 0, 0, tzinfo=UTC)
+    mid_window = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+
+    _seed_card_with_reset(
+        session,
+        provider_id="anthropic",
+        account_id="u@x.com",
+        window_type="weekly",
+        pct_used=42.0,
+        reset_at=reset_at.isoformat(),
+    )
+
+    # Two models, two sidecars
+    _seed_event(
+        session,
+        "e1",
+        mid_window,
+        model_id="sonnet",
+        sidecar_id="dev-01",
+        tokens_input=100,
+        tokens_output=200,
+        tokens_cache_read=10,
+        tokens_cache_create=5,
+        tokens_reasoning=3,
+    )
+    _seed_event(
+        session,
+        "e2",
+        mid_window + timedelta(hours=1),
+        model_id="opus",
+        sidecar_id="dev-01",
+        tokens_input=50,
+        tokens_output=100,
+        tokens_cache_read=5,
+        tokens_cache_create=2,
+        tokens_reasoning=1,
+    )
+    _seed_event(
+        session,
+        "e3",
+        mid_window + timedelta(hours=2),
+        model_id="sonnet",
+        sidecar_id="laptop",
+        tokens_input=30,
+        tokens_output=60,
+        tokens_cache_read=3,
+        tokens_cache_create=1,
+        tokens_reasoning=0,
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200, resp.text
+
+    fleet = resp.json()["fleet"]
+    assert len(fleet) == 1
+    entry = fleet[0]
+
+    assert "window_aggregations" in entry
+    wa = entry["window_aggregations"]
+    assert "longest" in wa
+
+    longest = wa["longest"]
+    assert longest["window_type"] == "weekly"
+    assert "window_start" in longest
+    assert "window_end" in longest
+
+    # by_model: sonnet and opus should appear
+    bm = longest["by_model"]
+    assert set(bm.keys()) == {"sonnet", "opus"}
+    assert bm["sonnet"]["tokens_input"] == 130  # 100 + 30
+    assert bm["opus"]["tokens_input"] == 50
+
+    # by_sidecar: dev-01 and laptop should appear
+    bs = longest["by_sidecar"]
+    assert set(bs.keys()) == {"dev-01", "laptop"}
+    assert bs["dev-01"]["tokens_input"] == 150  # 100 + 50
+    assert bs["laptop"]["tokens_input"] == 30
+
+    # total token count
+    tu = longest["token_usage"]
+    expected_total = (100 + 200 + 10 + 5 + 3) + (50 + 100 + 5 + 2 + 1) + (30 + 60 + 3 + 1 + 0)
+    assert tu["total"] == expected_total
+
+
+def test_fleet_window_aggregations_empty_when_no_eligible_card(session: Session):
+    """When no eligible card has reset_at, window_aggregations is empty dict {}."""
+    # Card without reset_at (session window type, no reset_at field)
+    _seed_card(
+        session,
+        provider_id="anthropic",
+        account_id="u@x.com",
+        window_type="session",
+        variant="some-variant",
+        pct_used=10.0,
+    )
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entry = resp.json()["fleet"][0]
+    assert "window_aggregations" in entry
+    assert entry["window_aggregations"] == {}
