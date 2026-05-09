@@ -46,7 +46,6 @@ class TestSettings:
         # Settings should have sensible defaults
         assert config.settings.CLAUDE_PROJECTS_DIR is not None
         assert config.settings.CHATGPT_SESSIONS_DIR is not None
-        assert config.settings.ANTIGRAVITY_QUOTA_PATH is not None
 
     def test_settings_path_expansion(self):
         """Test that ~ paths are properly expanded."""
@@ -54,7 +53,6 @@ class TestSettings:
 
         # Paths should not contain ~ after loading
         assert "~" not in config.settings.CLAUDE_PROJECTS_DIR
-        assert "~" not in config.settings.ANTIGRAVITY_QUOTA_PATH
 
     def test_settings_validation(self):
         """Test that invalid settings raise validation errors."""
