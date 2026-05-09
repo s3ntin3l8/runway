@@ -1261,6 +1261,32 @@ def _codex_account_email() -> str:
     return "default"
 
 
+def _opencode_account_email(db_path: Path | None) -> str:
+    """Read email from the OpenCode SQLite `account` table; returns 'default' if unavailable.
+
+    The OpenCode CLI stores a single account row keyed by email. Using the
+    email as account_id keeps sidecar-pushed events aligned with the cards
+    emitted by the server's web collector.
+    """
+    if db_path is None or not db_path.exists():
+        env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+        return env_label or "default"
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT email FROM account LIMIT 1")
+            row = cur.fetchone()
+            if row and row[0]:
+                return str(row[0])
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
+    return env_label or "default"
+
+
 # --- Generic Collector Engine ---
 
 
@@ -2098,8 +2124,8 @@ def run_collection(
             # --- OpenCode event extraction ---
             if provider_id == "opencode" and _events_enabled and _watermark is not None:
                 try:
-                    account_id = "default"
                     db_path = _discover_opencode_db_path()
+                    account_id = _opencode_account_email(db_path)
                     if db_path is not None:
                         since = _watermark.last_pushed("opencode", account_id) or (
                             datetime.datetime.now(datetime.UTC)
