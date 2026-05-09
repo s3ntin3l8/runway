@@ -132,7 +132,6 @@ The next collection cycle will use this cookie to fetch your usage from the Open
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENCODE_GO_API_KEY` | Optional | API key for OpenCode Go billing (future integration) |
-| `LOCAL_COLLECTOR_ENABLED` | Optional | Enable local DB fallback (default: true) |
 
 ## Sidecar Support
 

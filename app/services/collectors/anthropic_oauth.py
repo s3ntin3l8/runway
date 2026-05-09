@@ -308,11 +308,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
     def _get_local_config_hints(self) -> dict[str, Any]:
         """Read supplementary billing hints from ~/.claude.json if available."""
-
-        from app.core.config import is_local_collector_enabled
-
-        if not is_local_collector_enabled():
-            return {}
         path = os.path.expanduser("~/.claude.json")
         try:
             if os.path.exists(path):

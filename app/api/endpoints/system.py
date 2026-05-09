@@ -10,11 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
-from app.core.config import (
-    is_local_collector_enabled,
-    is_local_credential_scraping_enabled,
-    settings,
-)
+from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
@@ -75,8 +71,6 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
-        "local_collector_enabled": is_local_collector_enabled(),
-        "local_credential_scraping": is_local_credential_scraping_enabled(),
         "ingest_api_key_is_default": settings.INGEST_API_KEY_IS_INSECURE_DEFAULT,
         "admin_auth_required": settings.ADMIN_API_KEY is not None,
         "auth_methods": auth_methods,
@@ -454,8 +448,6 @@ _PROVIDER_ICONS: dict[str, str] = {
 class _AppConfigUpdate(BaseModel):
     browser_preference: str | None = None
     default_poll_interval_seconds: int | None = None  # 0 = clear override
-    local_collector_enabled: bool | None = None
-    local_credential_scraping_enabled: bool | None = None
 
 
 class _DashboardLayout(BaseModel):
@@ -697,8 +689,6 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "browser_preference": (cfg.browser_preference if cfg else None)
         or settings.BROWSER_PREFERENCE,
         "default_poll_interval_seconds": cfg.default_poll_interval_seconds if cfg else None,
-        "local_collector_enabled": is_local_collector_enabled(),
-        "local_credential_scraping_enabled": is_local_credential_scraping_enabled(),
     }
 
 
@@ -721,10 +711,6 @@ async def upsert_app_config(
         cfg.default_poll_interval_seconds = (
             body.default_poll_interval_seconds if body.default_poll_interval_seconds > 0 else None
         )
-    if body.local_collector_enabled is not None:
-        cfg.local_collector_enabled = body.local_collector_enabled
-    if body.local_credential_scraping_enabled is not None:
-        cfg.local_credential_scraping_enabled = body.local_credential_scraping_enabled
     session.commit()
     return {"status": "saved"}
 

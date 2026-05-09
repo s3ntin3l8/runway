@@ -62,35 +62,6 @@ async def test_gemini_api_success():
     assert result[0]["model_id"] == "flash"
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="local strategy moved to sidecar")
-async def test_gemini_local_no_dirs_returns_empty():
-    """When Gemini session dirs don't exist, local strategy returns empty list."""
-    collector = GeminiCollector()
-
-    with patch(
-        "app.services.collectors.gemini_local.is_local_collector_enabled", return_value=True
-    ):
-        with patch("os.path.isdir", return_value=False):
-            result = await collector._collect_via_logs(None)
-
-    assert result == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="local strategy moved to sidecar")
-async def test_gemini_local_disabled_returns_empty():
-    """When local collector is disabled, local strategy returns empty list."""
-    collector = GeminiCollector()
-
-    with patch(
-        "app.services.collectors.gemini_local.is_local_collector_enabled", return_value=False
-    ):
-        result = await collector._collect_via_logs(None)
-
-    assert result == []
-
-
 class TestGeminiEnrichment:
     """Tests for Gemini reset_at-aware enrichment."""
 

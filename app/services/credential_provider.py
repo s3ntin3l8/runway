@@ -3,10 +3,7 @@ import logging
 import os
 from typing import Any
 
-from app.core.config import (
-    get_platform_config_dir,
-    is_local_credential_scraping_enabled,
-)
+from app.core.config import get_platform_config_dir
 from app.core.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -50,7 +47,6 @@ class CredentialProvider:
         """Generic extraction based on registry rules for a provider."""
         results: dict[str, str] = {}
         sources: dict[str, str] = {}
-        is_scraping_enabled = is_local_credential_scraping_enabled()
         runway_config_dir = get_platform_config_dir("runway")
 
         # DB override: user-provided API key takes precedence over env/file/keychain
@@ -95,10 +91,6 @@ class CredentialProvider:
             elif rule_type == "file":
                 for path_str in rule.get("paths", []):
                     path = registry.resolve_path(path_str)
-
-                    # Bypassing the scraping gate for runway-internal files
-                    if not is_scraping_enabled and not path.startswith(runway_config_dir):
-                        continue
 
                     if os.path.exists(path):
                         try:
@@ -171,9 +163,6 @@ class CredentialProvider:
     @staticmethod
     def get_gemini_credentials_path() -> str | None:
         """Search for Gemini credentials file using registry rules."""
-        if not is_local_credential_scraping_enabled():
-            return None
-
         provider_config = registry.get_provider("gemini")
         for rule in provider_config.get("rules", []):
             if rule.get("type") == "file":
@@ -186,9 +175,6 @@ class CredentialProvider:
     @staticmethod
     def get_anthropic_credentials_path() -> str | None:
         """Search for Anthropic credentials file using registry rules."""
-        if not is_local_credential_scraping_enabled():
-            return None
-
         provider_config = registry.get_provider("anthropic")
         for rule in provider_config.get("rules", []):
             if rule.get("type") == "file":
@@ -201,9 +187,6 @@ class CredentialProvider:
     @staticmethod
     def get_chatgpt_credentials_path() -> str | None:
         """Search for ChatGPT credentials file using registry rules."""
-        if not is_local_credential_scraping_enabled():
-            return None
-
         provider_config = registry.get_provider("chatgpt")
         for rule in provider_config.get("rules", []):
             if rule.get("type") == "file":
@@ -233,12 +216,7 @@ class CredentialProvider:
 
     @staticmethod
     def get_provider_api_key(provider_id: str) -> str | None:
-        """Return the user-supplied API key stored in ProviderConfig for a provider.
-
-        This bypasses the local-credential-scraping gate because the key was
-        explicitly entered by the user through the settings UI — it is not
-        scraped from the filesystem.
-        """
+        """Return the user-supplied API key stored in ProviderConfig for a provider."""
         try:
             from sqlmodel import Session
             from sqlmodel import select as sqlselect
@@ -261,8 +239,7 @@ class CredentialProvider:
         """Return the user-supplied session cookie stored in ProviderConfig.
 
         Used by cookie-based collectors as a manual override that bypasses browser
-        cookie extraction. Bypasses the credential-scraping gate for the same
-        reason as get_provider_api_key — the value was explicitly entered by the user.
+        cookie extraction.
         """
         try:
             from sqlmodel import Session

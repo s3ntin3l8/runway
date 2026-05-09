@@ -13,16 +13,6 @@ def test_settings_type_coerces_int_fields():
         assert s.CLAUDE_PRO_LIMIT == 3000000
 
 
-def test_settings_type_coerces_bool_fields():
-    """Boolean fields parse 'false' string correctly."""
-    with pytest.MonkeyPatch().context() as mp:
-        mp.setenv("LOCAL_COLLECTOR_ENABLED", "false")
-        from app.core.config import Settings
-
-        s = Settings()
-        assert s.LOCAL_COLLECTOR_ENABLED is False
-
-
 def test_database_url_reflects_custom_path(tmp_path):
     """DATABASE_URL is computed from DATABASE_PATH (computed_field)."""
     db_file = str(tmp_path / "test.db")

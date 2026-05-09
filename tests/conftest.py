@@ -35,8 +35,6 @@ from tests.fixtures.mock_data import (
 @pytest.fixture(autouse=True)
 def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
-    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_SCRAPING_ENABLED", True)
-    monkeypatch.setattr(settings, "LOCAL_COLLECTOR_ENABLED", True)
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
 
 

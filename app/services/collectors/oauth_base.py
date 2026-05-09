@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from app.core.config import is_local_credential_scraping_enabled
 from app.core.utils import safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
@@ -43,9 +42,6 @@ class OAuthBaseCollector(BaseCollector):
 
     async def _get_credentials(self) -> dict | None:
         """Load credentials from file or cache."""
-        if not is_local_credential_scraping_enabled():
-            return None
-
         try:
             if await asyncio.to_thread(os.path.exists, self._credentials_path):
 
@@ -60,12 +56,6 @@ class OAuthBaseCollector(BaseCollector):
 
     def _persist_credentials(self, creds: dict):
         """Persist refreshed credentials to file."""
-        if not is_local_credential_scraping_enabled():
-            logger.info(
-                f"Skipping {self.provider_name} token persistence (local credential scraping disabled)"
-            )
-            return
-
         try:
             safe_write_json(self._credentials_path, creds)
         except Exception as e:

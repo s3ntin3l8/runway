@@ -112,8 +112,6 @@ docker run -d \
   --name runway \
   -p 8765:8765 \
   -e INGEST_API_KEY=your-secret-key \
-  -e LOCAL_COLLECTOR_ENABLED=false \
-  -e LOCAL_CREDENTIAL_SCRAPING_ENABLED=false \
   runway
 ```
 
@@ -128,9 +126,6 @@ services:
       - "8765:8765"
     env_file:
       - .env
-    environment:
-      - LOCAL_COLLECTOR_ENABLED=false
-      - LOCAL_CREDENTIAL_SCRAPING_ENABLED=false
     volumes:
       - ./data:/home/runway/.config/runway
     restart: unless-stopped
@@ -159,8 +154,6 @@ python3 scripts/sidecar.py \
 | `OPENROUTER_API_KEY` | ✅ | ✅ | ✅ | OpenRouter API |
 | `MINIMAX_API_KEY` | ✅ | ✅ | ✅ | MiniMax API |
 | `INGEST_API_KEY` | Optional | Required | Required | Sidecar auth |
-| `LOCAL_COLLECTOR_ENABLED` | true | true | **false** | Disable in Docker |
-| `LOCAL_CREDENTIAL_SCRAPING_ENABLED` | true | true | **false** | Disable in Docker |
 
 ## Data Collection & Caching
 

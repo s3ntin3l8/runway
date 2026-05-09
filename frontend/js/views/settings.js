@@ -708,8 +708,6 @@ async function renderSystemSection(pane) {
         const [s, cfg] = await Promise.all([fetchSettings(), fetchAppConfig()]);
         const browserPref = escapeHTMLAttr(cfg.browser_preference || '');
         const globalPollVal = cfg.default_poll_interval_seconds ?? '';
-        const localCollectorOn = cfg.local_collector_enabled;
-        const credScrapingOn = cfg.local_credential_scraping_enabled;
         const pollSelectOpts = POLL_OPTIONS.map(o =>
             `<option value="${o.value}" ${globalPollVal === o.value ? 'selected' : ''}>${o.label}</option>`
         ).join('');
@@ -729,24 +727,6 @@ async function renderSystemSection(pane) {
                 <div class="sys-row">
                     <div><div class="sys-k">Host / Port</div></div>
                     <span style="font-size:12px;color:var(--ink);">${escapeHTML(s.app_host)}:${s.app_port}</span>
-                </div>
-                <div class="sys-row">
-                    <div>
-                        <div class="sys-k">Local Collectors</div>
-                        <div class="sys-s">Enable reading local files and DBs (CLI tools, logs)</div>
-                    </div>
-                    <label class="toggle${localCollectorOn ? ' on' : ''}" data-cfg-key="local_collector_enabled">
-                        <i></i><span>${localCollectorOn ? 'Enabled' : 'Disabled'}</span>
-                    </label>
-                </div>
-                <div class="sys-row">
-                    <div>
-                        <div class="sys-k">Credential Scraping</div>
-                        <div class="sys-s">Allow reading browser cookies and credential files</div>
-                    </div>
-                    <label class="toggle${credScrapingOn ? ' on' : ''}" data-cfg-key="local_credential_scraping_enabled">
-                        <i></i><span>${credScrapingOn ? 'Enabled' : 'Disabled'}</span>
-                    </label>
                 </div>
                 <div class="sys-row">
                     <div><div class="sys-k">Database Encryption</div></div>
@@ -784,23 +764,6 @@ async function renderSystemSection(pane) {
                 <strong>Tip:</strong> Core configuration is still managed via <code style="background:var(--surface-2);padding:1px 5px;color:var(--accent);">.env</code>. Provider-specific overrides can be set in the Providers section above.
             </div>
         </div>`;
-
-        // System toggles
-        pane.querySelectorAll('.toggle[data-cfg-key]').forEach(toggle => {
-            toggle.addEventListener('click', async function () {
-                const cfgKey = this.dataset.cfgKey;
-                const newVal = !this.classList.contains('on');
-                this.classList.toggle('on', newVal);
-                this.querySelector('span').textContent = newVal ? 'Enabled' : 'Disabled';
-                try {
-                    await putAppConfig({ [cfgKey]: newVal });
-                } catch (err) {
-                    this.classList.toggle('on', !newVal);
-                    this.querySelector('span').textContent = !newVal ? 'Enabled' : 'Disabled';
-                    alert(`Save failed: ${err.message}`);
-                }
-            });
-        });
 
         pane.querySelector('#save-global-poll-btn')?.addEventListener('click', async function () {
             const select = pane.querySelector('#field-global-poll');

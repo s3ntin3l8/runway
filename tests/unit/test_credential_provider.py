@@ -40,10 +40,6 @@ def test_github_token_gh_cli():
         return False
 
     with (
-        patch(
-            "app.services.credential_provider.is_local_credential_scraping_enabled",
-            return_value=True,
-        ),
         patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
         patch("os.path.exists", side_effect=exists_side_effect),
         patch("builtins.open", mock_open(read_data=mock_yaml)),
@@ -65,30 +61,12 @@ def test_gemini_path_discovery():
         return False
 
     with (
-        patch(
-            "app.services.credential_provider.is_local_credential_scraping_enabled",
-            return_value=True,
-        ),
         patch("os.path.exists", side_effect=exists_side_effect),
         patch("os.path.expanduser", side_effect=lambda p: p.replace("~", "/home/user")),
     ):
         path = CredentialProvider.get_gemini_credentials_path()
         assert path is not None
         assert ".gemini/oauth_creds.json" in str(path)
-
-
-def test_disabled_scraping():
-    """Test that discovery returns empty/None if scraping is disabled."""
-    with (
-        patch(
-            "app.services.credential_provider.is_local_credential_scraping_enabled",
-            return_value=False,
-        ),
-        patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
-        patch("os.path.exists", return_value=False),
-    ):
-        assert CredentialProvider.get_github_token() == ""
-        assert CredentialProvider.get_gemini_credentials_path() is None
 
 
 def test_claude_token_env():
@@ -111,10 +89,6 @@ def test_claude_token_file():
         }
     )
     with (
-        patch(
-            "app.services.credential_provider.is_local_credential_scraping_enabled",
-            return_value=True,
-        ),
         patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
         patch("os.path.exists", side_effect=lambda p: ".credentials.json" in str(p)),
         patch("builtins.open", mock_open(read_data=mock_data)),
