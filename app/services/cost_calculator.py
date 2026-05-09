@@ -32,7 +32,7 @@ def compute_event_cost(
             ProviderPricing.model_id == model_id,
             ProviderPricing.effective_from <= ts.date(),
         )
-        .order_by(ProviderPricing.effective_from.desc())
+        .order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
     ).first()
     if not row:
         return 0.0

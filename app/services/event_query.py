@@ -334,10 +334,10 @@ def query_window_aggregation(
 
     # One pass: per (model_id, sidecar_id) sums
     rows = session.exec(
-        select(
+        select(  # type: ignore[call-overload]
             UsageEvent.model_id,
             UsageEvent.sidecar_id,
-            func.count(UsageEvent.id),
+            func.count(UsageEvent.id),  # type: ignore[arg-type]
             func.sum(UsageEvent.tokens_input),
             func.sum(UsageEvent.tokens_output),
             func.sum(UsageEvent.tokens_cache_read),

@@ -151,7 +151,7 @@ async def cleanup_database(
         # 4. Remove inactive sidecars
         if body.remove_inactive_sidecars_days is not None:
             threshold = datetime.now(UTC) - timedelta(days=body.remove_inactive_sidecars_days)
-            res = session.exec(delete(SidecarRegistry).where(SidecarRegistry.last_seen < threshold))
+            res = session.exec(delete(SidecarRegistry).where(SidecarRegistry.last_seen < threshold))  # type: ignore[arg-type]
             results["sidecars_removed"] = res.rowcount
 
         session.commit()
