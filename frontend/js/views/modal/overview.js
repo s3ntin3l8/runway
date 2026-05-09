@@ -102,15 +102,34 @@ function _buildModelMix(entry, cumData) {
             byModel[mdl] = { tok, cost: stats.cost_usd || 0, msgs: stats.msgs || 0 };
         }
     } else {
-        // Fall back to by_model on the fleet entry cards
+        // Fall back to by_model on the fleet entry cards. Card by_model can
+        // come in two shapes:
+        //   { tokens_total: <number>, cost_usd, msgs }                          -- flat
+        //   { tokens: { input, output, total, ... }, cost, msgs }               -- nested
+        // The nested form is what OpenCode and other token-rich collectors
+        // emit. Reading `stats.tokens` directly when it's an object would
+        // concatenate "[object Object]"; pull the total off it instead.
         const allCards = [entry.critical_gauge, ...(entry.secondary_limits || [])].filter(Boolean);
         for (const c of allCards) {
             if (!c.by_model) continue;
             for (const [mdl, stats] of Object.entries(c.by_model)) {
                 if (!byModel[mdl]) byModel[mdl] = { tok: 0, cost: 0, msgs: 0 };
-                byModel[mdl].tok  += (stats.tokens_total || stats.tokens || 0);
-                byModel[mdl].cost += (stats.cost_usd || 0);
-                byModel[mdl].msgs += (stats.msgs || 0);
+                let tok = 0;
+                if (typeof stats.tokens_total === 'number') {
+                    tok = stats.tokens_total;
+                } else if (stats.tokens && typeof stats.tokens === 'object') {
+                    tok = Number(stats.tokens.total ?? 0)
+                        || (Number(stats.tokens.input ?? 0)
+                            + Number(stats.tokens.output ?? 0)
+                            + Number(stats.tokens.cache_read ?? 0)
+                            + Number(stats.tokens.cache_create ?? 0)
+                            + Number(stats.tokens.reasoning ?? 0));
+                } else if (typeof stats.tokens === 'number') {
+                    tok = stats.tokens;
+                }
+                byModel[mdl].tok  += tok;
+                byModel[mdl].cost += Number(stats.cost_usd ?? stats.cost ?? 0);
+                byModel[mdl].msgs += Number(stats.msgs ?? 0);
             }
         }
     }
