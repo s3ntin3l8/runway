@@ -103,9 +103,15 @@ async def fetch_fleet_view(
         .where(UsageEvent.kind == "message")
         .distinct()
     ).all()
+    # Providers that already have a non-"default" account identity in events.
+    # Used to suppress stale "default" synthetics left over from before the
+    # sidecar was fixed to emit the real account email.
+    pids_with_real_identity = {pid for pid, aid in events_pairs if aid and aid != "default"}
     for pid, aid in events_pairs:
         if not pid:
             continue
+        if aid == "default" and pid in pids_with_real_identity:
+            continue  # orphan from pre-fix sidecar; real-identity card covers it
         if (pid, aid) in groups:
             continue
         synthetic = {
