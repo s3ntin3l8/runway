@@ -471,19 +471,37 @@ export async function toggleWindowExpand(row, idx) {
 
     try {
         const windowEnd = w.window_end || new Date().toISOString();
+        // Estimate window_start from window_type duration when not available
+        const durationMs = { monthly: 31, weekly: 7, daily: 1, session: 0.25 }[w.window_type] ?? 7;
         const windowStart = w.window_start
-            || new Date(new Date(windowEnd).getTime() - 7 * 86400000).toISOString();
+            || new Date(new Date(windowEnd).getTime() - durationMs * 86400000).toISOString();
         const detail = await fetchWindowDetail(
             w.provider_id, w.account_id, w.window_type, windowStart, windowEnd
         );
-        contentEl.innerHTML = renderWindowDetailHTML(detail, w);
+        const html = renderWindowDetailHTML(detail);
+        if (!html) {
+            detailRow.style.display = 'none';
+            if (expandBtn) expandBtn.textContent = '▶';
+        } else {
+            contentEl.innerHTML = html;
+        }
     } catch (e) {
         contentEl.textContent = `Failed to load detail: ${e.message}`;
     }
 }
 
 function renderWindowDetailHTML(detail) {
-    const fillRows = (detail.fill_series || []).map(p => {
+    const hasFill = (detail.fill_series || []).length > 0;
+    const hasModels = (detail.by_model || []).length > 0;
+    if (!hasFill && !hasModels) return null;  // caller will suppress the expand row
+
+    // Deduplicate fill_series: keep last snapshot per calendar day
+    const dayMap = new Map();
+    for (const p of (detail.fill_series || [])) {
+        const day = p.ts.slice(0, 10); // YYYY-MM-DD
+        dayMap.set(day, p);
+    }
+    const fillRows = [...dayMap.values()].map(p => {
         const date = new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
     }).join('');
@@ -519,7 +537,7 @@ function renderWindowDetailHTML(detail) {
           <thead><tr><th>MODEL</th><th>SHARE</th><th>TOKENS</th><th>COST</th><th>MSGS</th></tr></thead>
           <tbody>${modelRows}</tbody>
         </table>
-      </div>` : '<p class="hw-detail-label" style="margin:8px 0;">No model breakdown available.</p>';
+      </div>` : '';
 
     return `<div class="hw-detail-panels">${fillSection}${modelSection}</div>`;
 }
@@ -564,8 +582,6 @@ export async function loadHistoryView() {
     updateCsvHref();
     const container = document.getElementById('history-content');
     if (container) container.innerHTML = '<p class="ht-empty">Loading…</p>';
-    const wrap = document.getElementById('chart-wrap');
-    if (wrap) wrap.innerHTML = '<p class="ht-empty">Loading…</p>';
 
     // Apply cross-view filter
     const f = STATE.activeFilter;
