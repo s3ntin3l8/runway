@@ -771,6 +771,7 @@ def _card_metadata_lookup(
             "account_label": card.get("account_label"),
             "pct_used": card.get("pct_used"),
             "used_value": card.get("used_value"),
+            "window_type": r.window_type,
         }
         # Also store an aggregate entry keyed by (provider_id, account_id,
         # window_type, "") so we can fall back for model-scoped rollups.
@@ -898,6 +899,7 @@ def _history_raw_from_events(
                 "timestamp": iso_utc(ts),
                 "provider_id": pid,
                 "account_id": aid,
+                "account_label": meta.get("account_label"),
                 "service_name": meta.get("service_name", pid),
                 "window_type": meta.get("window_type", "unknown"),
                 "model_id": mid or "",
@@ -971,6 +973,7 @@ def _history_raw_from_rollup(
                 "timestamp": iso_utc(ts),
                 "provider_id": r.provider_id,
                 "account_id": r.account_id,
+                "account_label": meta.get("account_label"),
                 "service_name": meta.get("service_name", r.provider_id),
                 "window_type": meta.get("window_type", "unknown"),
                 "model_id": r.model_id,
@@ -1017,6 +1020,30 @@ def _find_card_meta(
     return {}
 
 
+def _find_all_card_metas(
+    card_meta: dict[tuple[str, str, str, str], dict[str, Any]],
+    provider_id: str,
+    account_id: str,
+    model_id: str,
+) -> list[dict[str, Any]]:
+    """Return all distinct-window-type card metas for (provider, account, model).
+
+    Falls back to aggregate (model_id="") entries when no model-specific ones exist.
+    """
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for (pid, aid, wt, mid), meta in card_meta.items():
+        if pid == provider_id and aid == account_id and mid == model_id and wt not in seen:
+            results.append(meta)
+            seen.add(wt)
+    if not results:
+        for (pid, aid, wt, mid), meta in card_meta.items():
+            if pid == provider_id and aid == account_id and mid == "" and wt not in seen:
+                results.append(meta)
+                seen.add(wt)
+    return results
+
+
 def _compute_used_value(
     meta: dict[str, Any],
     token_total: int,
@@ -1031,8 +1058,8 @@ def _compute_used_value(
     For requests/minutes: used_value = msgs or token_total respectively.
     """
     pct_used = meta.get("pct_used")
-    if unit_type == "percent" and pct_used is not None:
-        return pct_used
+    if unit_type == "percent":
+        return pct_used  # None when no live snapshot — caller keeps unit="percent" so frontend skips it
     if unit_type == "currency":
         return cost_usd
     if unit_type in ("tokens", "generic", "token"):
@@ -1086,6 +1113,9 @@ def query_history_grouped(
     if not raw:
         return {"averages": [], "peaks": []}
 
+    # Card meta lookup needed to expand each event row into all matching quota windows.
+    card_meta = _card_metadata_lookup(session)
+
     # Group raw rows by timestamp bucket, then by (provider_id, account_id)
     bucket_map: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
     for row in raw:
@@ -1099,28 +1129,40 @@ def query_history_grouped(
 
     for ts in sorted(bucket_map.keys()):
         for (pid, aid), rows in sorted(bucket_map[ts].items()):
-            # Get metadata from first row
             first = rows[0]
             account_label = first.get("account_label")
 
-            # Build windows array from the rows
-            windows = []
+            # Expand each event row into one window entry per quota window type.
+            # Events don't carry window_type, so we look up all card metas for
+            # (provider, account, model) and generate a window entry per distinct
+            # window_type. Dedup by (window_type, model_id) to avoid duplicates.
+            windows: list[dict[str, Any]] = []
+            seen_wm: set[tuple[str, str]] = set()
             for r in rows:
-                window_entry: dict[str, Any] = {
-                    "window": r.get("window_type", "unknown"),
-                    "category": r.get("window_type", "unknown"),
-                    "model_id": r.get("model_id", ""),
-                    "value": r.get("used_value"),
-                    "limit": r.get("limit_value"),
-                    "unit": r.get("unit_type", "tokens"),
-                    "token_usage": r.get("token_usage"),
-                    "msgs": r.get("msgs", 0),
-                }
-                if r.get("cost_usd") is not None:
-                    window_entry["cost_usd"] = r["cost_usd"]
-                if r.get("by_model") is not None:
-                    window_entry["by_model"] = r["by_model"]
-                windows.append(window_entry)
+                mid = r.get("model_id", "")
+                all_metas = _find_all_card_metas(card_meta, pid, aid, mid)
+                if not all_metas:
+                    all_metas = [{}]
+                for meta in all_metas:
+                    wt = meta.get("window_type", r.get("window_type", "unknown"))
+                    if (wt, mid) in seen_wm:
+                        continue
+                    seen_wm.add((wt, mid))
+                    unit = meta.get("unit_type", r.get("unit_type", "tokens"))
+                    token_total = (r.get("token_usage") or {}).get("total", 0)
+                    val = _compute_used_value(meta, token_total, r.get("cost_usd") or 0.0, unit)
+                    window_entry: dict[str, Any] = {
+                        "window": wt,
+                        "category": wt,
+                        "model_id": mid,
+                        "value": val,
+                        "limit": meta.get("limit_value"),
+                        "unit": unit,
+                        "token_usage": r.get("token_usage"),
+                        "msgs": r.get("msgs", 0),
+                        "cost_usd": r.get("cost_usd"),
+                    }
+                    windows.append(window_entry)
 
             entry = {
                 "timestamp": ts,
@@ -1131,14 +1173,7 @@ def query_history_grouped(
             }
             averages.append(entry)
 
-            # Peak entry: use max used_value from each window
-            peak_windows = []
-            for w in windows:
-                peak_w = {**w}
-                if w.get("value") is not None:
-                    peak_w["value"] = w["value"]
-                peak_windows.append(peak_w)
-            peaks.append({**entry, "windows": peak_windows})
+            peaks.append({**entry, "windows": [{**w} for w in windows]})
 
     return {"averages": averages, "peaks": peaks}
 
@@ -1231,3 +1266,275 @@ def query_history_deltas(
         "series_sampled": False,
         "series": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Window-first history queries
+# ---------------------------------------------------------------------------
+
+
+def query_windows(
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    days: float = 30.0,
+    window_type: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> dict:
+    """Return paginated quota windows, newest first.
+
+    Closed windows come from usage_windows (final pct_used stored).
+    Open windows are synthesised from latest_usage cards (model_id='').
+    """
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from sqlmodel import select
+
+    from app.models.db import LatestUsage, UsageWindow
+
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    stmt = select(UsageWindow).where(
+        UsageWindow.window_end >= since,
+        UsageWindow.model_id == "",
+        UsageWindow.sidecar_id == "",
+    )
+    if provider_id:
+        stmt = stmt.where(UsageWindow.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsageWindow.account_id == account_id)
+    if window_type and window_type != "all":
+        stmt = stmt.where(UsageWindow.window_type == window_type)
+
+    rows: list[dict] = []
+    for w in session.exec(stmt).all():
+        rows.append(
+            {
+                "provider_id": w.provider_id,
+                "account_id": w.account_id,
+                "account_label": w.account_id,
+                "service_name": w.provider_id.capitalize(),
+                "window_type": w.window_type,
+                "window_start": w.window_start.isoformat() if w.window_start else None,
+                "window_end": w.window_end.isoformat() if w.window_end else None,
+                "is_open": False,
+                "pct_used": w.pct_used,
+                "limit_value": w.limit_value,
+                "unit_type": "tokens",
+                "tokens_total": (
+                    w.tokens_input
+                    + w.tokens_output
+                    + w.tokens_cache_read
+                    + w.tokens_cache_create
+                    + w.tokens_reasoning
+                ),
+                "cost_usd": w.cost_usd,
+                "msgs": w.msgs,
+                "top_model": None,
+            }
+        )
+
+    lu_stmt = select(LatestUsage).where(LatestUsage.model_id == "")
+    if provider_id:
+        lu_stmt = lu_stmt.where(LatestUsage.provider_id == provider_id)
+    if account_id:
+        lu_stmt = lu_stmt.where(LatestUsage.account_id == account_id)
+
+    for lu in session.exec(lu_stmt).all():
+        try:
+            card = _json.loads(lu.card_json)
+        except Exception:
+            continue
+        wt = lu.window_type
+        if window_type and window_type not in {"all", wt}:
+            continue
+        reset_at = card.get("reset_at")
+        token_usage = card.get("token_usage") or {}
+        rows.append(
+            {
+                "provider_id": lu.provider_id,
+                "account_id": lu.account_id,
+                "account_label": card.get("account_label", lu.account_id),
+                "service_name": card.get("service_name", lu.provider_id.capitalize()),
+                "window_type": wt,
+                "window_start": None,
+                "window_end": reset_at,
+                "is_open": True,
+                "pct_used": card.get("pct_used"),
+                "limit_value": card.get("limit_value"),
+                "unit_type": card.get("unit_type", "tokens"),
+                "tokens_total": token_usage.get("total"),
+                "cost_usd": card.get("cost_usd"),
+                "msgs": card.get("msgs"),
+                "top_model": None,
+            }
+        )
+
+    rows.sort(key=lambda r: r.get("window_end") or "9999", reverse=True)
+    total = len(rows)
+    offset = (page - 1) * limit
+    return {"windows": rows[offset : offset + limit], "total": total, "page": page}
+
+
+def query_chart(
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    days: float = 30.0,
+    metric: str = "percent",
+    split_model_for: str | None = None,
+) -> dict:
+    """Return chart data.
+
+    metric=percent  → fill curves from quota_snapshots.
+    metric=tokens   → daily bars from usage_period_rollup.
+    metric=cost     → daily bars (value=cost_usd) from usage_period_rollup.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlmodel import select
+
+    from app.models.db import QuotaSnapshot, UsagePeriodRollup
+
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    if metric == "percent":
+        stmt = select(QuotaSnapshot).where(
+            QuotaSnapshot.ts >= since,
+            QuotaSnapshot.pct_used.isnot(None),
+        )
+        if provider_id:
+            stmt = stmt.where(QuotaSnapshot.provider_id == provider_id)
+        if account_id:
+            stmt = stmt.where(QuotaSnapshot.account_id == account_id)
+
+        snaps = session.exec(stmt.order_by(QuotaSnapshot.ts)).all()
+
+        series_map: dict[str, dict] = {}
+        for s in snaps:
+            use_model = s.model_id if (split_model_for and s.provider_id == split_model_for) else ""
+            key = f"{s.provider_id}::{s.window_type}::{use_model}"
+            if key not in series_map:
+                label = f"{s.provider_id.capitalize()} · {s.window_type.capitalize()}"
+                if use_model:
+                    label += f" · {use_model}"
+                series_map[key] = {
+                    "key": key,
+                    "provider_id": s.provider_id,
+                    "window_type": s.window_type,
+                    "model_id": use_model,
+                    "label": label,
+                    "color_hint": s.provider_id,
+                    "points": [],
+                }
+            series_map[key]["points"].append({"ts": s.ts.isoformat(), "pct_used": s.pct_used})
+
+        return {"series": list(series_map.values())}
+
+    # tokens or cost — daily bars
+    stmt = select(UsagePeriodRollup).where(
+        UsagePeriodRollup.period_type == "day",
+        UsagePeriodRollup.period_key >= since.strftime("%Y-%m-%d"),
+        UsagePeriodRollup.sidecar_id == "",
+    )
+    if provider_id:
+        stmt = stmt.where(UsagePeriodRollup.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
+
+    bars_map: dict[str, list] = {}
+    for r in session.exec(stmt.order_by(UsagePeriodRollup.period_key)).all():
+        use_model = r.model_id if (split_model_for and r.provider_id == split_model_for) else ""
+        if r.model_id != "" and r.provider_id != split_model_for:
+            continue
+        if r.model_id != use_model:
+            continue
+
+        date = r.period_key
+        if date not in bars_map:
+            bars_map[date] = []
+        value = (
+            r.cost_usd
+            if metric == "cost"
+            else r.tokens_input
+            + r.tokens_output
+            + r.tokens_cache_read
+            + r.tokens_cache_create
+            + r.tokens_reasoning
+        )
+        label = r.provider_id.capitalize()
+        if use_model:
+            label += f" · {use_model}"
+        bars_map[date].append(
+            {"provider_id": r.provider_id, "model_id": use_model, "label": label, "value": value}
+        )
+
+    bars = [{"date": d, "segments": segs} for d, segs in sorted(bars_map.items())]
+    return {"bars": bars}
+
+
+def query_window_detail(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    window_type: str,
+    window_start: "datetime",
+    window_end: "datetime",
+) -> dict:
+    """Return fill_series (quota_snapshots) and by_model (rollup) for one window."""
+    from sqlmodel import select
+
+    from app.models.db import QuotaSnapshot, UsagePeriodRollup
+
+    snaps = session.exec(
+        select(QuotaSnapshot)
+        .where(
+            QuotaSnapshot.provider_id == provider_id,
+            QuotaSnapshot.account_id == account_id,
+            QuotaSnapshot.window_type == window_type,
+            QuotaSnapshot.model_id == "",
+            QuotaSnapshot.ts >= window_start,
+            QuotaSnapshot.ts <= window_end,
+        )
+        .order_by(QuotaSnapshot.ts)
+    ).all()
+
+    fill_series = [{"ts": s.ts.isoformat(), "pct_used": s.pct_used} for s in snaps]
+
+    start_key = window_start.strftime("%Y-%m-%d")
+    end_key = window_end.strftime("%Y-%m-%d")
+
+    rollup_rows = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.provider_id == provider_id,
+            UsagePeriodRollup.account_id == account_id,
+            UsagePeriodRollup.period_type == "day",
+            UsagePeriodRollup.period_key >= start_key,
+            UsagePeriodRollup.period_key <= end_key,
+            UsagePeriodRollup.model_id != "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).all()
+
+    model_agg: dict[str, dict] = {}
+    for r in rollup_rows:
+        m = r.model_id
+        if m not in model_agg:
+            model_agg[m] = {"model_id": m, "tokens": 0, "cost_usd": 0.0, "msgs": 0}
+        model_agg[m]["tokens"] += (
+            r.tokens_input
+            + r.tokens_output
+            + r.tokens_cache_read
+            + r.tokens_cache_create
+            + r.tokens_reasoning
+        )
+        model_agg[m]["cost_usd"] += r.cost_usd
+        model_agg[m]["msgs"] += r.msgs
+
+    by_model = sorted(model_agg.values(), key=lambda x: x["tokens"], reverse=True)
+    return {"fill_series": fill_series, "by_model": by_model}
