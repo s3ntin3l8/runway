@@ -201,24 +201,34 @@ async function enterEditMode() {
     // Provider sections grid in the new dashboard
     const sectionsContainer = document.getElementById('dashboard-sections');
     if (sectionsContainer) {
-        _providerSortable = new Sortable(sectionsContainer, {
-            animation: 150,
-            draggable: '.section[data-provider-id]',
-            onEnd: onProviderDrop,
-        });
+        // Fleet commander mode: cards are article.fc inside .fleet-stack
+        const fleetStack = sectionsContainer.querySelector('.fleet-stack');
+        if (fleetStack) {
+            _providerSortable = new Sortable(fleetStack, {
+                animation: 150,
+                draggable: 'article.fc',
+                onEnd: onProviderDrop,
+            });
+        } else {
+            // Legacy flat-card mode: sections carry [data-provider-id]
+            _providerSortable = new Sortable(sectionsContainer, {
+                animation: 150,
+                draggable: '.section[data-provider-id]',
+                onEnd: onProviderDrop,
+            });
+            // Per-card grids within each provider section
+            document.querySelectorAll('#dashboard-sections .hz-grid').forEach(container => {
+                const section = container.closest('.section[data-provider-id]');
+                if (!section) return;
+                const s = new Sortable(container, {
+                    animation: 150,
+                    draggable: '[data-card-key]',
+                    onEnd: () => onCardDrop(section.dataset.providerId, container),
+                });
+                _cardSortables.push(s);
+            });
+        }
     }
-
-    // Per-card grids within each provider section
-    document.querySelectorAll('#dashboard-sections .hz-grid').forEach(container => {
-        const section = container.closest('.section[data-provider-id]');
-        if (!section) return;
-        const s = new Sortable(container, {
-            animation: 150,
-            draggable: '[data-card-key]',
-            onEnd: () => onCardDrop(section.dataset.providerId, container),
-        });
-        _cardSortables.push(s);
-    });
 
     // Card grids inside any currently-open modal
     document.querySelectorAll('#modal-content [data-provider-id]').forEach(section => {
