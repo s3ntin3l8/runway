@@ -28,6 +28,7 @@ def init_db():
         LatestUsage,
         ProviderConfig,
         ProviderPricing,
+        QuotaSnapshot,
         SidecarRegistry,
         SystemConfig,
         UsageEvent,
