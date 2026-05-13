@@ -290,6 +290,36 @@ class UsagePeriodRollup(SQLModel, table=True):
     last_updated: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class QuotaSnapshot(SQLModel, table=True):
+    """Append-only time series of scraped quota observations.
+
+    Written on every upsert_latest_usage call when pct_used is non-null.
+    Provides intra-window fill history for the % used chart.
+    """
+
+    __tablename__ = "quota_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "window_type",
+            "model_id",
+            "ts",
+            name="uq_quota_snapshots_identity",
+        ),
+        Index("ix_quota_snapshots_lookup", "provider_id", "account_id", "window_type", "ts"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    account_id: str
+    window_type: str  # weekly, daily, session, monthly
+    model_id: str = Field(default="")  # "" = all-models aggregate
+    ts: UTCDateTime = Field(index=True)
+    pct_used: float | None = None
+    reset_at: UTCDateTime | None = None
+
+
 class ProviderPricing(SQLModel, table=True):
     """Per-model pricing in USD per million tokens.
 
