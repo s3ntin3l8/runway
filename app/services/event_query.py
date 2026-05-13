@@ -1495,7 +1495,8 @@ def query_chart(
                     "color_hint": s.provider_id,
                     "points": [],
                 }
-            series_map[key]["points"].append({"ts": s.ts.isoformat(), "pct_used": s.pct_used})
+            ts_iso = s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00"
+            series_map[key]["points"].append({"ts": ts_iso, "pct_used": s.pct_used})
 
         # Seed any provider/window_type that has current pct_used data in latest_usage
         # but no snapshots yet (e.g. first run after schema migration).
@@ -1660,7 +1661,10 @@ def query_window_detail(
     fill_by_model = []
     for mid, bk_map in sorted(by_model_snaps.items()):
         series = [
-            {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
+            {
+                "ts": s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00",
+                "pct_used": s.pct_used,
+            }
             for s in sorted(bk_map.values(), key=lambda x: x.ts)
         ]
         fill_by_model.append({"model_id": mid, "series": series})
@@ -1669,7 +1673,10 @@ def query_window_detail(
     # otherwise the first model's series.
     if "" in by_model_snaps:
         fill_series = [
-            {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
+            {
+                "ts": s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00",
+                "pct_used": s.pct_used,
+            }
             for s in sorted(by_model_snaps[""].values(), key=lambda x: x.ts)
         ]
     elif fill_by_model:
