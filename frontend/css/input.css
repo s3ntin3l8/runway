@@ -1223,7 +1223,7 @@ header.top .icon-btn[aria-pressed="true"] {
     font-size: 9px; font-weight: 700;
     letter-spacing: 0.1em; text-transform: uppercase;
     padding: 3px 10px; border-radius: 0;
-    background: transparent;
+    background: transparent; white-space: nowrap; flex-shrink: 0;
     box-shadow: inset 0 0 0 1px var(--hairline-2);
     color: var(--text-dim); cursor: pointer; border: none;
     transition: all 140ms;
@@ -1232,6 +1232,8 @@ header.top .icon-btn[aria-pressed="true"] {
 .chip.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .chip .n { font-size: 9px; opacity: 0.7; margin-left: 2px; }
 .filterbar .sep { width: 1px; height: 14px; background: var(--hairline-2); margin: 0 6px; flex-shrink: 0; }
+#provider-chips { scrollbar-width: none; }
+#provider-chips::-webkit-scrollbar { display: none; }
 .filterbar .search {
     margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 8px;
     background: transparent; box-shadow: inset 0 0 0 1px var(--hairline-2);
