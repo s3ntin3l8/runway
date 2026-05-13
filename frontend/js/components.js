@@ -1676,6 +1676,7 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     return `<article class="glass card fc"
             data-prov="${escapeHTMLAttr(providerId)}"
             data-acc="${escapeHTMLAttr(accountId)}"
+            data-provider-id="${escapeHTMLAttr(providerId)}"
             data-card-key="${escapeHTMLAttr(cKey)}">
         ${railHtml}
         <div class="fc-main">
