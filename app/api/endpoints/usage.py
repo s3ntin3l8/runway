@@ -17,6 +17,7 @@ from app.services.event_query import (
     query_heatmap,
     query_history_deltas,
     query_sessions,
+    query_snapshots,
     query_window_aggregation,
     query_window_detail,
     query_window_history,
@@ -433,6 +434,30 @@ async def get_history_windows(
 ):
     """Paginated list of quota windows (closed + open), newest first."""
     return query_windows(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+        window_type=window_type,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/history/snapshots")
+@limiter.limit("60/minute")
+async def get_history_snapshots(
+    request: Request,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    days: float = Query(default=7.0, ge=0.01, le=365.0),
+    window_type: str | None = None,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=500),
+    session: Session = Depends(get_session),
+):
+    """Flat paginated snapshot rows with per-series delta, newest first."""
+    return query_snapshots(
         session,
         provider_id=provider_id,
         account_id=account_id,

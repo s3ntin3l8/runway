@@ -103,14 +103,14 @@ export function setHistoryProvidersNone() {
 // Fetch functions
 // ---------------------------------------------------------------------------
 
-async function fetchHistoryWindows() {
+async function fetchHistorySnapshots() {
     const params = new URLSearchParams({ days: historyState.days, page: historyState.page, limit: 50 });
     if (historyState.activeProviders?.size === 1)
         params.set('provider_id', [...historyState.activeProviders][0]);
     if (historyState.windowFilter !== 'all')
         params.set('window_type', historyState.windowFilter);
-    const r = await fetch(`/api/v1/usage/history/windows?${params}`);
-    if (!r.ok) throw new Error(`windows ${r.status}`);
+    const r = await fetch(`/api/v1/usage/history/snapshots?${params}`);
+    if (!r.ok) throw new Error(`snapshots ${r.status}`);
     return r.json();
 }
 
@@ -120,20 +120,6 @@ async function fetchHistoryChart() {
         params.set('provider_id', [...historyState.activeProviders][0]);
     const r = await fetch(`/api/v1/usage/history/chart?${params}`);
     if (!r.ok) throw new Error(`chart ${r.status}`);
-    return r.json();
-}
-
-async function fetchWindowDetail(provId, acctId, windowType, windowStart, windowEnd) {
-    const params = new URLSearchParams({
-        provider_id: provId,
-        account_id: acctId,
-        window_type: windowType,
-        window_start: windowStart,
-        window_end: windowEnd,
-        days: historyState.days,
-    });
-    const r = await fetch(`/api/v1/usage/history/window-detail?${params}`);
-    if (!r.ok) throw new Error(`window-detail ${r.status}`);
     return r.json();
 }
 
@@ -340,86 +326,85 @@ function renderHistoryChart() {
 }
 
 // ---------------------------------------------------------------------------
-// Window table
+// Snapshot table
 // ---------------------------------------------------------------------------
 
-function renderWindowTable() {
+function renderSnapshotTable() {
     const container = document.getElementById('history-content');
     if (!container) return;
     const cache = historyState._windowsCache;
     if (!cache) { container.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
 
-    const windows = cache.windows || [];
-    if (!windows.length) {
-        container.innerHTML = '<p class="ht-empty">No windows for selected range.</p>';
+    const rows = cache.rows || [];
+    if (!rows.length) {
+        container.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
         return;
     }
 
-    const metricHeader = historyState.metric === 'percent' ? '% USED'
-        : historyState.metric === 'cost' ? 'COST' : 'TOKENS';
+    function fmtTokens(n) {
+        if (n == null) return '—';
+        if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+        if (n >= 1e3) return Math.round(n / 1e3) + 'k';
+        return String(n);
+    }
+    function fmtCost(n) {
+        if (n == null || n === 0) return '—';
+        return '$' + n.toFixed(2);
+    }
 
-    const rows = windows.map((w, idx) => {
-        const period = formatWindowPeriod(w);
-        const fillBar = renderFillBar(w.pct_used, w.is_open);
-        const mainVal = formatWindowMetric(w, historyState.metric);
-        const liveBadge = w.is_open ? ' <span class="hw-live-badge">LIVE</span>' : '';
+    const seenSeries = new Set();
+    const rowsHtml = rows.map(r => {
+        const seriesKey = `${r.provider_id}|${r.account_id}|${r.window_type}|${r.model_id}`;
+        const isLatest = !seenSeries.has(seriesKey);
+        seenSeries.add(seriesKey);
 
-        return `<tr class="hw-row" onclick="toggleWindowExpand(this, ${idx})">
-          <td class="hw-expand-btn">▶</td>
-          <td class="hw-type-cell"><span class="hw-window-badge">${escHtml(w.window_type)}</span></td>
-          <td class="hw-provider-cell">${escHtml(w.service_name || w.provider_id)}${liveBadge}</td>
-          <td>${escHtml(w.account_label || w.account_id)}</td>
-          <td>${period}</td>
-          <td class="hw-metric-cell">${fillBar}${escHtml(mainVal)}</td>
-        </tr>
-        <tr class="hw-detail-row" id="hw-detail-${idx}" style="display:none">
-          <td colspan="6"><div class="hw-detail-inner" id="hw-detail-content-${idx}">Loading…</div></td>
+        const fillBar = renderFillBar(r.pct_used);
+        const pctStr = r.pct_used != null ? r.pct_used.toFixed(1) + '%' : '—';
+        const deltaClass = r.delta > 0 ? 'hw-delta-up' : r.delta < 0 ? 'hw-delta-down' : '';
+        const deltaStr = r.delta != null
+            ? `<span class="hw-delta ${deltaClass}">${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}%</span>`
+            : '<span class="hw-delta">—</span>';
+        const tsStr = formatLocalDateTime(r.ts, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const liveBadge = isLatest ? ' <span class="hw-live-badge">LIVE</span>' : '';
+        return `<tr class="hw-row">
+          <td class="hw-ts-cell">${tsStr}</td>
+          <td class="hw-type-cell"><span class="hw-window-badge">${escHtml(r.window_type)}</span></td>
+          <td class="hw-provider-cell">${escHtml(r.service_name || r.provider_id)}${liveBadge}</td>
+          <td class="hw-model-cell">${escHtml(r.model_label || '-')}</td>
+          <td class="hw-metric-cell"><div class="hw-metric-inner">${fillBar}${escHtml(pctStr)}</div></td>
+          <td class="hw-delta-cell">${deltaStr}</td>
+          <td class="hw-tokens-cell">${fmtTokens(r.tokens_total)}</td>
+          <td class="hw-cost-cell">${fmtCost(r.cost_usd)}</td>
         </tr>`;
     }).join('');
 
     const metaEl = document.getElementById('history-table-meta');
-    if (metaEl) metaEl.textContent = `${cache.total} windows · page ${cache.page}`;
+    if (metaEl) {
+        const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
+            ?? `${historyState.days}d`;
+        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
+    }
 
     container.innerHTML = `
       <table class="hw-table">
         <thead><tr>
-          <th></th><th>TYPE</th><th>PROVIDER</th><th>ACCOUNT</th><th>PERIOD</th><th>${metricHeader}</th>
+          <th>TIME</th><th>TYPE</th><th>PROVIDER</th><th>MODEL</th><th>% USED</th><th>DELTA</th><th>TOKENS</th><th>COST</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rowsHtml}</tbody>
       </table>
       ${renderHWPager(cache.total, cache.page)}`;
 }
 
-function renderFillBar(pctUsed, isOpen) {
+function renderFillBar(pctUsed) {
     if (pctUsed == null) return '';
     const pct = Math.min(100, Math.max(0, pctUsed));
     const color = pct >= 80 ? '#c0392b' : pct >= 50 ? '#d4a017' : '#27ae60';
-    const dashStyle = isOpen ? 'stroke-dasharray="3,1"' : '';
+    const fillW = (pct * 0.6).toFixed(1);
+    const fillRect = pct > 0 ? `<rect x="0" y="2" width="${fillW}" height="6" rx="2" fill="${color}"/>` : '';
     return `<svg class="hw-fill-bar" width="60" height="10" viewBox="0 0 60 10">
-      <rect x="0" y="2" width="60" height="6" rx="2" fill="rgba(128,128,128,0.15)"/>
-      <rect x="0" y="2" width="${(pct * 0.6).toFixed(1)}" height="6" rx="2" fill="${color}" ${dashStyle}/>
+      <rect x="0" y="2" width="60" height="6" rx="2" fill="#808080" fill-opacity="0.2"/>
+      ${fillRect}
     </svg> `;
-}
-
-function formatWindowPeriod(w) {
-    if (!w.window_start && !w.window_end) return '—';
-    const fmt = iso => iso ? formatLocalDate(iso) : '?';
-    if (w.is_open) return `${w.window_start ? fmt(w.window_start) : '…'} – now`;
-    return `${fmt(w.window_start)} – ${fmt(w.window_end)}`;
-}
-
-function formatWindowMetric(w, metric) {
-    if (metric === 'percent') {
-        if (w.pct_used == null) return '—';
-        return `${w.pct_used.toFixed(1)}%`;
-    }
-    if (metric === 'cost') {
-        if (w.cost_usd == null) return '—';
-        return `$${w.cost_usd.toFixed(2)}`;
-    }
-    const t = w.tokens_total;
-    if (t == null) return '—';
-    return t >= 1e6 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(0)}k` : String(t);
 }
 
 function renderHWPager(total, page) {
@@ -437,117 +422,10 @@ function renderHWPager(total, page) {
 
 export function hwGoPage(p) {
     historyState.page = p;
-    fetchHistoryWindows().then(data => {
+    fetchHistorySnapshots().then(data => {
         historyState._windowsCache = data;
-        renderWindowTable();
+        renderSnapshotTable();
     }).catch(e => console.warn('page fetch failed', e));
-}
-
-// ---------------------------------------------------------------------------
-// Expand detail
-// ---------------------------------------------------------------------------
-
-export async function toggleWindowExpand(row, idx) {
-    const detailRow = document.getElementById(`hw-detail-${idx}`);
-    const expandBtn = row.querySelector('.hw-expand-btn');
-    if (!detailRow) return;
-
-    const isOpen = detailRow.style.display !== 'none';
-    if (isOpen) {
-        detailRow.style.display = 'none';
-        if (expandBtn) expandBtn.textContent = '▶';
-        return;
-    }
-
-    detailRow.style.display = '';
-    if (expandBtn) expandBtn.textContent = '▼';
-
-    const w = (historyState._windowsCache?.windows || [])[idx];
-    if (!w) return;
-
-    const contentEl = document.getElementById(`hw-detail-content-${idx}`);
-    if (!contentEl) return;
-    contentEl.textContent = 'Loading…';
-
-    try {
-        const windowEnd = w.window_end || new Date().toISOString();
-        // Estimate window_start from window_type duration when not available
-        const durationMs = { monthly: 31, weekly: 7, daily: 1, session: 0.25 }[w.window_type] ?? 7;
-        const windowStart = w.window_start
-            || new Date(new Date(windowEnd).getTime() - durationMs * 86400000).toISOString();
-        const detail = await fetchWindowDetail(
-            w.provider_id, w.account_id, w.window_type, windowStart, windowEnd
-        );
-        const html = renderWindowDetailHTML(detail);
-        if (!html) {
-            detailRow.style.display = 'none';
-            if (expandBtn) expandBtn.textContent = '▶';
-        } else {
-            contentEl.innerHTML = html;
-        }
-    } catch (e) {
-        contentEl.textContent = `Failed to load detail: ${e.message}`;
-    }
-}
-
-function renderWindowDetailHTML(detail) {
-    const fillByModel = detail.fill_by_model || [];
-    const hasFill = fillByModel.some(m => m.series && m.series.length > 0);
-    const hasModels = (detail.by_model || []).length > 0;
-    if (!hasFill && !hasModels) return null;  // caller will suppress the expand row
-
-    const multiModel = fillByModel.filter(m => m.series && m.series.length > 0).length > 1;
-
-    function buildFillTable(series) {
-        return series.map(p => {
-            const date = formatLocalDateTime(p.ts, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-            return `<tr><td>${date}</td><td>${p.pct_used != null ? p.pct_used.toFixed(1) + '%' : '—'}</td></tr>`;
-        }).join('');
-    }
-
-    let fillSection = '';
-    if (hasFill) {
-        const tables = fillByModel
-            .filter(m => m.series && m.series.length > 0)
-            .map(m => {
-                const label = multiModel && m.model_id ? `<p class="hw-fill-model-label">${escHtml(m.model_id)}</p>` : '';
-                return `${label}<table class="hw-detail-table">
-                  <thead><tr><th>TIME</th><th>% USED</th></tr></thead>
-                  <tbody>${buildFillTable(m.series)}</tbody>
-                </table>`;
-            }).join('');
-        fillSection = `
-      <div>
-        <p class="hw-detail-label">HOW IT FILLED UP</p>
-        ${tables}
-      </div>`;
-    }
-
-    const totalTokens = (detail.by_model || []).reduce((s, m) => s + (m.tokens || 0), 0);
-    const modelRows = (detail.by_model || []).map(m => {
-        const share = totalTokens ? ((m.tokens / totalTokens) * 100).toFixed(0) + '%' : '—';
-        const tok = m.tokens >= 1e6
-            ? `${(m.tokens / 1e6).toFixed(1)}M`
-            : m.tokens >= 1e3 ? `${(m.tokens / 1e3).toFixed(0)}k` : String(m.tokens || 0);
-        return `<tr>
-          <td>${escHtml(m.model_id || '—')}</td>
-          <td>${share}</td>
-          <td>${tok}</td>
-          <td>$${(m.cost_usd || 0).toFixed(2)}</td>
-          <td>${m.msgs || 0}</td>
-        </tr>`;
-    }).join('');
-
-    const modelSection = modelRows ? `
-      <div>
-        <p class="hw-detail-label">BY MODEL</p>
-        <table class="hw-detail-table">
-          <thead><tr><th>MODEL</th><th>SHARE</th><th>TOKENS</th><th>COST</th><th>MSGS</th></tr></thead>
-          <tbody>${modelRows}</tbody>
-        </table>
-      </div>` : '';
-
-    return `<div class="hw-detail-panels">${fillSection}${modelSection}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +461,7 @@ export function renderHistoryFromCache() {
     renderHistoryTiles(historyState._deltasCache);
     renderHistoryFilterPill();
     renderHistoryChart();
-    renderWindowTable();
+    renderSnapshotTable();
 }
 
 export async function loadHistoryView() {
@@ -598,15 +476,15 @@ export async function loadHistoryView() {
     }
 
     try {
-        const [windows, chart, deltas] = await Promise.all([
-            fetchHistoryWindows(),
+        const [snapshots, chart, deltas] = await Promise.all([
+            fetchHistorySnapshots(),
             fetchHistoryChart(),
             fetchHistoryDeltas({ days: historyState.days }).catch(e => {
                 console.warn('deltas fetch failed', e);
                 return null;
             }),
         ]);
-        historyState._windowsCache = windows;
+        historyState._windowsCache = snapshots;
         historyState._chartCache = chart;
         historyState._deltasCache = deltas;
         renderHistoryFromCache();
@@ -626,6 +504,5 @@ export function initHistoryView() {
     window.setHistoryProvidersAll = setHistoryProvidersAll;
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.clearHistoryFilter = clearHistoryFilter;
-    window.toggleWindowExpand = toggleWindowExpand;
     window.hwGoPage = hwGoPage;
 }

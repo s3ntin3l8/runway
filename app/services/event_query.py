@@ -1442,6 +1442,185 @@ def query_windows(
     return {"windows": rows[offset : offset + limit], "total": total, "page": page}
 
 
+_PROVIDER_LABELS: dict[str, str] = {
+    "anthropic": "Claude",
+    "gemini": "Gemini",
+    "openai": "OpenAI",
+    "ollama": "Ollama",
+    "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "opencode": "OpenCode",
+}
+
+
+def query_snapshots(
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    window_type: str | None = None,
+    days: float = 7.0,
+    page: int = 1,
+    limit: int = 100,
+) -> dict:
+    """Flat paginated list of quota_snapshots, newest first, with per-series delta."""
+    from app.models.db import QuotaSnapshot
+
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    stmt = select(QuotaSnapshot).where(QuotaSnapshot.ts >= since)
+    if provider_id:
+        stmt = stmt.where(QuotaSnapshot.provider_id == provider_id)
+    if account_id:
+        stmt = stmt.where(QuotaSnapshot.account_id == account_id)
+    if window_type and window_type != "all":
+        stmt = stmt.where(QuotaSnapshot.window_type == window_type)
+
+    # Ascending for delta computation; reversed at output time
+    stmt = stmt.order_by(QuotaSnapshot.ts.asc())
+    all_snaps = list(session.exec(stmt).all())
+
+    # Build window-level token/cost lookup keyed by (provider, account, window_type, minute_bucket)
+    # reset_at and window_end timestamps differ by up to ~1s due to insertion jitter, so we
+    # truncate to the minute for matching rather than relying on exact equality.
+    from app.models.db import UsageEvent, UsageWindow
+    from app.services.window_closer import WINDOW_DURATION
+
+    def _min_bucket(dt: datetime) -> datetime:
+        return dt.replace(second=0, microsecond=0)
+
+    # Use naive UTC — QuotaSnapshot.reset_at is stored without tzinfo
+    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    window_stats: dict[tuple, dict] = {}
+
+    # Closed windows: reset_at <= now → find matching usage_windows by minute-bucketed window_end
+    past_resets = {s.reset_at for s in all_snaps if s.reset_at and s.reset_at <= now_naive}
+    if past_resets:
+        min_t = min(past_resets) - timedelta(minutes=2)
+        max_t = max(past_resets) + timedelta(minutes=2)
+        for w in session.exec(
+            select(UsageWindow).where(
+                UsageWindow.window_end >= min_t,
+                UsageWindow.window_end <= max_t,
+                UsageWindow.model_id == "",
+                UsageWindow.sidecar_id == "",
+            )
+        ).all():
+            tokens = (
+                (w.tokens_input or 0)
+                + (w.tokens_output or 0)
+                + (w.tokens_cache_read or 0)
+                + (w.tokens_cache_create or 0)
+                + (w.tokens_reasoning or 0)
+            )
+            key = (w.provider_id, w.account_id, w.window_type, _min_bucket(w.window_end))
+            if key not in window_stats:
+                window_stats[key] = {
+                    "tokens_total": tokens or None,
+                    "cost_usd": w.cost_usd or None,
+                }
+
+    # Open windows: reset_at > now → sum usage_events in [window_start, now]
+    # LatestUsage cards for quota-only providers (e.g. Claude) carry no token/cost data,
+    # so we compute running totals directly from events.
+    live_series = {
+        (s.provider_id, s.account_id, s.window_type, _min_bucket(s.reset_at))
+        for s in all_snaps
+        if s.reset_at and s.reset_at > now_naive and s.window_type in WINDOW_DURATION
+    }
+    for pid, aid, wt, min_reset in live_series:
+        actual_reset = next(
+            (
+                s.reset_at
+                for s in all_snaps
+                if s.provider_id == pid
+                and s.account_id == aid
+                and s.window_type == wt
+                and s.reset_at
+                and s.reset_at > now_naive
+            ),
+            None,
+        )
+        if not actual_reset:
+            continue
+        window_start = actual_reset - WINDOW_DURATION[wt]
+        events = session.exec(
+            select(UsageEvent).where(
+                UsageEvent.provider_id == pid,
+                UsageEvent.account_id == aid,
+                UsageEvent.ts >= window_start,
+                UsageEvent.ts <= now_naive,
+            )
+        ).all()
+        tokens = sum(
+            (e.tokens_input or 0)
+            + (e.tokens_output or 0)
+            + (e.tokens_cache_read or 0)
+            + (e.tokens_cache_create or 0)
+            + (e.tokens_reasoning or 0)
+            for e in events
+        )
+        cost = sum(e.cost_usd or 0.0 for e in events)
+        window_stats[(pid, aid, wt, min_reset)] = {
+            "tokens_total": tokens or None,
+            "cost_usd": cost or None,
+        }
+
+    # Group into per-series lists and compute deltas
+    series: dict[tuple, list] = {}
+    for s in all_snaps:
+        key = (s.provider_id, s.account_id, s.window_type, s.model_id)
+        series.setdefault(key, []).append(s)
+
+    rows: list[dict] = []
+    for (pid, aid, wt, mid), snaps in series.items():
+        service = _PROVIDER_LABELS.get(pid, pid.capitalize())
+        model_label = mid.capitalize() if mid else "-"
+        for i, s in enumerate(snaps):
+            prev_pct = snaps[i - 1].pct_used if i > 0 else None
+            delta = (
+                round(s.pct_used - prev_pct, 2)
+                if (prev_pct is not None and s.pct_used is not None)
+                else None
+            )
+            ts_iso = s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00"
+            reset_iso = (
+                (s.reset_at.isoformat() if s.reset_at.tzinfo else s.reset_at.isoformat() + "+00:00")
+                if s.reset_at
+                else None
+            )
+            stats = (
+                window_stats.get((pid, aid, wt, _min_bucket(s.reset_at)), {}) if s.reset_at else {}
+            )
+            rows.append(
+                {
+                    "provider_id": pid,
+                    "account_id": aid,
+                    "service_name": service,
+                    "window_type": wt,
+                    "model_id": mid,
+                    "model_label": model_label,
+                    "ts": ts_iso,
+                    "pct_used": s.pct_used,
+                    "delta": delta,
+                    "reset_at": reset_iso,
+                    "tokens_total": stats.get("tokens_total"),
+                    "cost_usd": stats.get("cost_usd"),
+                }
+            )
+
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+
+    total = len(rows)
+    offset = (page - 1) * limit
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "rows": rows[offset : offset + limit],
+    }
+
+
 def query_chart(
     session: Session,
     *,
