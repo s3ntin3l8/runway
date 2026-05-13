@@ -23,6 +23,37 @@ def _join_distinct(
 _QUOTA_FIELDS = frozenset({"used_value", "limit_value", "pct_used", "unit_type", "currency"})
 
 
+def record_quota_snapshot(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    window_type: str,
+    model_id: str,
+    pct_used: float,
+    reset_at=None,
+) -> None:
+    """Append a quota snapshot row. Silently ignores same-second duplicates."""
+    from app.models.db import QuotaSnapshot
+
+    ts = datetime.now(UTC)
+    try:
+        with session.begin_nested():
+            session.add(
+                QuotaSnapshot(
+                    provider_id=provider_id,
+                    account_id=account_id,
+                    window_type=window_type,
+                    model_id=model_id,
+                    ts=ts,
+                    pct_used=pct_used,
+                    reset_at=reset_at,
+                )
+            )
+    except Exception:
+        pass  # unique constraint violation = same-second duplicate, safe to ignore
+
+
 def merge_card_json(existing: str | None, incoming: dict) -> str:
     """Merge an incoming card payload into an existing row's JSON; pass partial dicts, not full model_dump()."""
     if not existing:
@@ -194,3 +225,25 @@ def upsert_latest_usage(
                 f"Stale row eviction failed for "
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
+
+    # Append quota snapshot for % used history (only when quota data is present)
+    if card.pct_used is not None:
+        reset_at_dt = None
+        if card.reset_at:
+            try:
+                reset_at_dt = datetime.fromisoformat(
+                    card.reset_at.replace("Z", "+00:00")
+                    if isinstance(card.reset_at, str)
+                    else card.reset_at.isoformat()
+                )
+            except Exception:
+                pass
+        record_quota_snapshot(
+            session,
+            provider_id=card.provider_id,
+            account_id=canonical_account_id,
+            window_type=card.window_type,
+            model_id=model_id,
+            pct_used=card.pct_used,
+            reset_at=reset_at_dt,
+        )
