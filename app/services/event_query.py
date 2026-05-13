@@ -1389,12 +1389,15 @@ def query_windows(
             continue
         reset_at = card.get("reset_at")
         token_usage = card.get("token_usage") or {}
+        base_name = card.get("service_name", lu.provider_id.capitalize())
+        variant = lu.variant if lu.variant and lu.variant != "default" else None
+        service_name = f"{base_name} · {variant}" if variant else base_name
         rows.append(
             {
                 "provider_id": lu.provider_id,
                 "account_id": lu.account_id,
                 "account_label": card.get("account_label", lu.account_id),
-                "service_name": card.get("service_name", lu.provider_id.capitalize()),
+                "service_name": service_name,
                 "window_type": wt,
                 "window_start": None,
                 "window_end": reset_at,
@@ -1589,7 +1592,14 @@ def query_window_detail(
         .order_by(QuotaSnapshot.ts)
     ).all()
 
-    fill_series = [{"ts": s.ts.isoformat(), "pct_used": s.pct_used} for s in snaps]
+    # Deduplicate: keep last snapshot per calendar day (polls fire every ~30s, all same value)
+    day_map: dict[str, object] = {}
+    for s in snaps:
+        day_map[s.ts.strftime("%Y-%m-%d")] = s
+    fill_series = [
+        {"ts": s.ts.isoformat(), "pct_used": s.pct_used}
+        for s in sorted(day_map.values(), key=lambda x: x.ts)
+    ]
 
     start_key = window_start.strftime("%Y-%m-%d")
     end_key = window_end.strftime("%Y-%m-%d")
