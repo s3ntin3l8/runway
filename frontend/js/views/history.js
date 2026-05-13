@@ -1,4 +1,6 @@
 import { fetchHistoryDeltas } from '../api.js';
+import { buildProviderSparklineStrip } from '../components.js';
+import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
 
 const historyState = {
@@ -7,7 +9,6 @@ const historyState = {
     metric: 'percent',           // 'percent' | 'tokens' | 'cost'
     windowFilter: 'all',         // 'all' | 'session' | 'daily' | 'weekly' | 'monthly'
     page: 1,
-    splitModelFor: null,         // provider_id being drilled, or null
     _windowsCache: null,
     _chartCache: null,
     _deltasCache: null,
@@ -57,12 +58,7 @@ export function setHistoryMetric(metric) {
     document.querySelectorAll('#history-metric-btns .toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.metric === metric);
     });
-    // Table re-renders from cache; chart needs re-fetch (metric is API param)
-    renderWindowTable();
-    fetchHistoryChart().then(data => {
-        historyState._chartCache = data;
-        renderHistoryChart();
-    }).catch(e => console.warn('chart re-fetch failed', e));
+    loadHistoryView();
 }
 
 export function setHistoryWindow(windowType) {
@@ -121,8 +117,6 @@ async function fetchHistoryChart() {
     const params = new URLSearchParams({ days: historyState.days, metric: historyState.metric });
     if (historyState.activeProviders?.size === 1)
         params.set('provider_id', [...historyState.activeProviders][0]);
-    if (historyState.splitModelFor)
-        params.set('split_model_for', historyState.splitModelFor);
     const r = await fetch(`/api/v1/usage/history/chart?${params}`);
     if (!r.ok) throw new Error(`chart ${r.status}`);
     return r.json();
@@ -276,148 +270,71 @@ function renderHistoryTiles(deltas) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart rendering
+// Chart rendering — converts new API format to old Chart.js snapshots format
 // ---------------------------------------------------------------------------
 
-const CHART_COLORS = {
-    anthropic: '#d4a017', gemini: '#4a9eff', chatgpt: '#10a37f',
-    opencode: '#7c5cbf', openai: '#10a37f', claude: '#d4a017',
-};
-function chartColor(key) { return CHART_COLORS[key] || '#888'; }
+function _seriesPercent(series) {
+    // percent series → [{provider_id, service_name, timestamp, used_value, limit_value, unit_type, window_type}]
+    const rows = [];
+    for (const s of series) {
+        for (const p of s.points) {
+            rows.push({
+                provider_id: s.provider_id,
+                service_name: s.label,
+                timestamp: p.ts,
+                used_value: p.pct_used,
+                limit_value: 100,
+                unit_type: 'percent',
+                window_type: s.window_type,
+                token_usage: null,
+            });
+        }
+    }
+    return rows;
+}
+
+function _barSnapshots(bars, metric) {
+    // daily bars → [{provider_id, service_name, timestamp, used_value, unit_type, window_type, token_usage}]
+    const rows = [];
+    for (const bar of bars) {
+        for (const seg of bar.segments) {
+            rows.push({
+                provider_id: seg.provider_id,
+                service_name: seg.label,
+                timestamp: bar.date + 'T12:00:00Z',
+                used_value: seg.value,
+                limit_value: null,
+                unit_type: metric === 'cost' ? 'currency' : 'tokens',
+                window_type: 'day',
+                token_usage: metric === 'tokens' ? { total: seg.value } : null,
+            });
+        }
+    }
+    return rows;
+}
 
 function renderHistoryChart() {
-    const wrap = document.getElementById('chart-wrap');
-    if (!wrap) return;
     const cache = historyState._chartCache;
-    if (!cache) { wrap.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
+    if (!cache) return;
 
+    let snapshots;
     if (historyState.metric === 'percent') {
-        renderFillCurveChart(wrap, cache.series || []);
+        snapshots = _seriesPercent(cache.series || []);
     } else {
-        renderDailyBarChart(wrap, cache.bars || []);
-    }
-}
-
-function renderFillCurveChart(panel, series) {
-    if (!series.length) {
-        panel.innerHTML = '<p class="ht-empty">No quota data for selected range.</p>';
-        return;
+        snapshots = _barSnapshots(cache.bars || [], historyState.metric);
     }
 
-    const allTs = [...new Set(series.flatMap(s => s.points.map(p => p.ts)))].sort();
-    if (!allTs.length) { panel.innerHTML = '<p class="ht-empty">No data.</p>'; return; }
+    // Filter by active providers
+    const active = historyState.activeProviders;
+    const filtered = active ? snapshots.filter(s => active.has(s.provider_id)) : snapshots;
 
-    const W = panel.offsetWidth || 800, H = 200;
-    const PAD = { top: 10, right: 20, bottom: 30, left: 40 };
-    const chartW = W - PAD.left - PAD.right;
-    const chartH = H - PAD.top - PAD.bottom;
-
-    const tMin = new Date(allTs[0]).getTime();
-    const tMax = new Date(allTs[allTs.length - 1]).getTime();
-    const xScale = t => tMax === tMin ? PAD.left : PAD.left + ((new Date(t).getTime() - tMin) / (tMax - tMin)) * chartW;
-    const yScale = pct => PAD.top + chartH - (pct / 100) * chartH;
-
-    let svgPaths = '';
-    let legendItems = '';
-
-    for (const s of series) {
-        if (!s.points.length) continue;
-        const col = chartColor(s.provider_id);
-        const pts = s.points.map(p => `${xScale(p.ts).toFixed(1)},${yScale(p.pct_used).toFixed(1)}`).join(' ');
-        const strokeW = s.model_id ? '1.5' : '2';
-        const dash = s.model_id ? 'stroke-dasharray="4,2"' : '';
-        svgPaths += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${strokeW}" ${dash} opacity="0.85"/>`;
-
-        const isExpanded = historyState.splitModelFor === s.provider_id;
-        legendItems += `<span class="hw-legend-chip ${isExpanded ? 'hw-legend-expanded' : ''}"
-          style="--chip-color:${col}"
-          onclick="toggleChartModelSplit('${escHtml(s.provider_id)}')"
-        >${escHtml(s.label)}</span>`;
+    // Sparkline strip
+    const stripEl = document.getElementById('history-sparkline-strip');
+    if (stripEl) {
+        stripEl.innerHTML = buildProviderSparklineStrip(snapshots, active, historyState.days);
     }
 
-    let yLabels = '';
-    for (const pct of [0, 25, 50, 75, 100]) {
-        const y = yScale(pct).toFixed(1);
-        yLabels += `<text x="${PAD.left - 5}" y="${y}" text-anchor="end" font-size="10" fill="#888">${pct}%</text>
-        <line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(128,128,128,0.2)" stroke-width="1"/>`;
-    }
-
-    panel.innerHTML = `
-      <div class="hw-legend">${legendItems}</div>
-      <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}">
-        ${yLabels}${svgPaths}
-      </svg>`;
-}
-
-function renderDailyBarChart(panel, bars) {
-    if (!bars.length) {
-        panel.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
-        return;
-    }
-
-    const W = panel.offsetWidth || 800, H = 200;
-    const PAD = { top: 10, right: 20, bottom: 30, left: 60 };
-    const chartW = W - PAD.left - PAD.right;
-    const chartH = H - PAD.top - PAD.bottom;
-    const barW = Math.max(4, Math.min(40, chartW / bars.length - 2));
-
-    const maxVal = Math.max(...bars.map(b => b.segments.reduce((s, seg) => s + (seg.value || 0), 0)));
-    if (!maxVal) { panel.innerHTML = '<p class="ht-empty">No data.</p>'; return; }
-
-    const yScale = v => PAD.top + chartH - (v / maxVal) * chartH;
-    const isCost = historyState.metric === 'cost';
-    const fmt = v => isCost
-        ? `$${v.toFixed(2)}`
-        : v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}k` : String(Math.round(v));
-
-    const xStep = chartW / bars.length;
-    let rects = '', xLabels = '';
-
-    bars.forEach((bar, i) => {
-        const x = PAD.left + i * xStep + xStep / 2 - barW / 2;
-        let stackY = PAD.top + chartH;
-        for (const seg of bar.segments) {
-            const h = ((seg.value || 0) / maxVal) * chartH;
-            stackY -= h;
-            rects += `<rect x="${x.toFixed(1)}" y="${stackY.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}"
-              fill="${chartColor(seg.provider_id)}" opacity="0.85">
-              <title>${escHtml(seg.label)}: ${fmt(seg.value)}</title></rect>`;
-        }
-        if (i % Math.max(1, Math.floor(bars.length / 8)) === 0) {
-            xLabels += `<text x="${(x + barW / 2).toFixed(1)}" y="${PAD.top + chartH + 14}" text-anchor="middle" font-size="9" fill="#888">${bar.date.slice(5)}</text>`;
-        }
-    });
-
-    let yLabels = '';
-    for (const frac of [0, 0.5, 1]) {
-        const v = maxVal * frac;
-        const y = yScale(v).toFixed(1);
-        yLabels += `<text x="${PAD.left - 5}" y="${y}" text-anchor="end" font-size="10" fill="#888">${fmt(v)}</text>
-        <line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(128,128,128,0.2)" stroke-width="1"/>`;
-    }
-
-    const providers = [...new Set(bars.flatMap(b => b.segments.map(s => s.provider_id)))];
-    const legendItems = providers.map(p => {
-        const isExpanded = historyState.splitModelFor === p;
-        return `<span class="hw-legend-chip ${isExpanded ? 'hw-legend-expanded' : ''}"
-          style="--chip-color:${chartColor(p)}"
-          onclick="toggleChartModelSplit('${escHtml(p)}')"
-        >${escHtml(p.charAt(0).toUpperCase() + p.slice(1))}</span>`;
-    }).join('');
-
-    panel.innerHTML = `
-      <div class="hw-legend">${legendItems}</div>
-      <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}">
-        ${yLabels}${rects}${xLabels}
-      </svg>`;
-}
-
-export function toggleChartModelSplit(providerId) {
-    historyState.splitModelFor = (historyState.splitModelFor === providerId) ? null : providerId;
-    fetchHistoryChart().then(data => {
-        historyState._chartCache = data;
-        renderHistoryChart();
-    }).catch(e => console.warn('chart drill-down failed', e));
+    updateCharts(filtered, historyState.metric, historyState.days, historyState.windowFilter, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -671,6 +588,7 @@ export async function loadHistoryView() {
         renderHistoryFromCache();
     } catch (e) {
         console.error('history load failed', e);
+        destroyCharts();
         if (container) container.innerHTML = `<p class="ht-empty" style="color:var(--crit);">Failed to load: ${escHtml(e.message)}</p>`;
     }
 }
@@ -685,6 +603,5 @@ export function initHistoryView() {
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.clearHistoryFilter = clearHistoryFilter;
     window.toggleWindowExpand = toggleWindowExpand;
-    window.toggleChartModelSplit = toggleChartModelSplit;
     window.hwGoPage = hwGoPage;
 }
