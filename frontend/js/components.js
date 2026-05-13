@@ -1667,7 +1667,7 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const primaryCard = _pickPrimaryPoolCard(allCards) || critical;
     const modelStripHtml = _fcModelsStrip(primaryCard, winAgg, cumulative);
     const fuelDumpHtml = _fcFuelDump(primaryCard, contributions, winAgg, cumulative);
-    const cumeHtml = _fcCume(cumulative, isPayg);
+    const cumeHtml = _fcCume(cumulative, isPayg, providerId);
     const podsHtml = _fcPods(secondary, contributions, primaryCard, winAgg);
 
     const cKey = `${providerId}|${accountId}`;
@@ -2149,12 +2149,15 @@ function _formatCost(usd) {
     return `$${usd.toFixed(2)}`;
 }
 
-function _fcCume(cumulative, _isPayg) {
+function _fcCume(cumulative, _isPayg, providerId) {
     if (!cumulative) {
+        const sub = providerId === 'github'
+            ? 'quota-based · no usage events'
+            : 'awaiting sidecar deltas';
         return `<div class="fc-cume">
             <div class="row">
                 <span class="label">No cumulative data</span>
-                <span class="sub">awaiting sidecar deltas</span>
+                <span class="sub">${sub}</span>
             </div>
         </div>`;
     }
