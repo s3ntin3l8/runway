@@ -370,6 +370,7 @@ function renderSnapshotTable() {
           <td class="hw-ts-cell">${tsStr}</td>
           <td class="hw-type-cell"><span class="hw-window-badge">${escHtml(r.window_type)}</span></td>
           <td class="hw-provider-cell">${escHtml(r.service_name || r.provider_id)}${liveBadge}</td>
+          <td class="hw-account-cell" title="${escHtml(r.account_id)}">${escHtml(r.account_id)}</td>
           <td class="hw-model-cell">${escHtml(r.model_label || '-')}</td>
           <td class="hw-metric-cell"><div class="hw-metric-inner">${fillBar}${escHtml(pctStr)}</div></td>
           <td class="hw-delta-cell">${deltaStr}</td>
@@ -388,7 +389,7 @@ function renderSnapshotTable() {
     container.innerHTML = `
       <table class="hw-table">
         <thead><tr>
-          <th>TIME</th><th>TYPE</th><th>PROVIDER</th><th>MODEL</th><th>% USED</th><th>DELTA</th><th>TOKENS</th><th>COST</th>
+          <th>TIME</th><th>TYPE</th><th>PROVIDER</th><th>ACCOUNT</th><th>MODEL</th><th>% USED</th><th>DELTA</th><th>TOKENS</th><th>COST</th>
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
