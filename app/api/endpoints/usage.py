@@ -476,7 +476,6 @@ async def get_history_chart(
     account_id: str | None = None,
     days: float = Query(default=30.0, ge=0.01, le=365.0),
     metric: str = Query(default="percent", pattern="^(percent|tokens|cost)$"),
-    split_model_for: str | None = None,
     session: Session = Depends(get_session),
 ):
     """Chart data: percent → fill curves; tokens/cost → daily bars."""
@@ -486,7 +485,6 @@ async def get_history_chart(
         account_id=account_id,
         days=days,
         metric=metric,
-        split_model_for=split_model_for,
     )
 
 

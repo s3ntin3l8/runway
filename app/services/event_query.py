@@ -1628,7 +1628,6 @@ def query_chart(
     account_id: str | None = None,
     days: float = 30.0,
     metric: str = "percent",
-    split_model_for: str | None = None,
 ) -> dict:
     """Return chart data.
 
@@ -1659,7 +1658,7 @@ def query_chart(
 
         series_map: dict[str, dict] = {}
         for s in snaps:
-            use_model = s.model_id if (split_model_for and s.provider_id == split_model_for) else ""
+            use_model = s.model_id or ""
             key = f"{s.provider_id}::{s.window_type}::{use_model}"
             if key not in series_map:
                 label = f"{s.provider_id.capitalize()} · {s.window_type.capitalize()}"
@@ -1706,9 +1705,7 @@ def query_chart(
             if pct is None:
                 continue
             wt = lu.window_type
-            use_model = (
-                lu.model_id if (split_model_for and lu.provider_id == split_model_for) else ""
-            )
+            use_model = lu.model_id or ""
             key = f"{lu.provider_id}::{wt}::{use_model}"
             if key not in series_map:
                 label = f"{lu.provider_id.capitalize()} · {wt.capitalize()}"
@@ -1738,14 +1735,18 @@ def query_chart(
     if account_id:
         stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
 
+    all_bar_rows = list(session.exec(stmt.order_by(UsagePeriodRollup.period_key)).all())
+    # Providers that have per-model rows for a given date — used to skip their aggregate row
+    has_per_model: set[tuple[str, str]] = {
+        (r.provider_id, r.period_key) for r in all_bar_rows if r.model_id != ""
+    }
+
     bars_map: dict[str, list] = {}
-    for r in session.exec(stmt.order_by(UsagePeriodRollup.period_key)).all():
-        use_model = r.model_id if (split_model_for and r.provider_id == split_model_for) else ""
-        if r.model_id != "" and r.provider_id != split_model_for:
-            continue
-        if r.model_id != use_model:
+    for r in all_bar_rows:
+        if r.model_id == "" and (r.provider_id, r.period_key) in has_per_model:
             continue
 
+        use_model = r.model_id
         date = r.period_key
         if date not in bars_map:
             bars_map[date] = []

@@ -274,6 +274,7 @@ function _seriesPercent(series) {
                 limit_value: 100,
                 unit_type: 'percent',
                 window_type: s.window_type,
+                model_id: s.model_id,
                 token_usage: null,
             });
         }
@@ -294,6 +295,7 @@ function _barSnapshots(bars, metric) {
                 limit_value: null,
                 unit_type: metric === 'cost' ? 'currency' : 'tokens',
                 window_type: 'day',
+                model_id: seg.model_id,
                 token_usage: metric === 'tokens' ? { total: seg.value } : null,
             });
         }
@@ -335,7 +337,8 @@ function renderSnapshotTable() {
     const cache = historyState._windowsCache;
     if (!cache) { container.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
 
-    const rows = cache.rows || [];
+    const allRows = cache.rows || [];
+    const rows = allRows.filter(r => r.pct_used == null || r.pct_used > 0);
     if (!rows.length) {
         container.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
         return;
@@ -383,7 +386,9 @@ function renderSnapshotTable() {
     if (metaEl) {
         const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
             ?? `${historyState.days}d`;
-        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
+        const hiddenCount = allRows.length - rows.length;
+        const hiddenNote = hiddenCount > 0 ? ` · ${hiddenCount} zero-usage hidden` : '';
+        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}${hiddenNote}`;
     }
 
     container.innerHTML = `

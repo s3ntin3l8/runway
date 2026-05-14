@@ -33,10 +33,13 @@ def record_quota_snapshot(
     pct_used: float,
     reset_at=None,
 ) -> None:
-    """Append a quota snapshot row. Silently ignores same-second duplicates."""
+    """Append a quota snapshot row. Silently ignores same-minute duplicates."""
     from app.models.db import QuotaSnapshot
 
-    ts = datetime.now(UTC)
+    # Truncate to the minute so that a sidecar push followed immediately by a
+    # server-side poller wake (both within the same minute) don't produce two
+    # identical-looking rows in the history table.
+    ts = datetime.now(UTC).replace(second=0, microsecond=0)
     try:
         with session.begin_nested():
             session.add(
@@ -51,7 +54,7 @@ def record_quota_snapshot(
                 )
             )
     except Exception:
-        pass  # unique constraint violation = same-second duplicate, safe to ignore
+        pass  # unique constraint violation = same-minute duplicate, safe to ignore
 
 
 def merge_card_json(existing: str | None, incoming: dict) -> str:
