@@ -30,6 +30,22 @@ def test_seed_is_idempotent():
     assert len(rows) == len(PRICING_SEED)
 
 
+def test_seed_chatgpt_gpt54_mini_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-5.4-mini",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.75
+    assert row.output_per_mtok == 4.50
+    assert row.cache_read_per_mtok == 0.075
+    assert row.cache_create_per_mtok == 0.0
+
+
 def test_seed_preserves_anthropic_sonnet_rates():
     s = _make_session()
     seed_pricing_table(s)

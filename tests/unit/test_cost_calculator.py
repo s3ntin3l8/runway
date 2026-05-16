@@ -51,6 +51,23 @@ def test_anthropic_sonnet_cost_includes_cache():
     assert cost == 18.00 + 0.30 + 3.75
 
 
+def test_chatgpt_gpt54_mini_cost():
+    """1M input + 1M output on gpt-5.4-mini = $0.75 + $4.50 = $5.25."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="chatgpt",
+        model_id="gpt-5.4-mini",
+        ts=datetime(2026, 5, 16, tzinfo=UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 5.25
+
+
 def test_unknown_model_returns_zero():
     s = _seeded_session()
     cost = compute_event_cost(

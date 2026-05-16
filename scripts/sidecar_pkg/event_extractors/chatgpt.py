@@ -23,14 +23,18 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 
 
 def _normalize_chatgpt_model(model: str) -> str:
-    """Normalize raw model strings to short display buckets.
+    """Normalize raw model strings to canonical pricing-table ids.
 
     Examples:
-        "gpt-5-codex" → "codex"
-        "gpt-5"       → "gpt-5"
-        "gpt-4o"      → "gpt-4o"
-        "gpt-4"       → "gpt-4"
-        ""            → "unknown"
+        "gpt-5-codex"   → "codex"
+        "gpt-5.3-codex" → "codex"
+        "gpt-5.5"       → "gpt-5.5"
+        "gpt-5.4-mini"  → "gpt-5.4-mini"
+        "gpt-5.4-nano"  → "gpt-5.4-nano"
+        "gpt-5.4-pro"   → "gpt-5.4-pro"
+        "gpt-4o"        → "gpt-4o"
+        "gpt-4"         → "gpt-4"
+        ""              → "unknown"
     """
     m = (model or "").lower().strip()
     if not m:
@@ -38,15 +42,17 @@ def _normalize_chatgpt_model(model: str) -> str:
     # Codex-specific model class
     if "codex" in m:
         return "codex"
-    # GPT family — keep the short series name
+    # GPT family
     if m.startswith("gpt-"):
-        # "gpt-5-foo" → "gpt-5", "gpt-4o" → "gpt-4o", "gpt-4" → "gpt-4"
         parts = m.split("-")
         if len(parts) >= 2:
             version = parts[1]
             # Append "o" suffix if present (e.g. "gpt-4o")
             if len(parts) >= 3 and parts[2] == "o":
                 return f"gpt-{version}o"
+            # Preserve size/tier variants (mini/nano/pro)
+            if len(parts) >= 3 and parts[2] in ("mini", "nano", "pro"):
+                return f"gpt-{version}-{parts[2]}"
             return f"gpt-{version}"
     return m
 
