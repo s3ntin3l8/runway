@@ -36,6 +36,34 @@ def test_normalizes_empty_model():
     assert _normalize_chatgpt_model("") == "unknown"
 
 
+def test_normalizes_gpt54():
+    assert _normalize_chatgpt_model("gpt-5.4") == "gpt-5.4"
+
+
+def test_normalizes_gpt54_mini():
+    assert _normalize_chatgpt_model("gpt-5.4-mini") == "gpt-5.4-mini"
+
+
+def test_normalizes_gpt54_nano():
+    assert _normalize_chatgpt_model("gpt-5.4-nano") == "gpt-5.4-nano"
+
+
+def test_normalizes_gpt54_pro():
+    assert _normalize_chatgpt_model("gpt-5.4-pro") == "gpt-5.4-pro"
+
+
+def test_normalizes_gpt55():
+    assert _normalize_chatgpt_model("gpt-5.5") == "gpt-5.5"
+
+
+def test_normalizes_gpt55_pro():
+    assert _normalize_chatgpt_model("gpt-5.5-pro") == "gpt-5.5-pro"
+
+
+def test_normalizes_versioned_codex():
+    assert _normalize_chatgpt_model("gpt-5.3-codex") == "codex"
+
+
 # ---------------------------------------------------------------------------
 # Extraction from fixture
 # ---------------------------------------------------------------------------
