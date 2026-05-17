@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.config import settings
 from app.core.db import get_session
@@ -17,6 +17,7 @@ from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.models._datetime import iso_utc
 from app.models.db import (
+    AuditLog,
     LatestUsage,
     ProviderConfig,
     SidecarRegistry,
@@ -91,6 +92,39 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to sync collectors for status: {e}")
     return manager.get_collector_stats()
+
+
+@router.get("/audit-log")
+@limiter.limit("30/minute")
+async def get_audit_log(
+    request: Request,
+    limit: int = 200,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return the most recent admin-mutation audit entries.
+
+    Limited to `limit` rows (caller-tunable, server-capped at 1000) and
+    ordered newest-first. Available to any caller — the table records
+    only metadata about admin actions, not the underlying credentials
+    or payloads themselves. Tighten with require_admin_key if a future
+    change starts persisting secrets here.
+    """
+    capped = max(1, min(limit, 1000))
+    rows = session.exec(select(AuditLog).order_by(col(AuditLog.ts).desc()).limit(capped)).all()
+    return {
+        "entries": [
+            {
+                "id": r.id,
+                "ts": iso_utc(r.ts) if r.ts else None,
+                "actor": r.actor,
+                "source_ip": r.source_ip,
+                "action": r.action,
+                "target_id": r.target_id,
+                "payload_json": r.payload_json,
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.post("/force-collect")

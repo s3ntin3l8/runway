@@ -14,6 +14,7 @@ from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.models.db import ProviderConfig, SidecarRegistry, SystemConfig
 from app.models.schemas import IngestRequest
+from app.services import audit_log
 from app.services.accumulator import upsert_latest_usage
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
@@ -398,6 +399,13 @@ async def update_sidecar(
     row = fleet_registry.update_sidecar(sidecar_id, body.custom_name, body.tags, session)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    audit_log.record(
+        session,
+        request,
+        action="sidecar.update",
+        target_id=sidecar_id,
+        payload={"custom_name": body.custom_name, "tags": body.tags},
+    )
     return fleet_registry.to_dict(row)
 
 
@@ -413,6 +421,7 @@ async def delete_sidecar(
     deleted = fleet_registry.delete_sidecar(sidecar_id, session)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    audit_log.record(session, request, action="sidecar.delete", target_id=sidecar_id)
     return {"status": "deleted", "sidecar_id": sidecar_id}
 
 
@@ -440,6 +449,7 @@ async def pause_sidecar(
     """Pause collection on the named sidecar. The sidecar continues to check
     in but receives no poll instructions until resumed."""
     _set_sidecar_collection_enabled(sidecar_id, False, session)
+    audit_log.record(session, request, action="sidecar.pause", target_id=sidecar_id)
     return {"status": "paused", "sidecar_id": sidecar_id, "collection_enabled": False}
 
 
@@ -453,6 +463,7 @@ async def resume_sidecar(
 ) -> dict[str, Any]:
     """Resume collection on the named sidecar."""
     _set_sidecar_collection_enabled(sidecar_id, True, session)
+    audit_log.record(session, request, action="sidecar.resume", target_id=sidecar_id)
     return {"status": "resumed", "sidecar_id": sidecar_id, "collection_enabled": True}
 
 

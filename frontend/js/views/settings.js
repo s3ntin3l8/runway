@@ -129,6 +129,7 @@ function renderSettingsSection(name) {
     else if (name === 'webhooks') renderWebhooksSection(pane);
     else if (name === 'system') renderSystemSection(pane);
     else if (name === 'display') renderDisplaySection(pane);
+    else if (name === 'audit') renderAuditSection(pane);
 }
 
 // ─── Providers ───────────────────────────────────────────────────────────────
@@ -915,4 +916,63 @@ function renderDisplaySection(pane) {
 
 export function initSettingsView() {
     // Event listeners are attached after each section render
+}
+
+
+// ─── Audit log ────────────────────────────────────────────────────────────────
+
+async function renderAuditSection(pane) {
+    let entries = [];
+    let error = '';
+    try {
+        const res = await fetch('/api/v1/system/audit-log?limit=200');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        entries = (await res.json()).entries || [];
+    } catch (e) {
+        error = e.message;
+    }
+
+    if (error) {
+        pane.innerHTML = `<div class="settings-section">
+            <h2 class="sec-h">Audit log</h2>
+            <p style="padding:12px;color:var(--crit);">Failed to load: ${escapeHTML(error)}</p>
+        </div>`;
+        return;
+    }
+
+    if (entries.length === 0) {
+        pane.innerHTML = `<div class="settings-section">
+            <h2 class="sec-h">Audit log</h2>
+            <p class="sec-sub">Admin mutations (sidecar pause/resume/delete/update) land here. No entries yet.</p>
+        </div>`;
+        return;
+    }
+
+    const rows = entries.map(e => {
+        const ts = e.ts ? new Date(e.ts).toLocaleString() : '—';
+        return `<tr>
+            <td class="al-ts">${escapeHTML(ts)}</td>
+            <td><span class="al-action">${escapeHTML(e.action || '')}</span></td>
+            <td>${escapeHTML(e.target_id || '—')}</td>
+            <td>${escapeHTML(e.actor || '—')}</td>
+            <td class="al-ip">${escapeHTML(e.source_ip || '—')}</td>
+        </tr>`;
+    }).join('');
+
+    pane.innerHTML = `<div class="settings-section">
+        <h2 class="sec-h">Audit log</h2>
+        <p class="sec-sub">Most recent ${entries.length} admin mutations, newest first.</p>
+        <table class="al-table" style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">
+            <thead>
+                <tr style="text-align:left;color:var(--ink-3);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;">
+                    <th style="padding:6px 8px;">Time</th>
+                    <th style="padding:6px 8px;">Action</th>
+                    <th style="padding:6px 8px;">Target</th>
+                    <th style="padding:6px 8px;">Actor</th>
+                    <th style="padding:6px 8px;">Source IP</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </div>`;
 }
