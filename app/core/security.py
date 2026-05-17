@@ -5,6 +5,12 @@ from fastapi import Header, HTTPException, Request
 from app.core.config import settings
 
 
+def _stash_actor(request: Request, actor: str) -> None:
+    """Record who passed the admin gate so the audit log can attribute the
+    mutation. Read by `app.services.audit_log.resolve_actor`."""
+    request.state.admin_actor = actor
+
+
 async def require_admin_key(
     request: Request,
     x_admin_key: str = Header(default=None),
@@ -18,8 +24,12 @@ async def require_admin_key(
     2. Request originates from an IP in TRUSTED_PROXY_IPS AND carries a
        proxy-asserted user header (X-Forwarded-User, Remote-User). Without
        the IP allowlist the header is trivially forgeable by any client.
+
+    Side effect: sets `request.state.admin_actor` so the audit log can
+    record who attempted the mutation.
     """
     if settings.ADMIN_API_KEY is None:
+        _stash_actor(request, "no-admin-key-configured")
         return
 
     # 1. Local trust (zero-touch development/local usage)
@@ -29,6 +39,7 @@ async def require_admin_key(
         and request.client.host in ("127.0.0.1", "::1")
         and settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
     ):
+        _stash_actor(request, "localhost")
         return
 
     # 2. Reverse proxy trust — gated by IP allowlist so the headers can't be
@@ -41,8 +52,10 @@ async def require_admin_key(
         and request.client.host in trusted
         and (x_forwarded_user or remote_user)
     ):
+        _stash_actor(request, x_forwarded_user or remote_user)
         return
 
     # 3. Standard API key auth
     if x_admin_key != settings.ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+    _stash_actor(request, "api-key")

@@ -349,3 +349,31 @@ class ProviderPricing(SQLModel, table=True):
     cache_read_per_mtok: float = Field(default=0.0)
     cache_create_per_mtok: float = Field(default=0.0)
     notes: str | None = None
+
+
+class AuditLog(SQLModel, table=True):
+    """Append-only record of admin mutations.
+
+    Captures every successful state-changing call against the admin
+    surface (sidecar pause/resume/delete/patch, plus future targets).
+    Closes audit finding S7: logger.info-only records get rotated with
+    the container, leaving no investigative trail when something
+    surprising happens. Designed as an authoritative diagnostic, not a
+    legal-grade trail — same trust model as the rest of Runway.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_ts_desc", "ts"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    ts: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    # Who attempted the action. Resolved by require_admin_key:
+    # "localhost", a proxy-asserted username, "api-key", or
+    # "no-admin-key-configured" when ADMIN_API_KEY is unset.
+    actor: str = Field(index=True)
+    source_ip: str | None = None
+    # Domain.verb, e.g. "sidecar.pause", "sidecar.update".
+    action: str = Field(index=True)
+    target_id: str | None = Field(default=None, index=True)
+    # Optional structured detail (old vs new values, etc.); JSON-encoded.
+    payload_json: str | None = None

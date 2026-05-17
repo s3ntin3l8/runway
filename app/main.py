@@ -129,7 +129,17 @@ async def _add_security_headers(request: Request, call_next):
 # Global Exception Handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception caught: {exc}", exc_info=True)
+    # Account IDs in this codebase are emails; tracebacks that close over
+    # account-id-shaped values would otherwise emit them straight to the
+    # log handlers. Format the traceback ourselves, scrub email-shaped
+    # substrings, then emit. exc_info=False because we've already
+    # rendered + scrubbed the trace.
+    import traceback
+
+    from app.core.log_redaction import scrub_pii
+
+    rendered = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logger.error("Global exception caught: %s\n%s", scrub_pii(str(exc)), scrub_pii(rendered))
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal Server Error"},
