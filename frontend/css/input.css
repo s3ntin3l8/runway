@@ -3086,14 +3086,26 @@ l-table td.num {
 
 /* Empty-state cume: the 3-column tray would leave the placeholder squished
    into one third with empty filler beside it. Collapse to a single full-width
-   column so the placeholder sits centered with consistent breathing room. */
+   column with the placeholder centered, and give the text enough size +
+   padding that it actually fills the tray. */
 [data-cols="2"] .fc-cume.fc-cume-empty {
     grid-template-columns: 1fr;
-    padding: 10px 16px;
+    padding: 18px 20px;
 }
 .fc-cume.fc-cume-empty .row {
     align-items: center;
     text-align: center;
+    gap: 6px;
+}
+.fc-cume.fc-cume-empty .label {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+}
+.fc-cume.fc-cume-empty .sub {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    margin-top: 0;
+    text-transform: lowercase;
 }
 
 [data-cols="2"] .fc-pods-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
