@@ -932,47 +932,45 @@ async function renderAuditSection(pane) {
         error = e.message;
     }
 
+    const head = `<header class="sp-head">
+        <div>
+            <h3>Audit log</h3>
+            <p>Admin mutations (sidecar pause / resume / delete / update) are recorded here, newest first.</p>
+        </div>
+    </header>`;
+
+    let body;
     if (error) {
-        pane.innerHTML = `<div class="settings-section">
-            <h2 class="sec-h">Audit log</h2>
-            <p style="padding:12px;color:var(--crit);">Failed to load: ${escapeHTML(error)}</p>
-        </div>`;
-        return;
-    }
-
-    if (entries.length === 0) {
-        pane.innerHTML = `<div class="settings-section">
-            <h2 class="sec-h">Audit log</h2>
-            <p class="sec-sub">Admin mutations (sidecar pause/resume/delete/update) land here. No entries yet.</p>
-        </div>`;
-        return;
-    }
-
-    const rows = entries.map(e => {
-        const ts = e.ts ? new Date(e.ts).toLocaleString() : '—';
-        return `<tr>
-            <td class="al-ts">${escapeHTML(ts)}</td>
-            <td><span class="al-action">${escapeHTML(e.action || '')}</span></td>
-            <td>${escapeHTML(e.target_id || '—')}</td>
-            <td>${escapeHTML(e.actor || '—')}</td>
-            <td class="al-ip">${escapeHTML(e.source_ip || '—')}</td>
-        </tr>`;
-    }).join('');
-
-    pane.innerHTML = `<div class="settings-section">
-        <h2 class="sec-h">Audit log</h2>
-        <p class="sec-sub">Most recent ${entries.length} admin mutations, newest first.</p>
-        <table class="al-table" style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">
+        body = `<p style="padding:16px;color:var(--crit);font-size:11px;">Failed to load: ${escapeHTML(error)}</p>`;
+    } else if (entries.length === 0) {
+        body = `<p style="padding:16px;color:var(--ink-3);font-size:11px;">No entries yet. The first time you pause, resume, delete or rename a sidecar, you'll see it here.</p>`;
+    } else {
+        const rows = entries.map(e => {
+            const ts = e.ts ? new Date(e.ts).toLocaleString() : '—';
+            return `<tr>
+                <td class="al-ts">${escapeHTML(ts)}</td>
+                <td><span class="al-action">${escapeHTML(e.action || '')}</span></td>
+                <td>${escapeHTML(e.target_id || '—')}</td>
+                <td>${escapeHTML(e.actor || '—')}</td>
+                <td class="al-ip">${escapeHTML(e.source_ip || '—')}</td>
+            </tr>`;
+        }).join('');
+        body = `<table class="al-table" style="width:100%;border-collapse:collapse;font-size:12px;">
             <thead>
                 <tr style="text-align:left;color:var(--ink-3);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;">
-                    <th style="padding:6px 8px;">Time</th>
-                    <th style="padding:6px 8px;">Action</th>
-                    <th style="padding:6px 8px;">Target</th>
-                    <th style="padding:6px 8px;">Actor</th>
-                    <th style="padding:6px 8px;">Source IP</th>
+                    <th style="padding:8px 12px;">Time</th>
+                    <th style="padding:8px 12px;">Action</th>
+                    <th style="padding:8px 12px;">Target</th>
+                    <th style="padding:8px 12px;">Actor</th>
+                    <th style="padding:8px 12px;">Source IP</th>
                 </tr>
             </thead>
             <tbody>${rows}</tbody>
-        </table>
+        </table>`;
+    }
+
+    pane.innerHTML = `<div class="settings-panel glass">
+        ${head}
+        ${body}
     </div>`;
 }
