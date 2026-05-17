@@ -3111,6 +3111,11 @@ l-table td.num {
     font-size: 10px;
     letter-spacing: 0.04em;
     text-transform: lowercase;
+    /* Undo the .card .sub truncation rule (white-space:nowrap + overflow:hidden
+       + text-overflow:ellipsis) so the empty-state subtitle wraps cleanly. */
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
 }
 .fc-cume.fc-cume-empty .sub-sep { display: none; }
 
