@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -269,7 +270,10 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             except (httpx.HTTPError, ValueError, KeyError) as e:
                 logger.debug(f"Failed to fetch Anthropic organization info: {e}")
 
-        return self._parse_oauth_response(data, name_map, creds, api_account_info)
+        local_hints = await asyncio.to_thread(self._get_local_config_hints)
+        return self._parse_oauth_response(
+            data, name_map, creds, api_account_info, local_hints=local_hints
+        )
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from OAuth API response or credentials file."""
@@ -307,7 +311,13 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         return ""
 
     def _get_local_config_hints(self) -> dict[str, Any]:
-        """Read supplementary billing hints from ~/.claude.json if available."""
+        """Read supplementary billing hints from ~/.claude.json if available.
+
+        Sync — async callers (`_get_claude_oauth`, `_strategy_statusline`) must
+        load via `asyncio.to_thread(...)` and pass the result through the
+        `local_hints` parameter on the parse helpers so the event loop never
+        blocks on disk.
+        """
         path = os.path.expanduser("~/.claude.json")
         try:
             if os.path.exists(path):
@@ -323,10 +333,17 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         name_map: dict[str, str],
         creds: dict | None = None,
         api_account_info: dict | None = None,
+        local_hints: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Parse OAuth API response into standardized quota cards."""
+        """Parse OAuth API response into standardized quota cards.
+
+        `local_hints` is optional so existing sync test callers keep working;
+        production callers should pre-fetch via `asyncio.to_thread` to keep the
+        event loop unblocked.
+        """
         results = []
-        local_hints = self._get_local_config_hints()
+        if local_hints is None:
+            local_hints = self._get_local_config_hints()
 
         # Infer plan/tier: Credentials > API Info > Local Config
         tier = api_account_info.get("tier") if api_account_info else None

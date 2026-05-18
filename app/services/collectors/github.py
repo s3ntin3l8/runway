@@ -28,6 +28,7 @@ Headers:
 - Includes editor version and plugin version headers
 """
 
+import asyncio
 import logging
 import os
 from datetime import UTC, datetime
@@ -220,8 +221,6 @@ class GitHubCollector(BaseCollector):
 
                         # Fallback to local git config user.email if still missing
                         if not identity:
-                            import asyncio
-
                             try:
                                 proc = await asyncio.create_subprocess_exec(
                                     "git",
@@ -248,19 +247,21 @@ class GitHubCollector(BaseCollector):
             # Fallback: local gh config (only if identity still None)
             if not identity:
                 gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
-                if os.path.exists(gh_config_path):
-                    try:
-                        import yaml
 
-                        with open(gh_config_path) as f:
-                            config = yaml.safe_load(f)
-                            host_config = config.get("github.com", {})
-                            identity = (
-                                host_config.get("user")
-                                or list(host_config.get("users", {}).keys())[0]
-                            )
-                    except Exception:
-                        pass
+                def _read_gh_identity(path: str) -> str | None:
+                    if not os.path.exists(path):
+                        return None
+                    import yaml
+
+                    with open(path) as f:
+                        config = yaml.safe_load(f) or {}
+                    host_config = config.get("github.com", {})
+                    return host_config.get("user") or next(iter(host_config.get("users", {})), None)
+
+                try:
+                    identity = await asyncio.to_thread(_read_gh_identity, gh_config_path)
+                except Exception:
+                    pass
 
             if identity:
                 self._identity = identity
@@ -270,8 +271,6 @@ class GitHubCollector(BaseCollector):
                     self.account_label = identity
 
                 if self.account_id:
-                    import asyncio
-
                     # Update metadata in cache so it can be used for label fallbacks.
                     # Note: We only push to cache if we don't have a specific override already
                     # active, to prevent "real" names from clobbering preferred ones in the cache.

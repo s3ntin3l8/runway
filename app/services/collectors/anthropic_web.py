@@ -56,24 +56,21 @@ class AnthropicWebMixin:
             os.path.join(home, "Library", "Application Support", "Claude", "statusline.json"),
         ]
 
-        path = None
-        for p in paths:
-            if os.path.exists(p):
-                path = p
-                break
-
-        if not path:
-            return []
+        def _read_fresh(candidates: list[str]) -> dict[str, Any] | None:
+            # Bundled so the polling loop pays one off-loop hop, not three.
+            for candidate in candidates:
+                if not candidate or not os.path.exists(candidate):
+                    continue
+                if (time.time() - os.path.getmtime(candidate)) > 300:
+                    continue
+                with open(candidate) as f:
+                    return json.load(f)
+            return None
 
         try:
-            # Freshness check (5 minutes)
-            mtime = os.path.getmtime(path)
-            if (time.time() - mtime) > 300:
-                # logger.info(f"Claude statusline file is stale ({int(time.time() - mtime)}s old) at {path}")
+            data = await asyncio.to_thread(_read_fresh, paths)
+            if data is None:
                 return []
-
-            with open(path) as f:
-                data = json.load(f)
 
             self._last_statusline_data = data
 
@@ -86,15 +83,28 @@ class AnthropicWebMixin:
 
             identity_suffix = f" | {identity_str}" if identity_str else ""
 
-            return self._parse_statusline_response(data, identity_suffix, creds)
+            local_hints: dict[str, Any] | None = None
+            if hasattr(self, "_get_local_config_hints"):
+                local_hints = await asyncio.to_thread(self._get_local_config_hints)
+            return self._parse_statusline_response(
+                data, identity_suffix, creds, local_hints=local_hints
+            )
         except Exception as e:
             logger.debug(f"Failed to read Claude statusline: {e}")
             return []
 
     def _parse_statusline_response(
-        self, data: dict[str, Any], identity_suffix: str = "", creds: dict | None = None
+        self,
+        data: dict[str, Any],
+        identity_suffix: str = "",
+        creds: dict | None = None,
+        local_hints: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Parse statusline.json into standardized quota cards."""
+        """Parse statusline.json into standardized quota cards.
+
+        `local_hints` is optional so sync test callers keep working; the async
+        production path pre-fetches via `asyncio.to_thread` to avoid blocking.
+        """
         results = []
         now = datetime.now(UTC)
 
@@ -121,9 +131,10 @@ class AnthropicWebMixin:
                         "tier_5": "Enterprise",
                     }
                     tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
-        if not tier and hasattr(self, "_get_local_config_hints"):
-            local_hints = self._get_local_config_hints()
-            local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
+        if not tier:
+            if local_hints is None and hasattr(self, "_get_local_config_hints"):
+                local_hints = self._get_local_config_hints()
+            local_tier = (local_hints or {}).get("billing_tier") or (local_hints or {}).get("tier")
             if local_tier:
                 tier = str(local_tier).capitalize()
 
