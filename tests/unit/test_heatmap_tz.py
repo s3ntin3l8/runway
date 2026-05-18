@@ -31,7 +31,13 @@ def _session() -> Session:
     return Session(_engine())
 
 
-def _add_event(session: Session, event_id: str, ts: datetime, tokens: int = 100):
+def _add_event(
+    session: Session,
+    event_id: str,
+    ts: datetime,
+    tokens: int = 100,
+    cost_usd: float = 0.0,
+):
     ev = UsageEvent(
         provider_id="anthropic",
         account_id="user@example.com",
@@ -41,6 +47,7 @@ def _add_event(session: Session, event_id: str, ts: datetime, tokens: int = 100)
         kind="message",
         model_id="sonnet",
         tokens_input=tokens,
+        cost_usd=cost_usd,
     )
     session.add(ev)
     session.commit()
@@ -134,8 +141,38 @@ def test_returns_full_168_cells():
     assert len(cells) == 168
     # All zero — no events.
     assert sum(c["tokens"] for c in cells) == 0
+    assert sum(c["cost_usd"] for c in cells) == 0.0
     # dow values present 0..6, hour values 0..23
     dows = sorted({c["dow"] for c in cells})
     hours = sorted({c["hour"] for c in cells})
     assert dows == list(range(7))
     assert hours == list(range(24))
+
+
+def test_cost_usd_is_summed_per_cell():
+    s = _session()
+    # Two events in the same UTC (dow, hour) bucket, plus one in a different cell.
+    _add_event(s, "e1", datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC), tokens=200, cost_usd=1.25)
+    _add_event(s, "e2", datetime(2026, 5, 7, 14, 45, 0, tzinfo=UTC), tokens=300, cost_usd=0.75)
+    _add_event(s, "e3", datetime(2026, 5, 7, 9, 0, 0, tzinfo=UTC), tokens=100, cost_usd=0.50)
+
+    cells = query_heatmap(s, provider_id="anthropic", account_id="user@example.com", days=30)
+
+    # Helper to fetch a whole cell dict.
+    def _full(dow: int, hour: int) -> dict:
+        for c in cells:
+            if c["dow"] == dow and c["hour"] == hour:
+                return c
+        raise AssertionError(f"missing cell dow={dow} hour={hour}")
+
+    # Thursday (dow=4) 14:00 — two events summed.
+    cell_thu_14 = _full(4, 14)
+    assert cell_thu_14["tokens"] == 500
+    assert cell_thu_14["cost_usd"] == 2.0
+
+    # Thursday 09:00 — one event.
+    cell_thu_9 = _full(4, 9)
+    assert cell_thu_9["cost_usd"] == 0.50
+
+    # Totals across the grid.
+    assert sum(c["cost_usd"] for c in cells) == 2.50
