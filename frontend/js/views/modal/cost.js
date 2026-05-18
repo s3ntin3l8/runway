@@ -203,7 +203,7 @@ export function buildCostPane(entry, cumData) {
         </div>
         <div class="m-cost-chart-wrap">
             ${svgHtml}
-            <div class="m-cost-tip" hidden></div>
+            <div class="m-chart-tip" hidden></div>
         </div>
     </div>
 
@@ -226,7 +226,7 @@ export function wireCostPane() {
     if (!body) return;
     const wrap = body.querySelector('.m-cost-chart-wrap');
     const svg  = body.querySelector('.m-cost-svg');
-    const tip  = body.querySelector('.m-cost-tip');
+    const tip  = body.querySelector('.m-chart-tip');
     if (!wrap || !svg || !tip) return;
 
     const year = new Date().getFullYear();
@@ -247,9 +247,9 @@ export function wireCostPane() {
         const tokN   = parseFloat(hit.getAttribute('data-tokens') || '0') || 0;
 
         tip.innerHTML = `
-            <div class="m-cost-tip-head">${_esc(label)} ${year}</div>
-            <div class="m-cost-tip-row"><span class="sw"></span><span class="lbl">Spend</span><span class="val">${_esc(_fmtCost(costN))}</span></div>
-            <div class="m-cost-tip-row"><span class="sw sw-dim"></span><span class="lbl">Tokens</span><span class="val">${_esc(_fmtTokens(tokN))}</span></div>
+            <div class="m-chart-tip-head">${_esc(label)} ${year}</div>
+            <div class="m-chart-tip-row"><span class="sw"></span><span class="lbl">Spend</span><span class="val">${_esc(_fmtCost(costN))}</span></div>
+            <div class="m-chart-tip-row"><span class="sw sw-dim"></span><span class="lbl">Tokens</span><span class="val">${_esc(_fmtTokens(tokN))}</span></div>
         `;
 
         // Position relative to the wrap; flip to the left of the cursor near the

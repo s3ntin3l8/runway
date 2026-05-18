@@ -57,35 +57,47 @@ function _buildSparkSvg(cells, range) {
 /** Build heatmap cells HTML — 7 × 24 grid, Mon-first row order. */
 function _buildHeatGrid(rawCells, accentHue) {
     // rawCells: flat 168 values where index = day_of_week(0=Sun)*24 + hour
-    // Each element may be a plain number or a {dow, hour, tokens} dict from the API.
-    // Normalise to plain numbers first.
-    const flatRaw = rawCells.map(c => (c != null && typeof c === 'object' ? (c.tokens || 0) : (c || 0)));
+    // Each element may be a plain number or a {dow, hour, tokens, cost_usd} dict.
+    // Normalise to {tokens, cost} pairs.
+    const flatRaw = rawCells.map(c =>
+        c != null && typeof c === 'object'
+            ? { tokens: c.tokens || 0, cost: c.cost_usd || 0 }
+            : { tokens: c || 0, cost: 0 }
+    );
     // Reorder so Mon first: days [Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6, Sun=0]
     const reorder = [1, 2, 3, 4, 5, 6, 0];
-    const cells = [];
+    const cellsTokens = [];
+    const cellsCost = [];
     for (let r = 0; r < 7; r++) {
         const d = reorder[r];
         for (let h = 0; h < 24; h++) {
-            cells.push(flatRaw[d * 24 + h] || 0);
+            const cell = flatRaw[d * 24 + h] || { tokens: 0, cost: 0 };
+            cellsTokens.push(cell.tokens || 0);
+            cellsCost.push(cell.cost || 0);
         }
     }
 
-    // Log-normalize
-    const maxVal = Math.max(...cells, 1);
-    const norm = cells.map(v => v > 0 ? Math.log1p(v) / Math.log1p(maxVal) : 0);
+    // Log-normalize on tokens (the metric that drives cell color).
+    const maxVal = Math.max(...cellsTokens, 1);
+    const norm = cellsTokens.map(v => v > 0 ? Math.log1p(v) / Math.log1p(maxVal) : 0);
 
     // Find peak cell
+    const dayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
     const peakIdx = norm.reduce((m, v, i) => v > norm[m] ? i : m, 0);
-    const peakDay = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][Math.floor(peakIdx / 24)];
+    const peakDay = dayLabels[Math.floor(peakIdx / 24)];
     const peakHr  = peakIdx % 24;
-    const peakStr = `${peakDay} ${String(peakHr).padStart(2, '0')}:00`;
+    const peakStr = `${peakDay.charAt(0)}${peakDay.slice(1).toLowerCase()} ${String(peakHr).padStart(2, '0')}:00`;
+
+    const totalTokens = cellsTokens.reduce((s, v) => s + v, 0);
 
     const hue = accentHue || 40;  // fallback to amber-ish
-    const gridHtml = norm.map(v =>
-        `<i style="background: oklch(${(0.95 - v * 0.55).toFixed(3)} ${(0.02 + v * 0.16).toFixed(3)} ${hue})"></i>`
-    ).join('');
+    const gridHtml = norm.map((v, idx) => {
+        const day = dayLabels[Math.floor(idx / 24)];
+        const hour = idx % 24;
+        return `<i style="background: oklch(${(0.95 - v * 0.55).toFixed(3)} ${(0.02 + v * 0.16).toFixed(3)} ${hue})" data-dow-label="${day}" data-hour="${hour}" data-tokens="${cellsTokens[idx]}" data-cost="${cellsCost[idx]}"></i>`;
+    }).join('');
 
-    return { gridHtml, peakStr };
+    return { gridHtml, peakStr, totalTokens };
 }
 
 /** Build HTML for a single session card. Exported for use by other panes. */
@@ -154,7 +166,7 @@ function _buildSessionsHtml(sessions) {
 export function buildUsagePane(entry, heatmapData, sessions) {
     const rawCells = heatmapData?.cells || new Array(168).fill(0);
     const accentHue = 40; // amber default; could read from CSS variable but not critical
-    const { gridHtml, peakStr } = _buildHeatGrid(rawCells, accentHue);
+    const { gridHtml, peakStr, totalTokens } = _buildHeatGrid(rawCells, accentHue);
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const sparkHtml = _buildSparkSvg(rawCells, '24h');
 
@@ -169,8 +181,11 @@ export function buildUsagePane(entry, heatmapData, sessions) {
         </div>
         <div class="m-heat-wrap">
             <div class="m-heat-axis">${days.map(d => `<span>${_esc(d)}</span>`).join('')}</div>
-            <div class="m-heat">
-                ${gridHtml}
+            <div class="m-heat-chart-wrap">
+                <div class="m-heat" data-total-tokens="${totalTokens}">
+                    ${gridHtml}
+                </div>
+                <div class="m-chart-tip" hidden></div>
             </div>
         </div>
         <div class="m-heat-foot">
@@ -236,4 +251,60 @@ export function wireUsageSparkTabs(heatmapCells) {
             if (svgEl) oldSvg.replaceWith(svgEl);
         }
     });
+}
+
+/**
+ * Wire hover-tooltip behavior to the hour-of-day heatmap.
+ * Call after injecting usage pane HTML into the DOM.
+ */
+export function wireUsageHeatmapTooltip() {
+    const body = document.getElementById('pm-body');
+    if (!body) return;
+    const wrap = body.querySelector('.m-heat-chart-wrap');
+    const grid = body.querySelector('.m-heat');
+    const tip  = body.querySelector('.m-chart-tip');
+    if (!wrap || !grid || !tip) return;
+
+    const totalTokens = parseFloat(grid.getAttribute('data-total-tokens') || '0') || 0;
+
+    const render = (cell) => {
+        const day    = cell.getAttribute('data-dow-label') || '';
+        const hour   = parseInt(cell.getAttribute('data-hour') || '0', 10);
+        const tokens = parseFloat(cell.getAttribute('data-tokens') || '0') || 0;
+        const cost   = parseFloat(cell.getAttribute('data-cost') || '0') || 0;
+        const share  = totalTokens > 0
+            ? (tokens / totalTokens * 100).toFixed(1) + '%'
+            : '—';
+        const hourStr = String(hour).padStart(2, '0') + ':00';
+
+        tip.innerHTML = `
+            <div class="m-chart-tip-head">${_esc(day)} · ${_esc(hourStr)}</div>
+            <div class="m-chart-tip-row"><span class="sw"></span><span class="lbl">Tokens</span><span class="val">${_esc(_fmtTokens(tokens))}</span></div>
+            <div class="m-chart-tip-row"><span class="sw"></span><span class="lbl">Cost</span><span class="val">${_esc(_fmtCost(cost))}</span></div>
+            <div class="m-chart-tip-row"><span class="sw sw-dim"></span><span class="lbl">Share</span><span class="val">${_esc(share)}</span></div>
+        `;
+        tip.hidden = false;
+    };
+
+    const position = (e) => {
+        const wrapRect = wrap.getBoundingClientRect();
+        const tipW = tip.offsetWidth || 180;
+        const tipH = tip.offsetHeight || 80;
+        let tx = e.clientX - wrapRect.left + 12;
+        if (tx + tipW > wrapRect.width - 4) tx = e.clientX - wrapRect.left - tipW - 12;
+        if (tx < 4) tx = 4;
+        let ty = e.clientY - wrapRect.top + 12;
+        if (ty + tipH > wrapRect.height - 4) ty = e.clientY - wrapRect.top - tipH - 12;
+        if (ty < 4) ty = 4;
+        tip.style.transform = `translate(${tx}px, ${ty}px)`;
+    };
+
+    grid.addEventListener('mousemove', (e) => {
+        const cell = e.target.closest('i[data-hour]');
+        if (!cell || !grid.contains(cell)) return;
+        render(cell);
+        position(e);
+    });
+
+    grid.addEventListener('mouseleave', () => { tip.hidden = true; });
 }
