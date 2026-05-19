@@ -192,7 +192,7 @@ function _fcPoolStack(quotaCards, _forecastMap) {
         const status = _poolStatus(p.used);
         const isHead = i === 0;
         const glideHtml = p.glide != null
-            ? `<div class="pglide" style="left:${p.glide.toFixed(1)}%" title="glide-path target ${Math.round(p.glide)}%"></div>`
+            ? `<div class="pglide" style="left:${p.glide.toFixed(1)}%" title="Glide-path target ${Math.round(p.glide)}%: where you should be if pacing usage evenly across this window"></div>`
             : '';
         const glideAhead = p.glide != null && p.used > p.glide + 4;
         const glideBehind = p.glide != null && p.used < p.glide - 4;

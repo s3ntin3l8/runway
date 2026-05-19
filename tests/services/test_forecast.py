@@ -295,3 +295,92 @@ def test_forecast_includes_session_window(db_session):
     assert result is not None
     assert result.window_type == "session"
     assert result.status == "insufficient_data"  # No events in db_session
+
+
+# ── Lock-in tests: pin hit-at + downward-clamp behavior before refactor ──────
+
+
+def test_projected_limit_hit_at_matches_anchored_formula(db_session):
+    """For a clean linear trajectory, hit_at must equal `now + (100 - now_pct)/slope`
+    under the anchor-at-now projection model, within 1 second."""
+    from statistics import linear_regression
+
+    # Weekly window so we have room: events at window_start + 0..3h, now at +4h.
+    window_start = datetime(2026, 5, 13, 0, 0, 0, tzinfo=UTC)
+    now = window_start + timedelta(hours=4)
+    reset_at = window_start + timedelta(days=7)
+    limit = 1000
+
+    # Clean linear ys=[10,30,50,70] at xs=[0,3600,7200,10800].
+    # Slope = 20/3600 ≈ 0.005556 pct/sec. Theil-Sen == OLS on perfectly linear data.
+    chunks = [100, 200, 200, 200]
+    expected_xs, expected_ys = [], []
+    cumulative = 0
+    for i, chunk in enumerate(chunks):
+        ts = window_start + timedelta(hours=i)
+        _make_event(
+            session=db_session,
+            ts=ts,
+            tokens_input=chunk,
+            tokens_output=0,
+            event_id_suffix=f"hitat_{i}",
+        )
+        cumulative += chunk
+        expected_xs.append(i * 3600.0)
+        expected_ys.append(cumulative / limit * 100.0)
+
+    card = _make_card(
+        used_value=700.0,  # now_pct = 70 → < 99.9, hit_at path is active
+        limit_value=float(limit),
+        reset_at=reset_at.isoformat(),
+        window_type="weekly",
+    )
+    result = compute_forecast(card, db_session, now=now)
+    assert result is not None
+    assert result.status == "risk"  # anchored projection blows past 100% in 7d
+    assert result.projected_limit_hit_at is not None
+
+    fit = linear_regression(expected_xs, expected_ys)
+    expected_hit_ts = now + timedelta(seconds=(100.0 - 70.0) / fit.slope)
+    actual_hit_ts = datetime.fromisoformat(result.projected_limit_hit_at)
+    delta = abs((actual_hit_ts - expected_hit_ts).total_seconds())
+    assert delta < 1.0, f"hit_at off by {delta}s: actual={actual_hit_ts} expected={expected_hit_ts}"
+
+
+def test_decelerating_status_when_high_usage_and_projection_dips(db_session):
+    """When the regression line at reset_elapsed dips below current cumulative pct
+    (e.g., late-window outlier) AND current_pct is in the matters-zone (>= 80%),
+    status='decelerating' surfaces the slowdown explicitly instead of masquerading
+    as 'stable'."""
+    # Fully deterministic timestamps for a 7-day weekly window.
+    window_start = datetime(2026, 5, 13, 0, 0, 0, tzinfo=UTC)
+    now = window_start + timedelta(days=6, hours=12)  # most of the way through window
+    reset_at = window_start + timedelta(days=7)
+    limit = 1000
+
+    # 7 daily events at midnight, tiny tiny ... huge → cumulative 50,60,70,80,90,100,950
+    chunks = [50, 10, 10, 10, 10, 10, 850]
+    for i, chunk in enumerate(chunks):
+        ts = window_start + timedelta(days=i)
+        _make_event(
+            session=db_session,
+            ts=ts,
+            tokens_input=chunk,
+            tokens_output=0,
+            event_id_suffix=f"clamp_{i}",
+        )
+
+    card = _make_card(
+        used_value=950.0,  # now_pct = 95 → above DECELERATING_NOW_PCT_THRESHOLD, < EXHAUSTED
+        limit_value=float(limit),
+        reset_at=reset_at.isoformat(),
+        window_type="weekly",
+    )
+    result = compute_forecast(card, db_session, now=now)
+    assert result is not None
+    assert result.status == "decelerating"
+    # Reports current position; the clamp would have set projected ≈ current.
+    assert result.projected_pct == pytest.approx(95.0, abs=0.5)
+    # Theil-Sen on cumulative monotonic data still produces a non-negative slope.
+    assert result.slope is not None and result.slope >= 0.0
+    assert result.method == "theil_sen"

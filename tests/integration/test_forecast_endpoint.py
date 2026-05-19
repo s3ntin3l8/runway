@@ -102,3 +102,58 @@ class TestForecastEndpoint:
         names = [f["service_name"] for f in response.json()["forecasts"]]
         assert "Limited" in names
         assert "Unlimited" not in names
+
+    def test_forecast_endpoint_without_include_series_omits_series(self, session):
+        _add_latest(session, service_name="Default")
+
+        client = TestClient(fastapi_app)
+        response = client.get("/api/v1/usage/forecast")
+        for f in response.json()["forecasts"]:
+            # Default path: series field should be null/missing for compact payloads.
+            assert f.get("series") is None
+
+    def test_forecast_endpoint_with_include_series_populates_for_eligible_cards(self, session):
+        from app.models.db import UsageEvent
+
+        # Card's weekly window opens 7 days before reset_at (which is now+4d),
+        # so events need to land in [now-3d, now+4d]. Anchor at top of recent hours.
+        now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        for i in range(4):
+            session.add(
+                UsageEvent(
+                    provider_id="anthropic_Default",
+                    account_id="acc1",
+                    event_id=f"series_{i}",
+                    ts=now - timedelta(hours=4 - i),
+                    tokens_input=10_000,
+                    tokens_output=5_000,
+                    tokens_cache_read=0,
+                    tokens_cache_create=0,
+                    tokens_reasoning=0,
+                    cost_usd=0.0,
+                    sidecar_id="local",
+                )
+            )
+        session.commit()
+        _add_latest(session, service_name="Default", used_value=60_000.0)
+
+        client = TestClient(fastapi_app)
+        response = client.get("/api/v1/usage/forecast?include_series=true")
+        forecasts = response.json()["forecasts"]
+        # At least one card should have a populated series.
+        assert any(f.get("series") for f in forecasts), forecasts
+
+    def test_forecast_endpoint_exposes_glide_pct(self, session):
+        """glide_pct must be present on every entry and equal confidence × 100."""
+        import pytest
+
+        _add_latest(session, service_name="Default")
+
+        client = TestClient(fastapi_app)
+        response = client.get("/api/v1/usage/forecast")
+        forecasts = response.json()["forecasts"]
+        assert forecasts, "expected at least one forecast entry"
+        for f in forecasts:
+            assert f.get("glide_pct") is not None, f
+            assert 0.0 <= f["glide_pct"] <= 100.0
+            assert f["glide_pct"] == pytest.approx(f["confidence"] * 100.0, abs=0.01)
