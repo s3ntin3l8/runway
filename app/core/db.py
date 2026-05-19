@@ -104,6 +104,7 @@ def init_db() -> None:
     # Add columns introduced after initial schema (SQLite create_all doesn't ALTER)
     with engine.connect() as conn:
         _add_columns_if_missing(conn)
+        _add_indexes_if_missing(conn)
 
     from app.services.pricing_seed import seed_pricing_table
 
@@ -119,6 +120,29 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("system_config", "user_timezone", "VARCHAR"),
     ("usage_events", "subagent_type", "VARCHAR"),
 ]
+
+
+_DEFERRED_INDEXES: list[tuple[str, str, str]] = [
+    # (index_name, table, comma-separated columns)
+    (
+        "ix_quota_snapshots_series_ts",
+        "quota_snapshots",
+        "provider_id, account_id, window_type, model_id, ts",
+    ),
+]
+
+
+def _add_indexes_if_missing(conn: Any) -> None:
+    """Idempotently CREATE INDEX IF NOT EXISTS for indexes that postdate
+    initial schema creation. SQLModel.create_all() only adds indexes for
+    fresh tables, so existing databases miss newer indexes declared in
+    __table_args__.
+    """
+    from sqlalchemy import text
+
+    for name, table, cols in _DEFERRED_INDEXES:
+        conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
+        conn.commit()
 
 
 def _add_columns_if_missing(conn: Any) -> None:

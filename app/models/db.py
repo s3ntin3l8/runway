@@ -311,6 +311,18 @@ class QuotaSnapshot(SQLModel, table=True):
             name="uq_quota_snapshots_identity",
         ),
         Index("ix_quota_snapshots_lookup", "provider_id", "account_id", "window_type", "ts"),
+        # Covers the bucketed window-function queries in query_snapshots /
+        # query_chart percent path: PARTITION BY (provider, account,
+        # window_type, model_id) ORDER BY ts. See app/core/db.py for the
+        # idempotent CREATE INDEX migration applied at startup.
+        Index(
+            "ix_quota_snapshots_series_ts",
+            "provider_id",
+            "account_id",
+            "window_type",
+            "model_id",
+            "ts",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)

@@ -4,6 +4,12 @@ import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
 import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
 import { escapeHTML } from '../utils/html.js';
+import {
+    _cacheKey,
+    _cacheHit,
+    _filterChartByDays,
+    _filterSnapshotsByDays,
+} from './history_cache.js';
 
 const _CACHE_PREF_KEY = 'runway:history:showCache';
 
@@ -18,9 +24,17 @@ const historyState = {
     windowFilter: 'all',         // 'all' | 'session' | 'daily' | 'weekly' | 'monthly'
     showCache: _readCachePref(), // tokens-metric only; persists in localStorage
     page: 1,
+    // Filtered view for the active days — what render fns read.
     _windowsCache: null,
     _chartCache: null,
     _deltasCache: null,
+    // Superset cache. Each slot maps key → { fetchedAt, days, response }.
+    // The unfiltered server response is stored so a switch to a smaller
+    // timeframe can paint instantly by filtering the superset.
+    _cache: {
+        chart:     Object.create(null),
+        snapshots: Object.create(null),
+    },
 };
 
 // Short alias kept for terser template-literal interpolation.
@@ -127,13 +141,19 @@ export function toggleHistoryProvider(pid) {
 }
 
 function _knownProviderIds() {
-    const cache = historyState._chartCache;
-    if (!cache) return [];
+    // Scan every cached chart entry (filtered AND superset slots) so pills
+    // remain stable when switching to a timeframe where a provider has no
+    // points in the current view.
     const ids = new Set();
-    for (const s of (cache.series || [])) if (s.provider_id) ids.add(s.provider_id);
-    for (const bar of (cache.bars || []))
-        for (const seg of (bar.segments || []))
-            if (seg.provider_id) ids.add(seg.provider_id);
+    const collect = (resp) => {
+        if (!resp) return;
+        for (const s of (resp.series || [])) if (s.provider_id) ids.add(s.provider_id);
+        for (const bar of (resp.bars || []))
+            for (const seg of (bar.segments || []))
+                if (seg.provider_id) ids.add(seg.provider_id);
+    };
+    collect(historyState._chartCache);
+    for (const entry of Object.values(historyState._cache.chart)) collect(entry?.response);
     return [...ids];
 }
 
@@ -530,10 +550,9 @@ export function renderHistoryFromCache() {
     renderSnapshotTable();
 }
 
-export async function loadHistoryView() {
+export async function loadHistoryView({ forceFetch = false } = {}) {
     updateCsvHref();
     const container = document.getElementById('history-content');
-    if (container) container.innerHTML = '<p class="ht-empty">Loading…</p>';
 
     // Apply cross-view filter
     const f = STATE.activeFilter;
@@ -541,24 +560,61 @@ export async function loadHistoryView() {
         historyState.activeProviders = new Set([f.value]);
     }
 
+    const providerFilter = historyState.activeProviders?.size === 1
+        ? [...historyState.activeProviders][0] : null;
+    // The chart fetch deliberately does NOT pass provider_id (see
+    // fetchHistoryChart in api.js), so chart cache slots are keyed without
+    // the provider filter. Snapshots cache slots do include it.
+    const chartKey = _cacheKey({
+        metric: historyState.metric, providerFilter: null,
+        windowFilter: historyState.windowFilter,
+    });
+    const snapKey = _cacheKey({
+        metric: historyState.metric, providerFilter,
+        windowFilter: historyState.windowFilter,
+    });
+    const days = historyState.days;
+
+    let rendered = false;
+    if (!forceFetch) {
+        const chartHit = _cacheHit(historyState._cache.chart, chartKey, days);
+        const snapHit  = _cacheHit(historyState._cache.snapshots, snapKey, days);
+        if (chartHit && snapHit) {
+            historyState._chartCache   = _filterChartByDays(chartHit.response, days);
+            historyState._windowsCache = _filterSnapshotsByDays(snapHit.response, days);
+            // Deltas have their own (cheap) endpoint; render against the last
+            // known value while a fresh fetch is in flight.
+            renderHistoryFromCache();
+            rendered = true;
+        }
+    }
+    if (!rendered && container) container.innerHTML = '<p class="ht-empty">Loading…</p>';
+
     try {
         const [snapshots, chart, deltas] = await Promise.all([
             fetchHistorySnapshots(),
             fetchHistoryChart(),
-            fetchHistoryDeltas({ days: historyState.days }).catch(e => {
+            fetchHistoryDeltas({ days }).catch(e => {
                 console.warn('deltas fetch failed', e);
                 return null;
             }),
         ]);
+        historyState._cache.snapshots[snapKey] = { fetchedAt: Date.now(), days, response: snapshots };
+        historyState._cache.chart[chartKey]    = { fetchedAt: Date.now(), days, response: chart };
         historyState._windowsCache = snapshots;
-        historyState._chartCache = chart;
-        historyState._deltasCache = deltas;
+        historyState._chartCache   = chart;
+        historyState._deltasCache  = deltas;
         renderHistoryFromCache();
     } catch (e) {
         console.error('history load failed', e);
+        if (rendered) return;  // keep cached view painted
         destroyCharts();
         if (container) container.innerHTML = `<p class="ht-empty" style="color:var(--crit);">Failed to load: ${escHtml(e.message)}</p>`;
     }
+}
+
+export function refreshHistoryView() {
+    return loadHistoryView({ forceFetch: true });
 }
 
 export function initHistoryView() {
@@ -572,6 +628,7 @@ export function initHistoryView() {
     window.setHistoryProvidersNone = setHistoryProvidersNone;
     window.clearHistoryFilter = clearHistoryFilter;
     window.hwGoPage = hwGoPage;
+    window.refreshHistoryView = refreshHistoryView;
     const cacheBtn = document.getElementById('history-cache-toggle');
     if (cacheBtn) cacheBtn.classList.toggle('active', historyState.showCache);
     _updateChartControlsVisibility(historyState.metric);
