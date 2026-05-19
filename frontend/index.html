@@ -235,7 +235,7 @@
                         <div class="health-head">
                             <h2>Healthy Limits</h2>
                         </div>
-                        <div id="forecast-kpi-ok" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;"></div>
+                        <div id="forecast-kpi-ok" style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;"></div>
                     </div>
                 </div>
 
@@ -245,6 +245,9 @@
                     <div class="sep"></div>
                     <div id="forecast-provider-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
                     <div class="sep"></div>
+                    <div id="forecast-sort-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                    <div class="sep"></div>
+                    <div id="forecast-show-stable-toggle" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
                     <span id="forecast-generated-at" style="font-size:10px;color:var(--text-dim);margin-left:auto;align-self:center;"></span>
                 </div>
 
@@ -268,8 +271,10 @@
                                     <th>Service</th>
                                     <th>Provider</th>
                                     <th class="num">Now %</th>
+                                    <th class="num" title="Glide-path target: where you should be if pacing usage evenly across this window">Pace</th>
                                     <th class="num">Projected %</th>
-                                    <th class="num">Confidence</th>
+                                    <th class="num" title="Velocity of the trend fit">Trend</th>
+                                    <th class="num" title="Elapsed/total window. high ≥66%, mid 33–66%, low <33%">Conf.</th>
                                     <th>Resets</th>
                                     <th>Status</th>
                                 </tr>

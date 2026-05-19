@@ -139,13 +139,25 @@ class ForecastEntry(BaseModel):
     window_start: str  # ISO-8601 UTC
     samples_used: int
     confidence: float  # 0.0–1.0
-    status: str  # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted"
-    method: str  # "linear" for now
+    # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted" | "decelerating"
+    status: str
+    method: str  # "linear" | "theil_sen"
+    # Pct per second from the trend fit; null when no fit. Lets the UI render
+    # trend arrows without re-inferring from projected vs current.
+    slope: float | None = None
+    # Glide-path target: where the card SHOULD be if usage were paced evenly
+    # across the window. = clamp(elapsed/total_window, 0, 1) × 100. Same numeric
+    # value as `confidence × 100`, but exposed separately because the metrics
+    # carry different semantics — confidence = "trust in the fit", glide_pct =
+    # "expected pace position". Matches dashboard fleet-commander.js formula.
+    glide_pct: float | None = None
+    # Optional drill-down payload populated only when the endpoint is called
+    # with ?include_series=true. Each item is {"ts": iso, "pct": float}.
+    series: list[dict[str, float | str]] | None = None
 
 
 class ForecastResponse(BaseModel):
     forecasts: list[ForecastEntry]
-    summary: dict[
-        str, int
-    ]  # {"risk": n, "warn": n, "ok": n, "insufficient_data": n, "stable": n, "exhausted": n}
+    # Keyed by status: risk, warn, ok, insufficient_data, stable, exhausted, decelerating
+    summary: dict[str, int]
     generated_at: str  # ISO-8601 UTC

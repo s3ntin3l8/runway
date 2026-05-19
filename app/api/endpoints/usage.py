@@ -392,10 +392,16 @@ async def get_usage_forecast(
     provider_id: str | None = None,
     account_id: str | None = None,
     window_type: str | None = None,
+    include_series: bool = False,
     session: Session = Depends(get_session),
 ) -> ForecastResponse:
-    """Project quota usage to reset time using linear extrapolation in the current window."""
+    """Project quota usage to reset time using linear extrapolation in the current window.
+
+    `include_series=true` populates each entry's `series` field with the
+    cumulative-pct bucket trajectory for client-side drill-down rendering.
+    """
     from app.models.db import LatestUsage
+    from app.services.forecast import compute_forecast
 
     records = session.exec(select(LatestUsage)).all()
     results = []
@@ -417,6 +423,18 @@ async def get_usage_forecast(
         cards = [c for c in cards if c.account_id == account_id]
     if window_type:
         cards = [c for c in cards if c.window_type == window_type]
+
+    if include_series:
+        # Drill-down path: skip batch optimization, compute per-card with series.
+        now = datetime.now(UTC)
+        forecasts = []
+        summary: dict[str, int] = {}
+        for card in cards:
+            entry = compute_forecast(card, session, now=now, include_series=True)
+            if entry is not None:
+                forecasts.append(entry)
+                summary[entry.status] = summary.get(entry.status, 0) + 1
+        return ForecastResponse(forecasts=forecasts, summary=summary, generated_at=now.isoformat())
 
     return compute_all_forecasts(cards, session)
 
