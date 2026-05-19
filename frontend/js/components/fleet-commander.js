@@ -4,6 +4,29 @@
 import { escapeHTML, escapeHTMLAttr } from '../utils/html.js';
 import { _formatTokenShort, formatHumanDelta, providerDisplayLabel } from './_shared.js';
 
+// Forecast lookup key — must match _forecastSeriesKey in dashboard.js.
+function _fcForecastKey(card) {
+    return [
+        card.provider_id || '',
+        card.account_id || '',
+        card.service_name || '',
+        card.variant || '',
+        card.model_id || '',
+        card.window_type || '',
+        card.unit_type || '',
+    ].join('||');
+}
+
+const _FC_STATUS_COLOR = {
+    exhausted: 'var(--crit)',
+    risk: 'var(--crit)',
+    warn: 'var(--warn)',
+    decelerating: 'var(--info, #4a9eff)',
+    ok: 'var(--good)',
+    stable: 'var(--good)',
+    insufficient_data: 'var(--text-dim)',
+};
+
 export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const critical = entry.critical_gauge;
     if (!critical) return '';
@@ -35,7 +58,7 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const railHtml = _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, sidecarCount);
     const isVeloCard = critical.is_unlimited || (!critical.limit_value && critical.pct_used == null);
     const mainHtml = isVeloCard
-        ? _fcVelocity(critical)
+        ? _fcVelocity(critical, forecastMap)
         : _fcPoolStack(quotaCards, forecastMap);
 
     // Per-model and fuel-dump: prefer server-aggregated window_aggregations.longest
@@ -196,12 +219,26 @@ function _fcPoolStack(quotaCards, _forecastMap) {
             : '';
         const glideAhead = p.glide != null && p.used > p.glide + 4;
         const glideBehind = p.glide != null && p.used < p.glide - 4;
-        const glideFootHtml = p.glide == null ? ''
+        const fc = forecastMap?.get(_fcForecastKey(p.card));
+        const fcBadge = (() => {
+            if (!fc || fc.projected_pct == null) return '';
+            const color = _FC_STATUS_COLOR[fc.status] || 'var(--text-dim)';
+            const proj = fc.projected_pct.toFixed(1);
+            let hit = '';
+            if ((fc.status === 'risk' || fc.status === 'exhausted') && fc.projected_limit_hit_at) {
+                const d = new Date(fc.projected_limit_hit_at);
+                const dateStr = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                hit = ` · hits 100% ${dateStr} ${timeStr}`;
+            }
+            return ` <span style="color:${color};font-weight:600;">→ ${proj}%</span> <span style="color:${color};font-size:9px;letter-spacing:0.08em;">${(fc.status || '').toUpperCase()}</span>${hit ? `<span style="color:var(--text-dim);font-size:9px;">${escapeHTML(hit)}</span>` : ''}`;
+        })();
+        const glideFootHtml = p.glide == null ? (fcBadge ? `<div class="pfoot">${fcBadge}</div>` : '')
             : `<div class="pfoot">glide-path target <b>${Math.round(p.glide)}%</b>${
                 glideAhead ? ` <span class="ahead">↑ ${Math.round(p.used - p.glide)}% ahead of pace</span>`
                 : glideBehind ? ` <span class="ontrack">✓ ${Math.round(p.glide - p.used)}% under pace</span>`
                 : ` <span class="ontrack">✓ on glide path</span>`
-            }</div>`;
+            }${fcBadge}</div>`;
         return `<div class="fc-pool-row h-${status} ${status === 'crit' ? 'crit-row' : ''}">
             <span class="pidx">${String(i + 1).padStart(2, '0')}</span>
             <div class="pmid">
@@ -274,7 +311,7 @@ function _fcCriticalGauge(card, _forecastMap) {
     </div>`;
 }
 
-function _fcVelocity(card) {
+function _fcVelocity(card, forecastMap) {
     const spend = card.used_value != null
         ? `$${Number(card.used_value).toFixed(2)}`
         : '—';
@@ -292,8 +329,17 @@ function _fcVelocity(card) {
         </div>
         <div class="cell forecast">
             <div class="k">Forecast · EoM</div>
-            <div class="v">—</div>
-            <div class="s">no quota ceiling</div>
+            <div class="v">${(() => {
+                const fc = forecastMap?.get(_fcForecastKey(card));
+                if (!fc || fc.projected_pct == null) return '—';
+                const color = _FC_STATUS_COLOR[fc.status] || 'var(--text-dim)';
+                return `<span style="color:${color};">${fc.projected_pct.toFixed(1)}%</span>`;
+            })()}</div>
+            <div class="s">${(() => {
+                const fc = forecastMap?.get(_fcForecastKey(card));
+                if (!fc) return 'no quota ceiling';
+                return (fc.status || 'no data').toUpperCase();
+            })()}</div>
         </div>
     </div>`;
 }
