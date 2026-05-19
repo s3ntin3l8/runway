@@ -2,8 +2,10 @@
 See app/services/queries/__init__.py for the public surface.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
@@ -11,6 +13,69 @@ from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.queries._shared import _parse_period_key
 from app.services.window_closer import WINDOW_DURATION
+
+# Snapshot-bucket resolution for SQL downsampling. Pick the first tier whose
+# threshold is >= the requested `days`. `quota_snapshots` is poll-rate granular
+# (~30s per series), so without bucketing a 30-day window materialises ~860k
+# rows just to return a 50-row page or a chart that visually fits a few hundred
+# points.
+_BUCKET_TIERS: list[tuple[float, int]] = [
+    (0.1, 60),  # ≤ ~2.4h → 1-min
+    (1.0, 300),  # ≤ 1d → 5-min
+    (7.0, 1800),  # ≤ 7d → 30-min
+    (30.0, 10800),  # ≤ 30d → 3-hour
+    (float("inf"), 86400),  # else → 1-day
+]
+
+
+def _bucket_seconds_for(days: float) -> int:
+    for threshold, secs in _BUCKET_TIERS:
+        if days <= threshold:
+            return secs
+    return 86400  # unreachable: last tier matches inf
+
+
+def _min_bucket(dt: datetime) -> datetime:
+    """Truncate to the minute. reset_at/window_end timestamps differ by up to
+    ~1s due to insertion jitter, so we match on minute buckets instead of
+    relying on exact equality."""
+    return dt.replace(second=0, microsecond=0)
+
+
+@dataclass(slots=True)
+class _ParsedRow:
+    """Snapshot page row after datetime parsing. Mirrors the columns of
+    `_SNAPSHOTS_PAGE_SQL` and is what `_build_window_stats_for_rows` accepts."""
+
+    provider_id: str
+    account_id: str
+    window_type: str
+    model_id: str
+    ts: datetime | None
+    reset_at: datetime | None
+    pct_used: float | None
+    delta: float | None
+
+
+def _parse_sqlite_dt(value: object) -> datetime | None:
+    """Coerce a value returned from a raw `text()` query into a naive UTC
+    datetime. SQLAlchemy auto-decodes datetimes for ORM-mapped columns, but
+    raw text queries return SQLite's storage format (TEXT with either 'T' or
+    ' ' separator) as plain strings.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    if isinstance(value, str):
+        s = value.replace("T", " ")
+        # SQLite occasionally tacks on trailing whitespace or timezone hints.
+        s = s.strip().rstrip("Z")
+        try:
+            return datetime.fromisoformat(s).replace(tzinfo=None)
+        except ValueError:
+            return None
+    return None
 
 
 def query_windows(
@@ -193,46 +258,25 @@ _PROVIDER_LABELS: dict[str, str] = {
 }
 
 
-def query_snapshots(
+def _build_window_stats_for_rows(
     session: Session,
-    *,
-    provider_id: str | None = None,
-    account_id: str | None = None,
-    window_type: str | None = None,
-    days: float = 7.0,
-    page: int = 1,
-    limit: int = 100,
-) -> dict:
-    """Flat paginated list of quota_snapshots, newest first, with per-series delta."""
-    from app.models.db import QuotaSnapshot
+    page_rows: list,
+    now_naive: datetime,
+) -> dict[tuple, dict]:
+    """Compute per-(pid, aid, wt, mid, minute_bucket(reset_at)) token/cost
+    enrichment for the given page rows.
 
-    since = datetime.now(UTC) - timedelta(days=days)
+    Closed windows (reset_at <= now): look up matching `usage_windows` by
+    minute-bucketed `window_end`.
+    Open windows (reset_at > now): sum `usage_events` in [window_start, now].
 
-    stmt = select(QuotaSnapshot).where(QuotaSnapshot.ts >= since)
-    if provider_id:
-        stmt = stmt.where(QuotaSnapshot.provider_id == provider_id)
-    if account_id:
-        stmt = stmt.where(QuotaSnapshot.account_id == account_id)
-    if window_type and window_type != "all":
-        stmt = stmt.where(QuotaSnapshot.window_type == window_type)
-
-    # Ascending for delta computation; reversed at output time
-    stmt = stmt.order_by(QuotaSnapshot.ts.asc())  # type: ignore[attr-defined]
-    all_snaps = list(session.exec(stmt).all())
-
-    # Build window-level token/cost lookup keyed by (provider, account, window_type, minute_bucket)
-    # reset_at and window_end timestamps differ by up to ~1s due to insertion jitter, so we
-    # truncate to the minute for matching rather than relying on exact equality.
-
-    def _min_bucket(dt: datetime) -> datetime:
-        return dt.replace(second=0, microsecond=0)
-
-    # Use naive UTC — QuotaSnapshot.reset_at is stored without tzinfo
-    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    The input was previously every snapshot in the time range; bucketing
+    pagination reduces it to ≤ `limit` rows, so the batched event query
+    only scans the events touching the page's live windows.
+    """
     window_stats: dict[tuple, dict] = {}
 
-    # Closed windows: reset_at <= now → find matching usage_windows by minute-bucketed window_end
-    past_resets = {s.reset_at for s in all_snaps if s.reset_at and s.reset_at <= now_naive}
+    past_resets = {r.reset_at for r in page_rows if r.reset_at and r.reset_at <= now_naive}
     if past_resets:
         min_t = min(past_resets) - timedelta(minutes=2)
         max_t = max(past_resets) + timedelta(minutes=2)
@@ -263,48 +307,38 @@ def query_snapshots(
                     "cost_usd": w.cost_usd or None,
                 }
 
-    # Open windows: reset_at > now → sum usage_events in [window_start, now]
-    # LatestUsage cards for quota-only providers (e.g. Claude) carry no token/cost data,
-    # so we compute running totals directly from events. Per-model rows filter by model_id;
-    # the aggregate row (model_id="") sums across all models.
-    #
-    # Implementation: pre-build a (pid, aid, wt, mid) → reset_at lookup in one pass
-    # over `all_snaps`, then issue ONE batched event query covering every live
-    # window, and bucket events into per-series accumulators in Python. The
-    # previous implementation did a linear scan of `all_snaps` and a fresh
-    # `SELECT * FROM usage_events` per window — O(snaps × series) plus N+1 SQL.
-    live_series = {
-        (s.provider_id, s.account_id, s.window_type, s.model_id, _min_bucket(s.reset_at))
-        for s in all_snaps
-        if s.reset_at and s.reset_at > now_naive and s.window_type in WINDOW_DURATION
-    }
-
-    # First reset_at > now for each (pid, aid, wt, mid). `all_snaps` is sorted
-    # by ts ASC so the first hit is the oldest matching snapshot — same as the
-    # `next(...)` pick from the prior implementation.
+    # Open windows: reset_at > now. LatestUsage cards for quota-only providers
+    # (e.g. Claude) carry no token/cost data, so we compute running totals
+    # directly from events. Per-model rows filter by model_id; the aggregate
+    # row (model_id="") sums across all models.
     actual_reset_lookup: dict[tuple, datetime] = {}
-    for s in all_snaps:
-        if not (s.reset_at and s.reset_at > now_naive):
+    for r in page_rows:
+        if not (r.reset_at and r.reset_at > now_naive):
             continue
-        key4 = (s.provider_id, s.account_id, s.window_type, s.model_id)
-        actual_reset_lookup.setdefault(key4, s.reset_at)
+        key4 = (r.provider_id, r.account_id, r.window_type, r.model_id)
+        actual_reset_lookup.setdefault(key4, r.reset_at)
 
-    # Per-series window bounds + a (pid, aid) → list[(key, window_start, mid)]
-    # index so each event only checks series for its account.
     series_windows: dict[tuple, datetime] = {}
     series_by_account: dict[tuple, list[tuple[tuple, datetime, str]]] = {}
-    for pid, aid, wt, mid, min_reset in live_series:
-        actual_reset = actual_reset_lookup.get((pid, aid, wt, mid))
+    for r in page_rows:
+        if not (r.reset_at and r.reset_at > now_naive and r.window_type in WINDOW_DURATION):
+            continue
+        key4 = (r.provider_id, r.account_id, r.window_type, r.model_id)
+        actual_reset = actual_reset_lookup.get(key4)
         if not actual_reset:
             continue
-        window_start = actual_reset - WINDOW_DURATION[wt]
-        key = (pid, aid, wt, mid, min_reset)
+        window_start = actual_reset - WINDOW_DURATION[r.window_type]
+        key = (*key4, _min_bucket(r.reset_at))
+        if key in series_windows:
+            continue
         series_windows[key] = window_start
-        series_by_account.setdefault((pid, aid), []).append((key, window_start, mid))
+        series_by_account.setdefault((r.provider_id, r.account_id), []).append(
+            (key, window_start, r.model_id)
+        )
 
     if series_windows:
-        # Initialise every series so quota-only windows with no events still
-        # appear with {tokens_total: None, cost_usd: None}.
+        # Seed every series so quota-only windows with no events still appear
+        # with {tokens_total: None, cost_usd: None} downstream.
         accumulators: dict[tuple, dict[str, float]] = {
             key: {"tokens": 0, "cost": 0.0} for key in series_windows
         }
@@ -342,61 +376,189 @@ def query_snapshots(
                 "cost_usd": totals["cost"] or None,
             }
 
-    # Group into per-series lists and compute deltas
-    series: dict[tuple, list] = {}
-    for s in all_snaps:
-        series_key = (s.provider_id, s.account_id, s.window_type, s.model_id)
-        series.setdefault(series_key, []).append(s)
+    return window_stats
+
+
+# SQL passes for query_snapshots. The bucket expression `strftime('%s', ts) /
+# :bucket_seconds` is integer division (SQLite int math) — every snapshot in
+# the same `(series, bucket)` partition gets the same bucket key.
+#
+# Pass 1 counts the (series, bucket) cardinality after filters; pass 2 picks
+# the latest snapshot per bucket via ROW_NUMBER, then computes per-series
+# delta with LAG. LAG ignores gaps — the delta on bucket N is computed against
+# the previous *existing* bucket for that series, not the previous calendar
+# bucket. This matches the prior Python behavior (it iterated existing rows).
+_SNAPSHOTS_COUNT_SQL = text(
+    """
+    WITH bucketed AS (
+        SELECT DISTINCT
+            (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds) AS bucket,
+            provider_id, account_id, window_type, model_id
+        FROM quota_snapshots
+        WHERE ts >= :since
+          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:account_id  IS NULL OR account_id  = :account_id)
+          AND (:window_type IS NULL OR window_type = :window_type)
+    )
+    SELECT COUNT(*) AS n FROM bucketed
+    """
+)
+
+_CHART_PERCENT_SQL = text(
+    """
+    WITH bucketed AS (
+        SELECT
+            ts, pct_used, provider_id, account_id, window_type, model_id,
+            ROW_NUMBER() OVER (
+                PARTITION BY provider_id, account_id, window_type, model_id,
+                             (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
+                ORDER BY ts DESC
+            ) AS rn
+        FROM quota_snapshots
+        WHERE ts >= :since
+          AND pct_used IS NOT NULL
+          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:account_id  IS NULL OR account_id  = :account_id)
+    )
+    SELECT ts, pct_used, provider_id, account_id, window_type, model_id
+    FROM bucketed
+    WHERE rn = 1
+    ORDER BY provider_id, window_type, model_id, ts ASC
+    """
+)
+
+
+_SNAPSHOTS_PAGE_SQL = text(
+    """
+    WITH bucketed AS (
+        SELECT
+            ts, pct_used, reset_at,
+            provider_id, account_id, window_type, model_id,
+            ROW_NUMBER() OVER (
+                PARTITION BY provider_id, account_id, window_type, model_id,
+                             (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
+                ORDER BY ts DESC
+            ) AS rn
+        FROM quota_snapshots
+        WHERE ts >= :since
+          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (:account_id  IS NULL OR account_id  = :account_id)
+          AND (:window_type IS NULL OR window_type = :window_type)
+    ),
+    last_per_bucket AS (
+        SELECT ts, pct_used, reset_at,
+               provider_id, account_id, window_type, model_id
+        FROM bucketed
+        WHERE rn = 1
+    ),
+    with_delta AS (
+        SELECT ts, pct_used, reset_at,
+               provider_id, account_id, window_type, model_id,
+               LAG(pct_used) OVER (
+                   PARTITION BY provider_id, account_id, window_type, model_id
+                   ORDER BY ts ASC
+               ) AS prev_pct
+        FROM last_per_bucket
+    )
+    SELECT
+        ts, pct_used, reset_at,
+        provider_id, account_id, window_type, model_id,
+        CASE
+            WHEN prev_pct IS NULL OR pct_used IS NULL THEN NULL
+            ELSE ROUND(pct_used - prev_pct, 2)
+        END AS delta
+    FROM with_delta
+    ORDER BY ts DESC
+    LIMIT :limit OFFSET :offset
+    """
+)
+
+
+def query_snapshots(
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    window_type: str | None = None,
+    days: float = 7.0,
+    page: int = 1,
+    limit: int = 100,
+) -> dict:
+    """Flat paginated list of quota_snapshots, newest first, with per-series delta.
+
+    Snapshots are bucketed by time (see `_BUCKET_TIERS`) so we never materialise
+    more than (series × buckets) rows even on long timeframes. Pagination
+    happens in SQL; enrichment (tokens_total / cost_usd) runs only against
+    the page's rows.
+    """
+    # QuotaSnapshot.ts/reset_at are stored naive — bind naive UTC to match.
+    since = (datetime.now(UTC) - timedelta(days=days)).replace(tzinfo=None)
+    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    bucket_seconds = _bucket_seconds_for(days)
+    wt_param = window_type if window_type and window_type != "all" else None
+    params = {
+        "since": since,
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "window_type": wt_param,
+        "bucket_seconds": bucket_seconds,
+        "limit": limit,
+        "offset": max(0, (page - 1) * limit),
+    }
+
+    total_row = session.exec(_SNAPSHOTS_COUNT_SQL, params=params).one()  # type: ignore[call-overload]
+    total = int(total_row.n or 0)
+
+    page_rows = session.exec(_SNAPSHOTS_PAGE_SQL, params=params).all()  # type: ignore[call-overload]
+
+    # Raw text() queries return ts/reset_at as plain strings; normalise once
+    # so downstream code (_build_window_stats_for_rows and ISO emission) can
+    # work in datetime-land like the rest of the codebase.
+    parsed_rows = []
+    for r in page_rows:
+        parsed_rows.append(
+            _ParsedRow(
+                provider_id=r.provider_id,
+                account_id=r.account_id,
+                window_type=r.window_type,
+                model_id=r.model_id,
+                ts=_parse_sqlite_dt(r.ts),
+                reset_at=_parse_sqlite_dt(r.reset_at),
+                pct_used=r.pct_used,
+                delta=r.delta,
+            )
+        )
+
+    window_stats = _build_window_stats_for_rows(session, parsed_rows, now_naive)
 
     rows: list[dict] = []
-    for (pid, aid, wt, mid), snaps in series.items():
+    for r in parsed_rows:
+        pid, aid, wt, mid = r.provider_id, r.account_id, r.window_type, r.model_id
         service = _PROVIDER_LABELS.get(pid, pid.capitalize())
         model_label = mid.capitalize() if mid else "-"
-        for i, s in enumerate(snaps):
-            prev_pct = snaps[i - 1].pct_used if i > 0 else None
-            delta = (
-                round(s.pct_used - prev_pct, 2)
-                if (prev_pct is not None and s.pct_used is not None)
-                else None
-            )
-            ts_iso = s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00"
-            reset_iso = (
-                (s.reset_at.isoformat() if s.reset_at.tzinfo else s.reset_at.isoformat() + "+00:00")
-                if s.reset_at
-                else None
-            )
-            stats = (
-                window_stats.get((pid, aid, wt, mid, _min_bucket(s.reset_at)), {})
-                if s.reset_at
-                else {}
-            )
-            rows.append(
-                {
-                    "provider_id": pid,
-                    "account_id": aid,
-                    "service_name": service,
-                    "window_type": wt,
-                    "model_id": mid,
-                    "model_label": model_label,
-                    "ts": ts_iso,
-                    "pct_used": s.pct_used,
-                    "delta": delta,
-                    "reset_at": reset_iso,
-                    "tokens_total": stats.get("tokens_total"),
-                    "cost_usd": stats.get("cost_usd"),
-                }
-            )
+        ts_iso = r.ts.isoformat() + "+00:00" if r.ts is not None else None
+        reset_iso = r.reset_at.isoformat() + "+00:00" if r.reset_at else None
+        stats = (
+            window_stats.get((pid, aid, wt, mid, _min_bucket(r.reset_at)), {}) if r.reset_at else {}
+        )
+        rows.append(
+            {
+                "provider_id": pid,
+                "account_id": aid,
+                "service_name": service,
+                "window_type": wt,
+                "model_id": mid,
+                "model_label": model_label,
+                "ts": ts_iso,
+                "pct_used": r.pct_used,
+                "delta": r.delta,
+                "reset_at": reset_iso,
+                "tokens_total": stats.get("tokens_total"),
+                "cost_usd": stats.get("cost_usd"),
+            }
+        )
 
-    rows.sort(key=lambda r: r["ts"], reverse=True)
-
-    total = len(rows)
-    offset = (page - 1) * limit
-    return {
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "rows": rows[offset : offset + limit],
-    }
+    return {"total": total, "page": page, "limit": limit, "rows": rows}
 
 
 def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator, splits poorly
@@ -414,25 +576,22 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     metric=cost     → daily bars (value=cost_usd) from usage_period_rollup.
     """
     import json as _json
-    from datetime import UTC, datetime, timedelta
-
-    from sqlmodel import select
-
-    from app.models.db import QuotaSnapshot
 
     since = datetime.now(UTC) - timedelta(days=days)
 
     if metric == "percent":
-        stmt = select(QuotaSnapshot).where(
-            QuotaSnapshot.ts >= since,
-            QuotaSnapshot.pct_used.isnot(None),  # type: ignore[union-attr]
-        )
-        if provider_id:
-            stmt = stmt.where(QuotaSnapshot.provider_id == provider_id)
-        if account_id:
-            stmt = stmt.where(QuotaSnapshot.account_id == account_id)
-
-        snaps = session.exec(stmt.order_by(QuotaSnapshot.ts)).all()  # type: ignore[arg-type]
+        # Bucket snapshots by time at the SQL layer to keep chart resolution
+        # matched to the timeframe (see `_BUCKET_TIERS`). The `pct_used IS NOT
+        # NULL` filter lives inside the bucketed CTE so a null row can never
+        # be selected as the bucket representative.
+        bucket_seconds = _bucket_seconds_for(days)
+        chart_params = {
+            "since": since.replace(tzinfo=None),
+            "provider_id": provider_id,
+            "account_id": account_id,
+            "bucket_seconds": bucket_seconds,
+        }
+        snaps = session.exec(_CHART_PERCENT_SQL, params=chart_params).all()  # type: ignore[call-overload]
 
         series_map: dict[str, dict] = {}
         for s in snaps:
@@ -451,7 +610,8 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
                     "color_hint": s.provider_id,
                     "points": [],
                 }
-            ts_iso = s.ts.isoformat() if s.ts.tzinfo else s.ts.isoformat() + "+00:00"
+            ts_dt = _parse_sqlite_dt(s.ts)
+            ts_iso = ts_dt.isoformat() + "+00:00" if ts_dt is not None else str(s.ts)
             series_map[key]["points"].append({"ts": ts_iso, "pct_used": s.pct_used})
 
         # Seed any provider/window_type that has current pct_used data in latest_usage
