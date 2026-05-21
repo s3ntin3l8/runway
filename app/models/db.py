@@ -306,6 +306,7 @@ class QuotaSnapshot(SQLModel, table=True):
             "provider_id",
             "account_id",
             "window_type",
+            "variant",
             "model_id",
             "ts",
             name="uq_quota_snapshots_identity",
@@ -313,13 +314,14 @@ class QuotaSnapshot(SQLModel, table=True):
         Index("ix_quota_snapshots_lookup", "provider_id", "account_id", "window_type", "ts"),
         # Covers the bucketed window-function queries in query_snapshots /
         # query_chart percent path: PARTITION BY (provider, account,
-        # window_type, model_id) ORDER BY ts. See app/core/db.py for the
-        # idempotent CREATE INDEX migration applied at startup.
+        # window_type, variant, model_id) ORDER BY ts. See app/core/db.py for
+        # the idempotent CREATE INDEX migration applied at startup.
         Index(
             "ix_quota_snapshots_series_ts",
             "provider_id",
             "account_id",
             "window_type",
+            "variant",
             "model_id",
             "ts",
         ),
@@ -329,6 +331,7 @@ class QuotaSnapshot(SQLModel, table=True):
     provider_id: str
     account_id: str
     window_type: str  # weekly, daily, session, monthly
+    variant: str = Field(default="")  # "" = default variant
     model_id: str = Field(default="")  # "" = all-models aggregate
     ts: UTCDateTime = Field(index=True)
     pct_used: float | None = None

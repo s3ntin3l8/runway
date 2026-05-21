@@ -57,6 +57,19 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB
     init_db()
 
+    # Remove stale error rows superseded by healthy rows (idempotent cleanup).
+    try:
+        from sqlmodel import Session as _Session
+
+        from app.core.db import engine as _engine
+        from app.services.accumulator import evict_orphan_error_rows
+
+        with _Session(_engine) as _s:
+            evict_orphan_error_rows(_s)
+            _s.commit()
+    except Exception as _e:
+        logger.warning(f"Startup orphan error row cleanup failed: {_e}")
+
     # Pre-populate in-memory registry so the first /limits request is instant
     try:
         logger.info("Pre-populating card registry on startup (timeout 15s)...")

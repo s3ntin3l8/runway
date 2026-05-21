@@ -75,7 +75,7 @@ export function formatBucketLabel(bucketEpoch, bucketSeconds) {
     if (bucketSeconds >= 3600) {
         return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', timeZone: tz });
     }
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: tz });
 }
 
 /**
@@ -387,15 +387,20 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             const projCountByPid = {};
 
             for (const key of nonZeroKeys) {
-                const [pid, serviceName, wtype, variant, modelId] = key.split('|');
-                const fe = projectionEntries.find(e =>
+                const [pid, , wtype, , modelId] = key.split('|');
+                // Chart groups across service_name and variant, so match forecast by
+                // (provider_id, window_type, model_id) only; pick worst-case when
+                // multiple variants exist under the same window.
+                const matching = projectionEntries.filter(e =>
                     e.provider_id === pid &&
-                    (e.service_name || 'Usage') === (serviceName || 'Usage') &&
                     e.window_type === wtype &&
-                    (e.variant || '') === (variant || '') &&
-                    (e.model_id || '') === (modelId || '')
+                    (e.model_id || '') === (modelId || '') &&
+                    e.projected_pct != null
                 );
-                if (!fe || fe.projected_pct == null) continue;
+                if (matching.length === 0) continue;
+                const fe = matching.reduce((worst, e) =>
+                    !worst || e.projected_pct > worst.projected_pct ? e : worst, null);
+                if (!fe) continue;
 
                 if (projCountByPid[pid] === undefined) projCountByPid[pid] = 0;
                 const style = getSeriesStyle(pid, projCountByPid[pid]++);

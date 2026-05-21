@@ -4,6 +4,7 @@ import { updateCharts, destroyCharts } from '../charts.js';
 import { STATE } from '../state.js';
 import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
 import { escapeHTML } from '../utils/html.js';
+import { formatCost } from '../utils/format.js';
 import {
     _cacheKey,
     _cacheHit,
@@ -315,7 +316,7 @@ function renderHistoryTiles(deltas) {
     </div>`;
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Est. cost · ${rangeLabel}</div>
-        <div class="t-val">$${totalCostDelta.toFixed(2)}<span>spent</span></div>
+        <div class="t-val">${formatCost(totalCostDelta)}<span>spent</span></div>
     </div>`;
     html += `<div class="hud-panel tile">
         <div class="t-kicker">Hottest · fresh · ${rangeLabel}</div>
@@ -441,11 +442,6 @@ function renderSnapshotTable() {
         if (n >= 1e3) return Math.round(n / 1e3) + 'k';
         return String(n);
     }
-    function fmtCost(n) {
-        if (n == null || n === 0) return '—';
-        return '$' + n.toFixed(2);
-    }
-
     const seenSeries = new Set();
     const rowsHtml = rows.map(r => {
         const seriesKey = `${r.provider_id}|${r.account_id}|${r.window_type}|${r.model_id}`;
@@ -469,7 +465,7 @@ function renderSnapshotTable() {
           <td class="hw-metric-cell"><div class="hw-metric-inner">${fillBar}${escHtml(pctStr)}</div></td>
           <td class="hw-delta-cell">${deltaStr}</td>
           <td class="hw-tokens-cell">${fmtTokens(r.tokens_total)}</td>
-          <td class="hw-cost-cell">${fmtCost(r.cost_usd)}</td>
+          <td class="hw-cost-cell">${formatCost(r.cost_usd)}</td>
         </tr>`;
     }).join('');
 

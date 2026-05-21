@@ -10,7 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.db import get_session
 from app.main import app as fastapi_app
-from app.models.db import LatestUsage
+from app.models.db import LatestUsage, QuotaSnapshot
 
 
 @pytest.fixture(name="session")
@@ -34,6 +34,8 @@ def setup_api(session):
 def _add_latest(session: Session, **overrides):
     # Use a unique combination to avoid IntegrityError in same-session tests
     p_id = overrides.get("provider_id", f"anthropic_{overrides.get('service_name', 'default')}")
+    reset_at_val = overrides.get("reset_at", datetime.now(UTC) + timedelta(days=4))
+    reset_at_str = reset_at_val.isoformat() if isinstance(reset_at_val, datetime) else reset_at_val
     card = {
         "service_name": overrides.get("service_name", "Test Service"),
         "provider_id": p_id,
@@ -43,7 +45,7 @@ def _add_latest(session: Session, **overrides):
         "used_value": overrides.get("used_value", 500_000.0),
         "limit_value": overrides.get("limit_value", 1_000_000.0),
         "is_unlimited": overrides.get("is_unlimited", False),
-        "reset_at": (datetime.now(UTC) + timedelta(days=4)).isoformat(),
+        "reset_at": reset_at_str,
         "health": "good",
     }
     record = LatestUsage(
@@ -113,34 +115,30 @@ class TestForecastEndpoint:
             assert f.get("series") is None
 
     def test_forecast_endpoint_with_include_series_populates_for_eligible_cards(self, session):
-        from app.models.db import UsageEvent
-
-        # Card's weekly window opens 7 days before reset_at (which is now+4d),
-        # so events need to land in [now-3d, now+4d]. Anchor at top of recent hours.
+        # Use a fixed reset_at so snapshot reset_at and card reset_at match exactly.
         now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        reset_at_dt = now + timedelta(days=4)
+
+        # Seed 4 hourly quota snapshots for the card's identity.
         for i in range(4):
             session.add(
-                UsageEvent(
+                QuotaSnapshot(
                     provider_id="anthropic_Default",
                     account_id="acc1",
-                    event_id=f"series_{i}",
+                    window_type="weekly",
+                    variant="",
+                    model_id="",
                     ts=now - timedelta(hours=4 - i),
-                    tokens_input=10_000,
-                    tokens_output=5_000,
-                    tokens_cache_read=0,
-                    tokens_cache_create=0,
-                    tokens_reasoning=0,
-                    cost_usd=0.0,
-                    sidecar_id="local",
+                    pct_used=10.0 + i * 5.0,
+                    reset_at=reset_at_dt,
                 )
             )
         session.commit()
-        _add_latest(session, service_name="Default", used_value=60_000.0)
+        _add_latest(session, service_name="Default", used_value=60_000.0, reset_at=reset_at_dt)
 
         client = TestClient(fastapi_app)
         response = client.get("/api/v1/usage/forecast?include_series=true")
         forecasts = response.json()["forecasts"]
-        # At least one card should have a populated series.
         assert any(f.get("series") for f in forecasts), forecasts
 
     def test_forecast_endpoint_exposes_glide_pct(self, session):

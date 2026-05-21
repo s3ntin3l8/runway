@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import UsageEvent, UsagePeriodRollup
+from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
 from app.services.forecast import compute_forecast
 
@@ -53,65 +53,31 @@ def _make_card(
     )
 
 
-def _make_event(
+def _make_snapshot(
     session: Session,
     *,
     ts: datetime,
+    pct_used: float,
+    reset_at: datetime,
     provider_id: str = "anthropic",
     account_id: str = "acc1",
-    model_id: str | None = None,
-    event_id_suffix: str = "",
-    tokens_input: int = 10_000,
-    tokens_output: int = 5_000,
-) -> UsageEvent:
-    event = UsageEvent(
+    window_type: str = "weekly",
+    variant: str = "",
+    model_id: str = "",
+) -> QuotaSnapshot:
+    snap = QuotaSnapshot(
         provider_id=provider_id,
         account_id=account_id,
-        event_id=f"evt_{ts.isoformat()}_{event_id_suffix}",
-        ts=ts,
+        window_type=window_type,
+        variant=variant,
         model_id=model_id,
-        tokens_input=tokens_input,
-        tokens_output=tokens_output,
-        tokens_cache_read=0,
-        tokens_cache_create=0,
-        tokens_reasoning=0,
-        cost_usd=0.0,
-        sidecar_id="local",
+        ts=ts,
+        pct_used=pct_used,
+        reset_at=reset_at,
     )
-    session.add(event)
+    session.add(snap)
     session.commit()
-    return event
-
-
-def _make_rollup(
-    session: Session,
-    *,
-    period_key: str,
-    provider_id: str = "anthropic",
-    account_id: str = "acc1",
-    period_type: str = "day",
-    cost_usd: float = 1.00,
-    tokens_input: int = 50_000,
-    tokens_output: int = 25_000,
-) -> UsagePeriodRollup:
-    r = UsagePeriodRollup(
-        provider_id=provider_id,
-        account_id=account_id,
-        period_type=period_type,
-        period_key=period_key,
-        model_id="",
-        sidecar_id="",
-        tokens_input=tokens_input,
-        tokens_output=tokens_output,
-        tokens_cache_read=0,
-        tokens_cache_create=0,
-        tokens_reasoning=0,
-        cost_usd=cost_usd,
-        msgs=10,
-    )
-    session.add(r)
-    session.commit()
-    return r
+    return snap
 
 
 # ── Percent card tests ──────────────────────────────────────────────────────
@@ -127,16 +93,10 @@ class TestPercentForecast:
         assert result is not None
         assert result.status == "insufficient_data"
 
-    def test_percent_card_with_events_produces_forecast(self, db_session):
-        """Percent card with hourly events should produce a forecast (not None)."""
+    def test_percent_card_returns_forecast_entry(self, db_session):
+        """Percent card with pct_used set always returns a ForecastEntry (not None)."""
         now = datetime.now(UTC)
         reset_at = now + timedelta(days=3)
-
-        # Seed multiple hours of events
-        for i in range(4):
-            ts = now - timedelta(hours=4 - i)
-            _make_event(db_session, ts=ts, event_id_suffix=f"pct_{i}")
-
         card = _make_card(
             unit_type="percent",
             unit="percent",
@@ -147,36 +107,31 @@ class TestPercentForecast:
         )
         result = compute_forecast(card, db_session)
         assert result is not None
-        # With events, should produce a forecast (not just insufficient_data)
         assert result.status in ("ok", "warn", "risk", "stable", "insufficient_data")
         assert result.now_pct is not None
 
     def test_percent_card_high_usage_risk(self, db_session):
-        """Percent card at 95% with growing events → risk status."""
+        """Percent card at 95% with growing quota snapshots → risk or warn."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=1)
-
-        for i in range(4):
-            ts = now - timedelta(hours=4 - i)
-            _make_event(
+        reset_at_dt = now + timedelta(days=1)
+        pct_values = [50.0, 65.0, 80.0, 95.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
                 db_session,
-                ts=ts,
-                event_id_suffix=f"risk_{i}",
-                tokens_input=50_000,
-                tokens_output=50_000,
+                ts=now - timedelta(hours=4 - i),
+                pct_used=pct,
+                reset_at=reset_at_dt,
             )
-
         card = _make_card(
             unit_type="percent",
             unit="percent",
             used_value=95.0,
             limit_value=100.0,
             pct_used=95.0,
-            reset_at=reset_at.isoformat(),
+            reset_at=reset_at_dt.isoformat(),
         )
         result = compute_forecast(card, db_session)
         assert result is not None
-        # At 95% with growth, should be at least warn
         assert result.status in ("risk", "warn", "exhausted")
 
     def test_percent_card_stable(self, db_session):
@@ -211,15 +166,10 @@ class TestCurrencyForecast:
         assert result is not None
         assert result.status == "insufficient_data"
 
-    def test_currency_card_with_rollups_produces_forecast(self, db_session):
-        """Currency card with daily rollups should produce a forecast."""
+    def test_currency_card_returns_forecast_entry(self, db_session):
+        """Currency card with pct_used always returns a ForecastEntry (not None)."""
         now = datetime.now(UTC)
         reset_at = now + timedelta(days=5)
-
-        for i in range(4):
-            day_key = (now - timedelta(days=4 - i)).strftime("%Y-%m-%d")
-            _make_rollup(db_session, period_key=day_key, cost_usd=2.50)
-
         card = _make_card(
             unit_type="currency",
             unit="USD",
@@ -233,21 +183,25 @@ class TestCurrencyForecast:
         assert result.status in ("ok", "warn", "risk", "stable", "insufficient_data")
 
     def test_currency_card_spending_rapidly(self, db_session):
-        """Currency card at $80/$100 with fast burn → risk or warn."""
+        """Currency card at $80/$100 with fast-growing quota snapshots → risk or warn."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=2)
-
-        for i in range(5):
-            day_key = (now - timedelta(days=5 - i)).strftime("%Y-%m-%d")
-            _make_rollup(db_session, period_key=day_key, cost_usd=10.00)
-
+        reset_at_dt = now + timedelta(days=2)
+        pct_values = [20.0, 40.0, 60.0, 80.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                db_session,
+                ts=now - timedelta(hours=4 - i),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+                window_type="weekly",
+            )
         card = _make_card(
             unit_type="currency",
             unit="USD",
             used_value=80.0,
             limit_value=100.0,
             pct_used=80.0,
-            reset_at=reset_at.isoformat(),
+            reset_at=reset_at_dt.isoformat(),
         )
         result = compute_forecast(card, db_session)
         assert result is not None
@@ -280,10 +234,12 @@ class TestForecastDispatch:
         assert result is not None
         # Should not be None — rolling windows are now supported
 
-    def test_unsupported_unit_type_returns_none(self, db_session):
-        """unit_type='requests' should return None (unsupported)."""
+    def test_requests_unit_type_is_forecastable(self, db_session):
+        """unit_type='requests' has a derivable pct — quota-snapshot path handles it."""
         card = _make_card(
             unit_type="requests", unit="requests", used_value=50.0, limit_value=1000.0
         )
         result = compute_forecast(card, db_session)
-        assert result is None
+        # No snapshots → insufficient_data; but not None (pct is derivable from used/limit).
+        assert result is not None
+        assert result.status == "insufficient_data"

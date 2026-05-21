@@ -18,12 +18,34 @@ export function formatNumber(num) {
     return num.toFixed(1);
 }
 
-const _CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£', CNY: '¥', JPY: '¥' };
+const _formatterCache = new Map();
+function _getCurrencyFormatter(currencyCode) {
+    const code = (currencyCode || 'USD').toUpperCase();
+    const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    const key = `${locale}|${code}`;
+    let f = _formatterCache.get(key);
+    if (!f) {
+        try {
+            f = new Intl.NumberFormat(locale, {
+                style: 'currency', currency: code,
+                currencyDisplay: 'narrowSymbol',
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+            });
+        } catch {
+            f = new Intl.NumberFormat(locale, {
+                style: 'currency', currency: 'USD',
+                currencyDisplay: 'narrowSymbol',
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+            });
+        }
+        _formatterCache.set(key, f);
+    }
+    return f;
+}
 
 export function formatCurrency(amount, currencyCode) {
     if (amount === null || amount === undefined || isNaN(amount)) return '—';
-    const symbol = _CURRENCY_SYMBOLS[currencyCode] || '$';
-    return `${symbol}${amount.toFixed(2)}`;
+    return _getCurrencyFormatter(currencyCode).format(amount);
 }
 
 // Modal-flavour token formatter. Zero renders as literal '0' (not '—') because
@@ -38,10 +60,11 @@ export function formatTokens(val) {
 
 // Modal-flavour cost formatter. Distinguishes 0 (literal $0.00) from
 // sub-cent (< $0.01) from null/missing (—) — all three render differently
-// in cost panes.
-export function formatCost(usd) {
+// in cost panes. Locale-aware: uses navigator.language for separators/symbols.
+export function formatCost(usd, currencyCode = 'USD') {
     if (usd == null) return '—';
-    if (usd === 0) return '$0.00';
-    if (usd < 0.01) return '<$0.01';
-    return '$' + usd.toFixed(2);
+    const f = _getCurrencyFormatter(currencyCode);
+    if (usd === 0) return f.format(0);
+    if (usd > 0 && usd < 0.01) return '< ' + f.format(0.01);
+    return f.format(usd);
 }

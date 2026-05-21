@@ -29,12 +29,18 @@ def record_quota_snapshot(
     provider_id: str,
     account_id: str,
     window_type: str,
+    variant: str,
     model_id: str,
     pct_used: float,
     reset_at=None,
 ) -> None:
     """Append a quota snapshot row. Silently ignores same-minute duplicates."""
     from app.models.db import QuotaSnapshot
+
+    # Normalize to match the column default ("") so the forecast read side
+    # (which uses `card.variant or ""`) can find these rows.
+    # LatestUsage writes "default" as a sentinel, but QuotaSnapshot doesn't need it.
+    variant = "" if variant in ("default", None) else variant
 
     # Truncate to the minute so that a sidecar push followed immediately by a
     # server-side poller wake (both within the same minute) don't produce two
@@ -47,6 +53,7 @@ def record_quota_snapshot(
                     provider_id=provider_id,
                     account_id=account_id,
                     window_type=window_type,
+                    variant=variant,
                     model_id=model_id,
                     ts=ts,
                     pct_used=pct_used,
@@ -111,7 +118,16 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     return json.dumps(merged)
 
 
-def upsert_latest_usage(
+def _is_error_card(card_json: str | None) -> bool:
+    data = json.loads(card_json or "{}")
+    return (
+        bool(data.get("error_type"))
+        or data.get("data_source") == "error"
+        or data.get("remaining") == "ERR"
+    )
+
+
+def upsert_latest_usage(  # noqa: PLR0915
     session: Session,
     card_dict: dict,
     *,
@@ -160,6 +176,46 @@ def upsert_latest_usage(
     # Always embed the canonical account_id so the card_json grouping key
     # matches the column (fleet API groups by card_json, not by the column).
     incoming_partial["account_id"] = canonical_account_id
+
+    is_error = (
+        bool(incoming_partial.get("error_type"))
+        or incoming_partial.get("data_source") == "error"
+        or incoming_partial.get("remaining") == "ERR"
+    )
+
+    # Suppress error cards when a healthy row already covers this account slot.
+    # A failed poll cycle must not write a permanent orphan row that shows up
+    # as an extra fleet-strip light next to the healthy row it can't evict.
+    if is_error:
+        try:
+            same_account_rows = session.exec(
+                select(LatestUsage).where(
+                    LatestUsage.provider_id == card.provider_id,
+                    LatestUsage.account_id == canonical_account_id,
+                )
+            ).all()
+            if any(not _is_error_card(r.card_json) for r in same_account_rows):
+                logger.debug(
+                    "Skipping error card for %s/%s — healthy row exists",
+                    card.provider_id,
+                    canonical_account_id,
+                )
+                return
+            if canonical_account_id == "default":
+                real_row = session.exec(
+                    select(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id != "default",
+                    )
+                ).first()
+                if real_row:
+                    logger.debug(
+                        "Skipping default-account error card for %s — real account row exists",
+                        card.provider_id,
+                    )
+                    return
+        except Exception as e:
+            logger.debug("Error-suppression check failed for %s: %s", card.provider_id, e)
 
     try:
         with session.begin_nested():
@@ -243,14 +299,44 @@ def upsert_latest_usage(
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
 
+    # When a healthy real-account card lands, evict stale orphaned error rows:
+    # - default-account error rows written by past failed poll cycles
+    # - same-account error rows under a different variant (left by prior code)
+    if not is_error and canonical_account_id != "default":
+        try:
+            with session.begin_nested():
+                orphan_defaults = session.exec(
+                    select(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id == "default",
+                    )
+                ).all()
+                for row in orphan_defaults:
+                    if _is_error_card(row.card_json):
+                        session.delete(row)
+                cross_variant_errors = session.exec(
+                    select(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id == canonical_account_id,
+                        LatestUsage.variant != variant,
+                    )
+                ).all()
+                for row in cross_variant_errors:
+                    if _is_error_card(row.card_json):
+                        session.delete(row)
+        except Exception as e:
+            logger.warning(
+                "Orphan error row eviction failed for %s/%s: %s",
+                card.provider_id,
+                canonical_account_id,
+                e,
+            )
+
     # Evict a stale aggregate error card (model_id="") when a fresh per-model
     # card arrives for the same (provider, account, window_type, variant).
     # Transient collection failures write an error placeholder with model_id=""
     # that would otherwise persist alongside healthy per-model cards indefinitely.
-    is_error_incoming = (
-        incoming_partial.get("data_source") == "error" or incoming_partial.get("remaining") == "ERR"
-    )
-    if not is_error_incoming and model_id != "":
+    if not is_error and model_id != "":
         try:
             with session.begin_nested():
                 stale_error = session.exec(
@@ -301,7 +387,56 @@ def upsert_latest_usage(
             provider_id=card.provider_id,
             account_id=canonical_account_id,
             window_type=card.window_type,
+            variant=variant,
             model_id=model_id,
             pct_used=effective_pct,
             reset_at=reset_at_dt,
         )
+
+
+def evict_orphan_error_rows(session: Session) -> int:
+    """One-shot cleanup: remove error rows that are superseded by healthy rows.
+
+    Run once at startup so existing stale rows from before the suppression
+    logic was added are removed without waiting for the next collect cycle.
+    Returns the number of rows deleted.
+    """
+    from app.models.db import LatestUsage
+
+    deleted = 0
+    try:
+        all_rows = session.exec(select(LatestUsage)).all()
+        # Index non-error rows by provider_id and (provider_id, account_id)
+        healthy_accounts: set[tuple[str, str]] = set()
+        providers_with_real_account: set[str] = set()
+        for row in all_rows:
+            if not _is_error_card(row.card_json):
+                healthy_accounts.add((row.provider_id, row.account_id))
+                if row.account_id != "default":
+                    providers_with_real_account.add(row.provider_id)
+
+        to_delete = []
+        for row in all_rows:
+            if not _is_error_card(row.card_json):
+                continue
+            pid, aid = row.provider_id, row.account_id
+            if (pid, aid) in healthy_accounts:
+                # A healthy row for the same account supersedes this error row
+                to_delete.append(row)
+            elif aid == "default" and pid in providers_with_real_account:
+                # A real-account row for this provider supersedes the default-orphan
+                to_delete.append(row)
+
+        for row in to_delete:
+            try:
+                with session.begin_nested():
+                    session.delete(row)
+                deleted += 1
+            except Exception as e:
+                logger.warning("evict_orphan_error_rows: delete failed: %s", e)
+
+        if deleted:
+            logger.info("evict_orphan_error_rows: removed %d stale error row(s)", deleted)
+    except Exception as e:
+        logger.warning("evict_orphan_error_rows failed: %s", e)
+    return deleted
