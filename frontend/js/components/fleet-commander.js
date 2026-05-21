@@ -3,6 +3,7 @@
 
 import { escapeHTML, escapeHTMLAttr } from '../utils/html.js';
 import { _formatTokenShort, formatHumanDelta, providerDisplayLabel } from './_shared.js';
+import { formatCost, formatCurrency } from '../utils/format.js';
 
 // Forecast lookup key — must match _forecastSeriesKey in dashboard.js.
 function _fcForecastKey(card) {
@@ -199,7 +200,7 @@ function _resetText(card) {
     return card.reset_at ? formatHumanDelta(new Date(card.reset_at)) : '—';
 }
 
-function _fcPoolStack(quotaCards, _forecastMap) {
+function _fcPoolStack(quotaCards, forecastMap) {
     const pools = quotaCards.map(card => ({
         card,
         used: _poolPct(card),
@@ -313,7 +314,7 @@ function _fcCriticalGauge(card, _forecastMap) {
 
 function _fcVelocity(card, forecastMap) {
     const spend = card.used_value != null
-        ? `$${Number(card.used_value).toFixed(2)}`
+        ? formatCurrency(Number(card.used_value), card.currency || 'USD')
         : '—';
     return `<div class="fc-velo">
         <span class="payg-tag">PAYG · No quota</span>
@@ -686,7 +687,7 @@ function _fcPods(secondaryCards, contributions, primaryCard, winAgg) {
         const sname = matching?.service_name || sid;
 
         const deltaText = windowed ? `+${_formatTokenShort(windowed)}` : '—';
-        const costText = cost ? `$${cost.toFixed(2)}` : '—';
+        const costText = cost ? formatCost(cost) : '—';
 
         return `<div class="pod" data-sidecar="${escapeHTMLAttr(sid)}">
             <div class="h">

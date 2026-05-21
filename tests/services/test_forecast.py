@@ -1,11 +1,11 @@
-"""Unit tests for the forecast service (rewritten for event-sourced model)."""
+"""Unit tests for the forecast service (quota-snapshot based)."""
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import UsageEvent
+from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
 from app.services.forecast import compute_forecast
 
@@ -27,12 +27,14 @@ def _make_card(
     account_id: str | None = "acc1",
     account_label: str | None = None,
     model_id: str | None = None,
+    variant: str | None = None,
     service_name: str = "Claude API",
     window_type: str = "weekly",
     unit_type: str = "tokens",
     unit: str = "tokens",
     used_value: float | None = 50_000.0,
     limit_value: float | None = 1_000_000.0,
+    pct_used: float | None = None,
     is_unlimited: bool = False,
     reset_at: str | None = None,
 ) -> LimitCard:
@@ -44,6 +46,7 @@ def _make_card(
         unit_type=unit_type,
         used_value=used_value,
         limit_value=limit_value,
+        pct_used=pct_used,
         is_unlimited=is_unlimited,
         reset_at=reset_at,
         window_type=window_type,
@@ -51,46 +54,44 @@ def _make_card(
         account_id=account_id,
         account_label=account_label,
         model_id=model_id,
+        variant=variant,
         health="good",
         data_source="api",
     )
 
 
-def _make_event(
+def _make_snapshot(
     *,
     session: Session,
     ts: datetime,
-    tokens_input: int = 10_000,
-    tokens_output: int = 5_000,
+    pct_used: float,
+    reset_at: datetime,
     provider_id: str = "anthropic",
     account_id: str = "acc1",
-    model_id: str | None = None,
-    event_id_suffix: str = "",
-) -> UsageEvent:
-    event = UsageEvent(
+    window_type: str = "weekly",
+    variant: str = "",
+    model_id: str = "",
+) -> QuotaSnapshot:
+    snap = QuotaSnapshot(
         provider_id=provider_id,
         account_id=account_id,
-        event_id=f"evt_{ts.isoformat()}_{event_id_suffix}",
-        ts=ts,
+        window_type=window_type,
+        variant=variant,
         model_id=model_id,
-        tokens_input=tokens_input,
-        tokens_output=tokens_output,
-        tokens_cache_read=0,
-        tokens_cache_create=0,
-        tokens_reasoning=0,
-        cost_usd=0.0,
-        sidecar_id="local",
+        ts=ts,
+        pct_used=pct_used,
+        reset_at=reset_at,
     )
-    session.add(event)
+    session.add(snap)
     session.commit()
-    return event
+    return snap
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
-def test_forecast_with_no_events_returns_empty(db_session):
-    """No events in the window → returns insufficient_data status."""
+def test_forecast_with_no_snapshots_returns_insufficient(db_session):
+    """No snapshots in the window → returns insufficient_data status."""
     card = _make_card()
     result = compute_forecast(card, db_session)
     assert result is not None
@@ -99,72 +100,60 @@ def test_forecast_with_no_events_returns_empty(db_session):
 
 
 def test_forecast_extrapolates_linear_growth(db_session):
-    """Events spread over several hours with growing cumulative tokens → ok status with projected > now."""
+    """Snapshots growing linearly over 4 hourly buckets → ok status, projected > now."""
     now = datetime.now(UTC)
-    reset_at = now + timedelta(days=4)
-    limit = 10_000_000  # high limit so projection < 100%
+    reset_at_dt = now + timedelta(days=4)
+    limit = 10_000_000.0
 
-    # Seed events spread over 4 hours, each 15k tokens → cumulative grows linearly
-    for i in range(4):
-        ts = now - timedelta(hours=4 - i)
-        _make_event(
+    pct_values = [1.0, 1.5, 2.0, 2.5]
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
             session=db_session,
-            ts=ts,
-            tokens_input=7_500,
-            tokens_output=7_500,
-            event_id_suffix=f"h{i}",
+            ts=now - timedelta(hours=4 - i),
+            pct_used=pct,
+            reset_at=reset_at_dt,
         )
 
     card = _make_card(
-        used_value=60_000.0,
-        limit_value=float(limit),
-        reset_at=reset_at.isoformat(),
+        used_value=25_000.0,
+        limit_value=limit,
+        reset_at=reset_at_dt.isoformat(),
     )
     result = compute_forecast(card, db_session)
 
     assert result is not None
     assert result.status in ("ok", "warn")
-    assert result.samples_used >= 2
+    assert result.samples_used >= 4
     assert result.projected_pct is not None
-    # Projection at reset should be higher than current usage fraction
-    now_pct = 60_000.0 / limit * 100
-    assert result.projected_pct > now_pct
+    assert result.projected_pct > (25_000.0 / limit * 100)
 
 
 def test_forecast_skips_cards_without_limit_value(db_session):
-    """limit_value=None → compute_forecast returns None."""
+    """limit_value=None and non-percent unit_type → compute_forecast returns None."""
     card = _make_card(limit_value=None)
     result = compute_forecast(card, db_session)
     assert result is None
 
 
-def test_forecast_handles_single_event_gracefully(db_session):
-    """Only one hour-bucket of events → insufficient_data, no crash.
-
-    All events are pinned to the same UTC hour to ensure strftime bucketing
-    always produces exactly one hour bucket regardless of when the test runs.
-    We use 2 hours ago as the anchor so the events are definitely in the past
-    and fall within the weekly window.
-    """
+def test_forecast_handles_single_bucket_gracefully(db_session):
+    """Only one distinct hour-bucket of snapshots → insufficient_data, no crash."""
     now = datetime.now(UTC)
-    # Anchor 2 hours ago, truncated to the start of that hour, so all 5 events
-    # are in the same hour bucket and clearly in the past.
+    reset_at_dt = now + timedelta(days=4)
     anchor_hour = (now - timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
+
     for i in range(5):
-        _make_event(
+        _make_snapshot(
             session=db_session,
             ts=anchor_hour + timedelta(minutes=i),
-            event_id_suffix=f"single_{i}",
+            pct_used=10.0 + i * 0.1,
+            reset_at=reset_at_dt,
         )
 
-    # reset_at 4 days from now; weekly window covers [reset_at - 7d, reset_at]
-    # which includes the anchor 2 hours ago.
-    reset_at = (now + timedelta(days=4)).isoformat()
-    card = _make_card(reset_at=reset_at)
+    card = _make_card(reset_at=reset_at_dt.isoformat())
     result = compute_forecast(card, db_session)
     assert result is not None
     assert result.status == "insufficient_data"
-    # samples_used reflects actual hourly buckets (should be 1 here)
+    # All 5 snapshots fall into the same hourly bucket → samples_used = 1
     assert result.samples_used == 1
 
 
@@ -183,94 +172,107 @@ def test_forecast_excludes_pay_as_you_go(db_session):
 
 
 def test_forecast_handles_percent_unit_type(db_session):
-    """percent unit_type → dispatched to _compute_percent_forecast which can produce a result."""
-    card = _make_card(unit_type="percent", unit="percent", used_value=42.0, limit_value=100.0)
+    """percent unit_type with quota snapshots → produces a result."""
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(days=4)
+    for i in range(4):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(hours=4 - i),
+            pct_used=10.0 + i * 2.0,
+            reset_at=reset_at_dt,
+            window_type="weekly",
+        )
+    card = _make_card(
+        unit_type="percent",
+        unit="percent",
+        used_value=16.0,
+        limit_value=100.0,
+        pct_used=16.0,
+        reset_at=reset_at_dt.isoformat(),
+    )
     result = compute_forecast(card, db_session)
-    # With no events, it should return insufficient_data
-    if result is not None:
-        assert result.status in ("insufficient_data", "stable")
+    assert result is not None
+    assert result.status in (
+        "ok",
+        "warn",
+        "risk",
+        "stable",
+        "insufficient_data",
+        "decelerating",
+        "exhausted",
+    )
 
 
 def test_forecast_risk_status_steep_trajectory(db_session):
-    """Steep token growth projecting past limit → risk status."""
+    """Steep pct growth over short window → risk or warn status."""
     now = datetime.now(UTC)
-    reset_at = now + timedelta(hours=6)  # Short window to force projection near limit
-    limit = 100_000
+    reset_at_dt = now + timedelta(hours=6)
+    limit = 100_000.0
 
-    # Seed 4 events spread over 4 hours, each burning 20k tokens cumulative
-    for i in range(4):
-        ts = now - timedelta(hours=4 - i)
-        _make_event(
+    pct_values = [20.0, 40.0, 60.0, 80.0]
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
             session=db_session,
-            ts=ts,
-            tokens_input=10_000,
-            tokens_output=10_000,
-            event_id_suffix=f"steep_{i}",
+            ts=now - timedelta(hours=4 - i),
+            pct_used=pct,
+            reset_at=reset_at_dt,
+            window_type="daily",
         )
 
     card = _make_card(
         used_value=80_000.0,
-        limit_value=float(limit),
-        reset_at=reset_at.isoformat(),
+        limit_value=limit,
+        reset_at=reset_at_dt.isoformat(),
         window_type="daily",
     )
     result = compute_forecast(card, db_session)
     assert result is not None
-    # With steep growth and short window, should be risk or warn
     assert result.status in ("risk", "warn")
     assert result.projected_pct is not None
     assert result.projected_pct >= 80.0
 
 
 def test_forecast_isolates_by_model(db_session):
-    """Events for model_id='sonnet' don't bleed into model_id=None forecast."""
+    """Snapshots for model_id='sonnet' don't bleed into model_id='' aggregate forecast."""
     now = datetime.now(UTC)
-    reset_at = now + timedelta(days=4)
-    limit = 1_000_000
+    reset_at_dt = now + timedelta(days=4)
 
-    # Events with model_id='sonnet'
     for i in range(4):
         ts = now - timedelta(hours=4 - i)
-        _make_event(
+        _make_snapshot(
             session=db_session,
             ts=ts,
-            tokens_input=50_000,
-            tokens_output=50_000,
+            pct_used=50.0 + i * 5.0,
+            reset_at=reset_at_dt,
             model_id="sonnet",
-            event_id_suffix=f"sonnet_{i}",
         )
 
-    # Card with no model_id filter → should see 0 tokens (no matching events)
-    # because model_id-specific events don't count toward aggregate-card forecasts
+    # Aggregate card (model_id=None) queries model_id="" — no matching snapshots.
     card_agg = _make_card(
         model_id=None,
         used_value=0.0,
-        limit_value=float(limit),
-        reset_at=reset_at.isoformat(),
+        limit_value=1_000_000.0,
+        reset_at=reset_at_dt.isoformat(),
     )
     result_agg = compute_forecast(card_agg, db_session)
-    # The aggregate card queries all events for (provider, account), regardless of model_id.
-    # So it will see the sonnet events — this is correct behavior (total usage).
     assert result_agg is not None
-    # samples_used should be >= 2 (4 events spread across 4 hours)
-    assert result_agg.samples_used >= 2
+    assert result_agg.status == "insufficient_data"
 
-    # Card with model_id='sonnet' → sees only sonnet events
+    # Sonnet card queries model_id="sonnet" — sees all 4 snapshots.
     card_sonnet = _make_card(
         model_id="sonnet",
-        used_value=200_000.0,
-        limit_value=float(limit),
-        reset_at=reset_at.isoformat(),
+        used_value=65_000.0,
+        limit_value=1_000_000.0,
+        reset_at=reset_at_dt.isoformat(),
     )
     result_sonnet = compute_forecast(card_sonnet, db_session)
     assert result_sonnet is not None
-    assert result_sonnet.samples_used >= 2
+    assert result_sonnet.samples_used >= 4
 
 
 def test_forecast_missing_reset_at_returns_none(db_session):
     """reset_at=None → compute_forecast returns None."""
-    card = _make_card(reset_at=None)
-    # Override to actually set reset_at to None
     card = LimitCard(
         service_name="Test",
         unit="tokens",
@@ -289,98 +291,116 @@ def test_forecast_missing_reset_at_returns_none(db_session):
 
 
 def test_forecast_includes_session_window(db_session):
-    """window_type=session → compute_forecast returns a ForecastEntry."""
+    """window_type=session → uses 5-min buckets; no snapshots → insufficient_data."""
     card = _make_card(window_type="session")
     result = compute_forecast(card, db_session)
     assert result is not None
     assert result.window_type == "session"
-    assert result.status == "insufficient_data"  # No events in db_session
+    assert result.status == "insufficient_data"
 
 
-# ── Lock-in tests: pin hit-at + downward-clamp behavior before refactor ──────
+def test_forecast_session_window_with_enough_buckets(db_session):
+    """session window: 4+ distinct 5-min buckets → produces a real forecast."""
+    now = datetime.now(UTC)
+    reset_at_dt = now + timedelta(hours=3)
+
+    # Seed 4 snapshots 10 minutes apart so they land in different 5-min buckets.
+    for i in range(4):
+        _make_snapshot(
+            session=db_session,
+            ts=now - timedelta(minutes=30 - i * 10),
+            pct_used=10.0 + i * 5.0,
+            reset_at=reset_at_dt,
+            window_type="session",
+        )
+
+    card = _make_card(
+        used_value=25_000.0,
+        limit_value=200_000.0,
+        reset_at=reset_at_dt.isoformat(),
+        window_type="session",
+    )
+    result = compute_forecast(card, db_session)
+    assert result is not None
+    assert result.status != "insufficient_data"
+    assert result.samples_used >= 4
+
+
+# ── Lock-in tests: pin hit-at + decelerating behavior ─────────────────────────
 
 
 def test_projected_limit_hit_at_matches_anchored_formula(db_session):
-    """For a clean linear trajectory, hit_at must equal `now + (100 - now_pct)/slope`
-    under the anchor-at-now projection model, within 1 second."""
-    from statistics import linear_regression
+    """For a clean linear trajectory, hit_at = now + (100 - now_pct) / slope, ±1s."""
+    from statistics import median
 
-    # Weekly window so we have room: events at window_start + 0..3h, now at +4h.
     window_start = datetime(2026, 5, 13, 0, 0, 0, tzinfo=UTC)
     now = window_start + timedelta(hours=4)
     reset_at = window_start + timedelta(days=7)
-    limit = 1000
+    limit = 1000.0
 
-    # Clean linear ys=[10,30,50,70] at xs=[0,3600,7200,10800].
-    # Slope = 20/3600 ≈ 0.005556 pct/sec. Theil-Sen == OLS on perfectly linear data.
-    chunks = [100, 200, 200, 200]
-    expected_xs, expected_ys = [], []
-    cumulative = 0
-    for i, chunk in enumerate(chunks):
-        ts = window_start + timedelta(hours=i)
-        _make_event(
+    # pct_used grows linearly: 10, 30, 50, 70 at hours 0–3.
+    pct_values = [10.0, 30.0, 50.0, 70.0]
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
             session=db_session,
-            ts=ts,
-            tokens_input=chunk,
-            tokens_output=0,
-            event_id_suffix=f"hitat_{i}",
+            ts=window_start + timedelta(hours=i),
+            pct_used=pct,
+            reset_at=reset_at,
         )
-        cumulative += chunk
-        expected_xs.append(i * 3600.0)
-        expected_ys.append(cumulative / limit * 100.0)
 
     card = _make_card(
-        used_value=700.0,  # now_pct = 70 → < 99.9, hit_at path is active
-        limit_value=float(limit),
+        used_value=700.0,  # now_pct = 70.0
+        limit_value=limit,
         reset_at=reset_at.isoformat(),
         window_type="weekly",
     )
     result = compute_forecast(card, db_session, now=now)
     assert result is not None
-    assert result.status == "risk"  # anchored projection blows past 100% in 7d
+    assert result.status == "risk"
     assert result.projected_limit_hit_at is not None
 
-    fit = linear_regression(expected_xs, expected_ys)
-    expected_hit_ts = now + timedelta(seconds=(100.0 - 70.0) / fit.slope)
+    # Theil-Sen == OLS on perfectly linear data.
+    xs = [i * 3600.0 for i in range(4)]
+    ys = pct_values
+    slopes = [
+        (ys[j] - ys[i]) / (xs[j] - xs[i])
+        for i in range(len(xs))
+        for j in range(i + 1, len(xs))
+        if xs[j] != xs[i]
+    ]
+    slope = median(slopes)
+    expected_hit_ts = now + timedelta(seconds=(100.0 - 70.0) / slope)
     actual_hit_ts = datetime.fromisoformat(result.projected_limit_hit_at)
     delta = abs((actual_hit_ts - expected_hit_ts).total_seconds())
-    assert delta < 1.0, f"hit_at off by {delta}s: actual={actual_hit_ts} expected={expected_hit_ts}"
+    assert delta < 1.0, f"hit_at off by {delta}s"
 
 
 def test_decelerating_status_when_high_usage_and_projection_dips(db_session):
-    """When the regression line at reset_elapsed dips below current cumulative pct
-    (e.g., late-window outlier) AND current_pct is in the matters-zone (>= 80%),
-    status='decelerating' surfaces the slowdown explicitly instead of masquerading
-    as 'stable'."""
-    # Fully deterministic timestamps for a 7-day weekly window.
+    """Monotone-but-slowing trajectory at high usage → status='decelerating'."""
     window_start = datetime(2026, 5, 13, 0, 0, 0, tzinfo=UTC)
-    now = window_start + timedelta(days=6, hours=12)  # most of the way through window
+    now = window_start + timedelta(days=6, hours=12)
     reset_at = window_start + timedelta(days=7)
-    limit = 1000
+    limit = 1000.0
 
-    # 7 daily events at midnight, tiny tiny ... huge → cumulative 50,60,70,80,90,100,950
-    chunks = [50, 10, 10, 10, 10, 10, 850]
-    for i, chunk in enumerate(chunks):
-        ts = window_start + timedelta(days=i)
-        _make_event(
+    # pct_used: 5, 6, 7, 8, 9, 10, 95 — small daily increments then a huge spike at day 6.
+    pct_values = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 95.0]
+    for i, pct in enumerate(pct_values):
+        _make_snapshot(
             session=db_session,
-            ts=ts,
-            tokens_input=chunk,
-            tokens_output=0,
-            event_id_suffix=f"clamp_{i}",
+            ts=window_start + timedelta(days=i),
+            pct_used=pct,
+            reset_at=reset_at,
         )
 
     card = _make_card(
-        used_value=950.0,  # now_pct = 95 → above DECELERATING_NOW_PCT_THRESHOLD, < EXHAUSTED
-        limit_value=float(limit),
+        used_value=950.0,  # now_pct = 95.0
+        limit_value=limit,
         reset_at=reset_at.isoformat(),
         window_type="weekly",
     )
     result = compute_forecast(card, db_session, now=now)
     assert result is not None
     assert result.status == "decelerating"
-    # Reports current position; the clamp would have set projected ≈ current.
     assert result.projected_pct == pytest.approx(95.0, abs=0.5)
-    # Theil-Sen on cumulative monotonic data still produces a non-negative slope.
     assert result.slope is not None and result.slope >= 0.0
     assert result.method == "theil_sen"

@@ -1,7 +1,8 @@
-"""Comprehensive unit tests for the currency/credits branch of compute_forecast.
+"""Unit tests for currency / credits cards in compute_forecast.
 
-These tests pin observable behavior of `_compute_currency_forecast` before
-the Phase 1 refactor and Phase 2 algorithm changes, so regressions surface.
+Currency and credits cards use the same quota-snapshot path as every other
+unit type. These tests confirm status branches and field propagation for
+non-percent, non-token unit types.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -9,9 +10,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import UsagePeriodRollup
+from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
-from app.services.forecast import MIN_BUCKETS_FOR_TREND as MIN_BUCKETS_FOR_TREND_VALUE
 from app.services.forecast import compute_forecast
 
 
@@ -31,6 +31,8 @@ def _make_currency_card(
     window_type: str = "monthly",
     reset_at: datetime | None = None,
     unit_type: str = "currency",
+    provider_id: str = "anthropic",
+    account_id: str = "acc1",
 ) -> LimitCard:
     reset = reset_at or (datetime.now(UTC) + timedelta(days=5))
     return LimitCard(
@@ -42,8 +44,8 @@ def _make_currency_card(
         is_unlimited=False,
         reset_at=reset.isoformat(),
         window_type=window_type,
-        provider_id="anthropic",
-        account_id="acc1",
+        provider_id=provider_id,
+        account_id=account_id,
         pct_used=(
             pct_used
             if pct_used is not None
@@ -54,91 +56,111 @@ def _make_currency_card(
     )
 
 
-def _seed_daily(
-    session: Session,
+def _make_snapshot(
     *,
-    period_key: str,
-    cost_usd: float,
+    session: Session,
+    ts: datetime,
+    pct_used: float,
+    reset_at: datetime,
     provider_id: str = "anthropic",
     account_id: str = "acc1",
-) -> None:
-    r = UsagePeriodRollup(
+    window_type: str = "monthly",
+    variant: str = "",
+    model_id: str = "",
+) -> QuotaSnapshot:
+    snap = QuotaSnapshot(
         provider_id=provider_id,
         account_id=account_id,
-        period_type="day",
-        period_key=period_key,
-        model_id="",
-        sidecar_id="",
-        tokens_input=0,
-        tokens_output=0,
-        tokens_cache_read=0,
-        tokens_cache_create=0,
-        tokens_reasoning=0,
-        cost_usd=cost_usd,
-        msgs=1,
+        window_type=window_type,
+        variant=variant,
+        model_id=model_id,
+        ts=ts,
+        pct_used=pct_used,
+        reset_at=reset_at,
     )
-    session.add(r)
+    session.add(snap)
     session.commit()
+    return snap
 
 
 class TestCurrencyInsufficientData:
-    def test_no_rollups_returns_insufficient_data(self, db_session):
+    def test_no_snapshots_returns_insufficient_data(self, db_session):
+        """No quota_snapshots at all → insufficient_data."""
         card = _make_currency_card(used_value=10.0, limit_value=100.0)
         result = compute_forecast(card, db_session)
         assert result is not None
         assert result.status == "insufficient_data"
         assert result.samples_used == 0
 
-    def test_single_rollup_returns_insufficient_data(self, db_session):
+    def test_single_bucket_returns_insufficient_data(self, db_session):
+        """Three snapshots all within the same 6h bucket → samples_used=1 → insufficient_data."""
         now = datetime.now(UTC)
-        _seed_daily(
-            db_session,
-            period_key=(now - timedelta(days=1)).strftime("%Y-%m-%d"),
-            cost_usd=5.0,
-        )
-        card = _make_currency_card(used_value=5.0, limit_value=100.0)
+        reset_at_dt = now + timedelta(days=5)
+        # Monthly window uses 6h buckets; 10-min spacing keeps all three in the same bucket.
+        anchor = (now - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        for i in range(3):
+            _make_snapshot(
+                session=db_session,
+                ts=anchor + timedelta(minutes=i * 10),
+                pct_used=10.0 + i,
+                reset_at=reset_at_dt,
+            )
+        card = _make_currency_card(used_value=12.0, limit_value=100.0, reset_at=reset_at_dt)
         result = compute_forecast(card, db_session)
         assert result is not None
         assert result.status == "insufficient_data"
 
-    def test_zero_limit_returns_none(self, db_session):
-        """Dispatcher short-circuits on limit_value=0 for non-percent unit types."""
-        card = _make_currency_card(used_value=0.0, limit_value=0.0)
-        result = compute_forecast(card, db_session)
+    def test_unlimited_returns_none(self, db_session):
+        """is_unlimited=True → compute_forecast returns None."""
+        card = _make_currency_card(used_value=10.0, limit_value=100.0)
+        unlimited_card = LimitCard(**{**card.model_dump(), "is_unlimited": True})
+        result = compute_forecast(unlimited_card, db_session)
         assert result is None
 
 
 class TestCurrencyStatusTransitions:
     def test_low_burn_is_ok(self, db_session):
-        """Modest burn projecting under 80% → ok."""
+        """Slow pct growth projecting below 80% by window end → ok."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=20)
-        # 5 days of $0.50/day → projected total over 30 days ≈ $15 → 15% of $100
-        for i in range(5):
-            day = (now - timedelta(days=5 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=0.50)
+        reset_at_dt = now + timedelta(days=20)
+        # 4 snapshots 6h apart → 4 distinct 6h buckets (monthly window)
+        pct_values = [1.0, 1.5, 2.0, 2.5]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+            )
         card = _make_currency_card(
             used_value=2.5,
             limit_value=100.0,
+            pct_used=2.5,
             window_type="monthly",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session)
         assert result is not None
         assert result.status == "ok"
 
     def test_steep_burn_is_risk(self, db_session):
-        """Heavy burn projecting past 100% → risk with hit_at populated."""
+        """Heavy pct growth projecting past 100% → risk (or warn/exhausted for edge cases)."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=5)
-        for i in range(5):
-            day = (now - timedelta(days=5 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=10.00)
+        reset_at_dt = now + timedelta(days=5)
+        pct_values = [20.0, 40.0, 60.0, 80.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+            )
         card = _make_currency_card(
-            used_value=50.0,
+            used_value=80.0,
             limit_value=100.0,
+            pct_used=80.0,
             window_type="monthly",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session)
         assert result is not None
@@ -147,37 +169,48 @@ class TestCurrencyStatusTransitions:
             assert result.projected_limit_hit_at is not None
 
     def test_near_exhaustion_status(self, db_session):
-        """now_pct >= 99.9 → status=exhausted regardless of slope."""
+        """now_pct >= 99.9 with enough snapshot buckets → status=exhausted, projected_pct=100."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=10)
-        for i in range(4):
-            day = (now - timedelta(days=4 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=25.00)
+        reset_at_dt = now + timedelta(days=10)
+        pct_values = [90.0, 95.0, 98.0, 99.95]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+            )
         card = _make_currency_card(
             used_value=99.95,
             limit_value=100.0,
+            pct_used=99.95,
             window_type="monthly",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session)
         assert result is not None
         assert result.status == "exhausted"
-        # When exhausted, projected_pct is pinned to 100
         assert result.projected_pct == 100.0
 
 
 class TestCurrencyFields:
     def test_response_carries_window_metadata(self, db_session):
+        """ForecastEntry carries correct window_type, unit_type, limit_value, reset_at."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=20)
-        for i in range(4):
-            day = (now - timedelta(days=4 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=1.0)
+        reset_at_dt = now + timedelta(days=20)
+        for i, pct in enumerate([1.0, 2.0, 3.0, 4.0]):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+            )
         card = _make_currency_card(
             used_value=4.0,
             limit_value=100.0,
+            pct_used=4.0,
             window_type="monthly",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session)
         assert result is not None
@@ -188,78 +221,75 @@ class TestCurrencyFields:
         assert 0.0 <= result.confidence <= 1.0
         assert result.samples_used >= 2
 
-    def test_credits_unit_type_dispatches_to_currency(self, db_session):
-        """unit_type='credits' should be handled by _compute_currency_forecast."""
+    def test_credits_unit_type_follows_same_path(self, db_session):
+        """unit_type='credits' uses the same quota-snapshot path — returns non-None."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=20)
-        for i in range(4):
-            day = (now - timedelta(days=4 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=1.0)
+        reset_at_dt = now + timedelta(days=20)
+        for i, pct in enumerate([1.0, 2.0, 3.0, 4.0]):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+            )
         card = _make_currency_card(
             used_value=4.0,
             limit_value=100.0,
+            pct_used=4.0,
             unit_type="credits",
             window_type="monthly",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session)
         assert result is not None
-        # Same code path → should produce a non-None ForecastEntry, not return None.
         assert result.unit_type == "credits"
 
 
-class TestCurrencyShortWindowGranularity:
-    def test_daily_window_uses_hourly_buckets(self, db_session):
-        """A daily-window currency card with hourly events should produce a real forecast,
-        not insufficient_data. Phase 2: short windows bucket on usage_events directly."""
-        from app.models.db import UsageEvent
+class TestCurrencyWindowBucketing:
+    def test_daily_window_uses_finer_buckets(self, db_session):
+        """Daily-window currency card: 4 snapshots each 1h apart → real forecast.
 
-        window_start = datetime(2026, 5, 18, 0, 0, 0, tzinfo=UTC)
-        now = window_start + timedelta(hours=6)
-        reset_at = window_start + timedelta(hours=24)
-
-        # 6 hourly events with cost_usd, total ≈ $4.50 (45% of $10 limit)
-        for i in range(6):
-            ts = window_start + timedelta(hours=i)
-            event = UsageEvent(
-                provider_id="anthropic",
-                account_id="acc1",
-                event_id=f"hourly_{i}",
-                ts=ts,
-                tokens_input=1_000,
-                tokens_output=500,
-                tokens_cache_read=0,
-                tokens_cache_create=0,
-                tokens_reasoning=0,
-                cost_usd=0.75,
-                sidecar_id="local",
+        Monthly uses 6h buckets; daily uses 30min buckets. 1h spacing puts each
+        snapshot in a distinct 30min bucket, so samples_used == 4.
+        """
+        now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=UTC)
+        reset_at_dt = now + timedelta(hours=18)
+        pct_values = [20.0, 35.0, 50.0, 65.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=4 - i),
+                pct_used=pct,
+                reset_at=reset_at_dt,
+                window_type="daily",
             )
-            db_session.add(event)
-        db_session.commit()
-
         card = _make_currency_card(
-            used_value=4.5,
-            limit_value=10.0,
+            used_value=65.0,
+            limit_value=100.0,
+            pct_used=65.0,
             window_type="daily",
-            reset_at=reset_at,
+            reset_at=reset_at_dt,
         )
         result = compute_forecast(card, db_session, now=now)
         assert result is not None
         assert result.status != "insufficient_data"
-        assert result.samples_used >= MIN_BUCKETS_FOR_TREND_VALUE
+        assert result.samples_used >= 4
 
 
 class TestCurrencyAccountIsolation:
-    def test_rollups_for_other_account_dont_leak(self, db_session):
-        """Rollups for a different account_id must not contribute to this card's forecast."""
+    def test_snapshots_for_other_account_dont_leak(self, db_session):
+        """Snapshots for a different account_id must not contribute to this card's forecast."""
         now = datetime.now(UTC)
-        reset_at = now + timedelta(days=20)
-        # Seed for a foreign account
-        for i in range(5):
-            day = (now - timedelta(days=5 - i)).strftime("%Y-%m-%d")
-            _seed_daily(db_session, period_key=day, cost_usd=99.0, account_id="other_acc")
-        # No rollups for acc1
-        card = _make_currency_card(used_value=2.0, limit_value=100.0, reset_at=reset_at)
+        reset_at_dt = now + timedelta(days=20)
+        for i in range(4):
+            _make_snapshot(
+                session=db_session,
+                ts=now - timedelta(hours=24 - i * 6),
+                pct_used=10.0 * (i + 1),
+                reset_at=reset_at_dt,
+                account_id="other_acc",
+            )
+        card = _make_currency_card(used_value=2.0, limit_value=100.0, reset_at=reset_at_dt)
         result = compute_forecast(card, db_session)
         assert result is not None
         assert result.status == "insufficient_data"

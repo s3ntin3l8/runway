@@ -13,7 +13,8 @@ import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
-import { buildOverviewPane, wireOverviewSparkTabs, wireTrajectoryCharts, disposeTrajectoryCharts } from './overview.js';
+import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
+import { buildForecastPane, wireForecastPane, disposeTrajectoryCharts } from './forecast.js';
 import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip } from './usage.js';
 import { buildCostPane, wireCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
@@ -83,15 +84,18 @@ async function _renderPane(tab) {
                     _modalCache.recentSessions = sd.sessions || [];
                 } catch { _modalCache.recentSessions = []; }
             }
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions);
+            wireOverviewSparkTabs(_modalCache.heatmap);
+
+        } else if (tab === 'forecast') {
             if (!_modalCache.forecast) {
                 try {
                     const fd = await fetchForecast({ provider_id: providerId, include_series: true });
                     _modalCache.forecast = fd.forecasts || [];
                 } catch { _modalCache.forecast = []; }
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions, _modalCache.forecast);
-            wireOverviewSparkTabs(_modalCache.heatmap);
-            await wireTrajectoryCharts(_modalCache.forecast);
+            body.innerHTML = buildForecastPane(_modalCache.forecast);
+            await wireForecastPane(_modalCache.forecast);
 
         } else if (tab === 'usage') {
             if (!_modalCache.heatmap) {
@@ -257,6 +261,7 @@ function _injectModalMarkup() {
         </div>
         <nav class="tabs" id="pm-tabs">
             <button data-tab="overview" class="on">Overview</button>
+            <button data-tab="forecast">Forecast</button>
             <button data-tab="usage">Usage</button>
             <button data-tab="cost">Cost</button>
             <button data-tab="debug">Debug</button>

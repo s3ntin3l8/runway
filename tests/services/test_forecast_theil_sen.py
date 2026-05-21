@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import UsageEvent
+from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
 from app.services.forecast import _fit_trend, compute_forecast
 
@@ -42,21 +42,18 @@ def _make_card(
     )
 
 
-def _make_event(session, *, ts, tokens_input, event_id_suffix):
-    event = UsageEvent(
+def _make_snapshot(session, *, ts, pct_used, reset_at, window_type="weekly"):
+    snap = QuotaSnapshot(
         provider_id="anthropic",
         account_id="acc1",
-        event_id=f"evt_{ts.isoformat()}_{event_id_suffix}",
+        window_type=window_type,
+        variant="",
+        model_id="",
         ts=ts,
-        tokens_input=tokens_input,
-        tokens_output=0,
-        tokens_cache_read=0,
-        tokens_cache_create=0,
-        tokens_reasoning=0,
-        cost_usd=0.0,
-        sidecar_id="local",
+        pct_used=pct_used,
+        reset_at=reset_at,
     )
-    session.add(event)
+    session.add(snap)
     session.commit()
 
 
@@ -100,23 +97,25 @@ class TestTheilSenEstimator:
 
 class TestHorizonCap:
     def test_anchored_projection_below_limit_yields_no_hit_at(self, db_session):
-        """Under anchor-at-now projection, slope too small to cross 100% within
-        remaining time → no hit_at, status is not risk."""
+        """Gentle slope that can't reach 100% within remaining time → no hit_at."""
         window_start = datetime(2026, 5, 12, 0, 0, 0, tzinfo=UTC)
         now = window_start + timedelta(hours=23)
         reset_at = window_start + timedelta(hours=24)
         limit = 1_000_000
 
-        # Gentle, perfectly linear growth: 1000 tokens/hour for 5 buckets.
-        # now_pct ≈ 0.5%. With 1h remaining and tiny slope, projected ≪ 100%.
+        # Gentle growth: 0.1 pct/hour for 5 hourly buckets. now_pct ≈ 0.5%.
+        # With 1h remaining and slope ≈ 2.78e-5 pct/s, projected ≈ 0.6% ≪ 100%.
         for i in range(5):
-            ts = window_start + timedelta(hours=i)
-            _make_event(db_session, ts=ts, tokens_input=1_000, event_id_suffix=f"gentle_{i}")
+            _make_snapshot(
+                db_session,
+                ts=window_start + timedelta(hours=i),
+                pct_used=0.1 * (i + 1),
+                reset_at=reset_at,
+            )
 
         card = _make_card(used_value=5_000.0, limit_value=float(limit), reset_at=reset_at)
         result = compute_forecast(card, db_session, now=now)
         assert result is not None
-        # Projection well below 100 → no hit_at, status is ok/stable.
         assert result.projected_limit_hit_at is None
         assert result.status in ("ok", "stable")
 
@@ -129,11 +128,17 @@ class TestDeceleratingStatus:
         reset_at = window_start + timedelta(days=7)
         limit = 1000
 
-        # Back-loaded: tiny daily then big final → regression line ends below current.
-        chunks = [50, 10, 10, 10, 10, 10, 850]
-        for i, chunk in enumerate(chunks):
-            ts = window_start + timedelta(days=i)
-            _make_event(db_session, ts=ts, tokens_input=chunk, event_id_suffix=f"dec_{i}")
+        # pct_used: small daily increments then a large spike on day 6.
+        # Theil-Sen median slope is dominated by the slow-growth pairs → regression
+        # projects below the current 95%, triggering decelerating.
+        pct_values = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 95.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                db_session,
+                ts=window_start + timedelta(days=i),
+                pct_used=pct,
+                reset_at=reset_at,
+            )
 
         card = _make_card(used_value=950.0, limit_value=float(limit), reset_at=reset_at)
         result = compute_forecast(card, db_session, now=now)
@@ -141,23 +146,26 @@ class TestDeceleratingStatus:
         assert result.status == "decelerating"
 
     def test_low_usage_decelerating_does_not_fire(self, db_session):
-        """At 40% (below DECELERATING_NOW_PCT_THRESHOLD), the same dipping
-        projection produces 'stable' or 'ok' — not 'decelerating'."""
+        """At 40% (below DECELERATING_NOW_PCT_THRESHOLD), same dipping pattern
+        produces 'stable' or 'ok' — not 'decelerating'."""
         window_start = datetime(2026, 5, 13, 0, 0, 0, tzinfo=UTC)
         now = window_start + timedelta(days=6, hours=12)
         reset_at = window_start + timedelta(days=7)
         limit = 1000
 
-        # Same dipping pattern at lower magnitude → now_pct=40.
-        chunks = [20, 4, 4, 4, 4, 4, 360]  # cumulative 400 = 40%
-        for i, chunk in enumerate(chunks):
-            ts = window_start + timedelta(days=i)
-            _make_event(db_session, ts=ts, tokens_input=chunk, event_id_suffix=f"low_{i}")
+        # Same back-loaded shape at lower magnitude → now_pct=40.
+        pct_values = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 40.0]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                db_session,
+                ts=window_start + timedelta(days=i),
+                pct_used=pct,
+                reset_at=reset_at,
+            )
 
         card = _make_card(used_value=400.0, limit_value=float(limit), reset_at=reset_at)
         result = compute_forecast(card, db_session, now=now)
         assert result is not None
-        # Not in matters-zone → decelerating doesn't fire.
         assert result.status != "decelerating"
 
     def test_exhausted_wins_over_decelerating(self, db_session):
@@ -167,10 +175,14 @@ class TestDeceleratingStatus:
         reset_at = window_start + timedelta(days=7)
         limit = 1000
 
-        chunks = [50, 10, 10, 10, 10, 10, 900]  # cumulative ~999 ≈ 99.9%+
-        for i, chunk in enumerate(chunks):
-            ts = window_start + timedelta(days=i)
-            _make_event(db_session, ts=ts, tokens_input=chunk, event_id_suffix=f"exh_{i}")
+        pct_values = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 99.95]
+        for i, pct in enumerate(pct_values):
+            _make_snapshot(
+                db_session,
+                ts=window_start + timedelta(days=i),
+                pct_used=pct,
+                reset_at=reset_at,
+            )
 
         card = _make_card(used_value=999.5, limit_value=float(limit), reset_at=reset_at)
         result = compute_forecast(card, db_session, now=now)

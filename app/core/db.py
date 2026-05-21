@@ -105,6 +105,8 @@ def init_db() -> None:
     with engine.connect() as conn:
         _add_columns_if_missing(conn)
         _add_indexes_if_missing(conn)
+        _rebuild_quota_snapshot_indexes(conn)
+        _backfill_quota_snapshot_variant(conn)
 
     from app.services.pricing_seed import seed_pricing_table
 
@@ -119,16 +121,14 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("system_config", "user_timezone", "VARCHAR"),
     ("usage_events", "subagent_type", "VARCHAR"),
+    ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
 _DEFERRED_INDEXES: list[tuple[str, str, str]] = [
-    # (index_name, table, comma-separated columns)
-    (
-        "ix_quota_snapshots_series_ts",
-        "quota_snapshots",
-        "provider_id, account_id, window_type, model_id, ts",
-    ),
+    # index_name, table, comma-separated columns
+    # Note: ix_quota_snapshots_series_ts is handled by _rebuild_quota_snapshot_indexes
+    # so it can be rebuilt with variant included on existing databases.
 ]
 
 
@@ -143,6 +143,66 @@ def _add_indexes_if_missing(conn: Any) -> None:
     for name, table, cols in _DEFERRED_INDEXES:
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
         conn.commit()
+
+
+def _rebuild_quota_snapshot_indexes(conn: Any) -> None:
+    """Rebuild quota_snapshot indexes to include the variant column.
+
+    The unique constraint and series_ts index both need variant in their
+    key. On existing databases the column was just added by _add_columns_if_missing;
+    the old indexes must be dropped and recreated with the new column list.
+    On fresh databases create_all() builds the correct indexes from __table_args__
+    so PRAGMA index_info won't find variant missing and this is a no-op.
+    """
+    from sqlalchemy import text
+
+    # Check that variant column exists before touching indexes.
+    cols = {row[1] for row in conn.execute(text("PRAGMA table_info(quota_snapshots)"))}
+    if "variant" not in cols:
+        return
+
+    _QUOTA_SNAPSHOT_INDEXES = [
+        (
+            "uq_quota_snapshots_identity",
+            "CREATE UNIQUE INDEX uq_quota_snapshots_identity ON quota_snapshots "
+            "(provider_id, account_id, window_type, variant, model_id, ts)",
+        ),
+        (
+            "ix_quota_snapshots_series_ts",
+            "CREATE INDEX ix_quota_snapshots_series_ts ON quota_snapshots "
+            "(provider_id, account_id, window_type, variant, model_id, ts)",
+        ),
+    ]
+    for index_name, create_sql in _QUOTA_SNAPSHOT_INDEXES:
+        # Check whether the existing index already covers variant.
+        index_cols = [row[2] for row in conn.execute(text(f"PRAGMA index_info('{index_name}')"))]
+        if "variant" in index_cols:
+            continue
+        conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+        conn.execute(text(create_sql))
+        conn.commit()
+        logger.info("Migrated: rebuilt %s to include variant", index_name)
+
+
+def _backfill_quota_snapshot_variant(conn: Any) -> None:
+    """Rewrite quota_snapshots rows written with variant='default' to variant=''.
+
+    The accumulator previously stored the absent-variant sentinel as "default"
+    while the forecast read path filters for "". This one-time UPDATE aligns
+    historical rows with the column default and the read side expectation.
+    OR IGNORE handles the (extremely unlikely) duplicate on the unique key.
+    """
+    from sqlalchemy import text
+
+    result = conn.execute(
+        text("UPDATE OR IGNORE quota_snapshots SET variant = '' WHERE variant = 'default'")
+    )
+    conn.commit()
+    if result.rowcount:
+        logger.info(
+            "Migrated: backfilled %d quota_snapshots rows (variant '' <- 'default')",
+            result.rowcount,
+        )
 
 
 def _add_columns_if_missing(conn: Any) -> None:

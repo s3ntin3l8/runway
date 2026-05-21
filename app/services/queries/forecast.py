@@ -10,21 +10,25 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models.db import UsagePeriodRollup
-from app.services.queries._shared import _parse_ts  # noqa: F401
+
+# Card identity key for the snapshot batch cache:
+# (provider_id, account_id, window_type, variant, model_id)
+SnapshotCacheKey = tuple[str, str, str, str, str]
 
 
-def query_hourly_token_buckets_batch(
+def query_pct_snapshot_buckets_batch(
     session: Session,
     *,
     since: datetime,
     until: datetime,
-) -> dict[tuple[str, str], list[tuple[datetime, str, int]]]:
-    """All hourly token buckets in [since, until], partitioned by (provider, account).
+    bucket_seconds: int,
+) -> dict[SnapshotCacheKey, list[tuple[datetime, float]]]:
+    """All pct_used snapshots in [since, until], bucketed and partitioned by card identity.
 
-    Single scan, then Python-side partitioning. Replaces per-card N+1 queries
-    from `_fetch_hourly_buckets` when many cards share an overlapping window.
-    Token sum excludes tokens_reasoning (already a sub-type of output).
-    model_id is returned as an empty string when null in the source row.
+    Single scan; Python-side partitioning. Each bucket keeps the last (newest)
+    snapshot value in the interval — correct for a monotonically increasing gauge.
+
+    Returns: {(provider_id, account_id, window_type, variant, model_id): [(bucket_ts, pct_used)]}
     """
 
     def _naive_utc_str(dt: datetime) -> str:
@@ -32,17 +36,32 @@ def query_hourly_token_buckets_batch(
 
     sql = text(
         """
-        SELECT
-            provider_id,
-            account_id,
-            strftime('%Y-%m-%d %H:00:00', ts) AS hour_bucket,
-            COALESCE(model_id, '') AS model_id,
-            SUM(tokens_input + tokens_output + tokens_cache_read
-                 + tokens_cache_create) AS toks
-        FROM usage_events
-        WHERE ts >= :since AND ts <= :until
-        GROUP BY provider_id, account_id, hour_bucket, COALESCE(model_id, '')
-        ORDER BY hour_bucket ASC
+        WITH bucketed AS (
+            SELECT
+                provider_id,
+                account_id,
+                window_type,
+                COALESCE(variant, '')  AS variant,
+                COALESCE(model_id, '') AS model_id,
+                (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
+                    * :bucket_seconds             AS bucket_epoch,
+                pct_used,
+                ts,
+                ROW_NUMBER() OVER (
+                    PARTITION BY provider_id, account_id, window_type,
+                                 COALESCE(variant, ''), COALESCE(model_id, ''),
+                                 (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
+                    ORDER BY ts DESC
+                ) AS rn
+            FROM quota_snapshots
+            WHERE ts >= :since AND ts <= :until
+              AND pct_used IS NOT NULL
+        )
+        SELECT provider_id, account_id, window_type, variant, model_id,
+               bucket_epoch, pct_used
+        FROM bucketed
+        WHERE rn = 1
+        ORDER BY provider_id, account_id, window_type, variant, model_id, bucket_epoch ASC
         """
     )
     rows = session.exec(  # type: ignore[call-overload]
@@ -50,121 +69,22 @@ def query_hourly_token_buckets_batch(
         params={
             "since": _naive_utc_str(since),
             "until": _naive_utc_str(until),
+            "bucket_seconds": bucket_seconds,
         },
     ).all()
 
-    result: dict[tuple[str, str], list[tuple[datetime, str, int]]] = {}
+    result: dict[SnapshotCacheKey, list[tuple[datetime, float]]] = {}
     for row in rows:
-        key = (str(row.provider_id), str(row.account_id))
-        try:
-            ts = datetime.strptime(str(row.hour_bucket), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-        except ValueError:
-            continue
-        result.setdefault(key, []).append((ts, str(row.model_id), int(row.toks or 0)))
+        key: SnapshotCacheKey = (
+            str(row.provider_id),
+            str(row.account_id),
+            str(row.window_type),
+            str(row.variant),
+            str(row.model_id),
+        )
+        bucket_ts = datetime.fromtimestamp(int(row.bucket_epoch), tz=UTC)
+        result.setdefault(key, []).append((bucket_ts, float(row.pct_used)))
     return result
-
-
-def query_cost_hourly(
-    session: Session,
-    *,
-    provider_id: str,
-    account_id: str,
-    since: datetime,
-    until: datetime,
-) -> list[tuple[datetime, float, int]]:
-    """Hourly (ts, cost_sum, tokens_sum) buckets from usage_events.
-
-    For short forecast windows (session/daily) the day-grain rollup table
-    yields too few buckets for a trend. This goes straight to the event log
-    and bucket-sums on the fly.
-
-    SQLite stores naive UTC strings; passing ISO-8601 'T'-separated with
-    timezone breaks string comparisons. Same naive-UTC formatting as
-    _fetch_hourly_buckets.
-    """
-
-    def _naive_utc_str(dt: datetime) -> str:
-        return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
-
-    sql = text(
-        """
-        SELECT
-            strftime('%Y-%m-%d %H:00:00', ts) AS hour_bucket,
-            SUM(cost_usd) AS cost,
-            SUM(tokens_input + tokens_output + tokens_cache_read
-                + tokens_cache_create) AS toks
-        FROM usage_events
-        WHERE provider_id = :provider_id
-          AND account_id  = :account_id
-          AND ts >= :since
-          AND ts <= :until
-        GROUP BY hour_bucket
-        ORDER BY hour_bucket ASC
-        """
-    )
-    rows = session.exec(  # type: ignore[call-overload]
-        sql,
-        params={
-            "provider_id": provider_id,
-            "account_id": account_id,
-            "since": _naive_utc_str(since),
-            "until": _naive_utc_str(until),
-        },
-    ).all()
-
-    result: list[tuple[datetime, float, int]] = []
-    for row in rows:
-        try:
-            ts = datetime.strptime(str(row.hour_bucket), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-        except ValueError:
-            continue
-        result.append((ts, float(row.cost or 0), int(row.toks or 0)))
-    return result
-
-
-def query_cost_buckets(
-    session: Session,
-    *,
-    provider_id: str,
-    account_id: str,
-    since_key: str,
-    until_key: str,
-) -> list[tuple[str, float, int]]:
-    """Daily (cost_usd, token total) buckets for one (provider, account) pair.
-
-    Returns rows of (period_key, daily_cost, daily_tokens) inclusive of both
-    boundary keys, ordered oldest-first. period_key format is "YYYY-MM-DD"
-    (the natural index on the rollup table).
-    """
-    sql = text(
-        """
-        SELECT
-            period_key,
-            SUM(cost_usd) AS daily_cost,
-            SUM(tokens_input + tokens_output + tokens_cache_read
-                 + tokens_cache_create + tokens_reasoning) AS daily_tokens
-        FROM usage_period_rollup
-        WHERE period_type = 'day'
-          AND model_id = ''
-          AND sidecar_id = ''
-          AND period_key >= :since_key
-          AND period_key <= :until_key
-          AND provider_id = :provider_id
-          AND account_id = :account_id
-        GROUP BY period_key
-        ORDER BY period_key ASC
-        """
-    )
-    rows = session.exec(  # type: ignore[call-overload]
-        sql,
-        params={
-            "since_key": since_key,
-            "until_key": until_key,
-            "provider_id": provider_id,
-            "account_id": account_id,
-        },
-    ).all()
-    return [(str(r.period_key), float(r.daily_cost or 0), int(r.daily_tokens or 0)) for r in rows]
 
 
 def query_cost_forecast(
