@@ -28,8 +28,11 @@ def query_sessions(
     """Return top-N sessions by total tokens, newest first within the window.
 
     Each row includes ts_start, ts_end, duration_seconds, msgs, models[],
-    tokens_total, tokens_input, tokens_output, tokens_cache, cache_hit_pct,
-    cost_usd, sidecar_id.
+    by_model[], tokens_total, tokens_input, tokens_output, tokens_cache,
+    cache_hit_pct, cost_usd, sidecar_id.
+
+    by_model is a list of per-model aggregates ordered by tokens_total DESC,
+    covering all events with a non-NULL model_id in the session.
 
     Events with NULL session_id are excluded.
     """
@@ -88,6 +91,30 @@ def query_sessions(
         """
     )
 
+    model_breakdown_sql = text(
+        """
+        SELECT
+            model_id,
+            COUNT(*)                                            AS msgs,
+            SUM(tokens_input + tokens_output
+                + tokens_cache_read + tokens_cache_create
+                + tokens_reasoning)                             AS tokens_total,
+            SUM(tokens_input)                                   AS tokens_input,
+            SUM(tokens_output)                                  AS tokens_output,
+            SUM(tokens_cache_read)                              AS tokens_cache_read,
+            SUM(tokens_cache_create)                            AS tokens_cache_create,
+            SUM(tokens_reasoning)                               AS tokens_reasoning,
+            SUM(cost_usd)                                       AS cost_usd
+        FROM usage_events
+        WHERE provider_id = :provider_id
+          AND account_id  = :account_id
+          AND session_id  = :session_id
+          AND model_id IS NOT NULL
+        GROUP BY model_id
+        ORDER BY tokens_total DESC
+        """
+    )
+
     rows = session.exec(  # type: ignore[call-overload]
         agg_sql,
         params={
@@ -139,6 +166,31 @@ def query_sessions(
                 for sa in sa_rows
             ]
 
+        by_model: list[dict[str, Any]] = []
+        if models:
+            bm_rows = session.exec(  # type: ignore[call-overload]
+                model_breakdown_sql,
+                params={
+                    "provider_id": provider_id,
+                    "account_id": account_id,
+                    "session_id": row.session_id,
+                },
+            ).all()
+            by_model = [
+                {
+                    "model_id": bm.model_id,
+                    "msgs": int(bm.msgs or 0),
+                    "tokens_total": int(bm.tokens_total or 0),
+                    "tokens_input": int(bm.tokens_input or 0),
+                    "tokens_output": int(bm.tokens_output or 0),
+                    "tokens_cache_read": int(bm.tokens_cache_read or 0),
+                    "tokens_cache_create": int(bm.tokens_cache_create or 0),
+                    "tokens_reasoning": int(bm.tokens_reasoning or 0),
+                    "cost_usd": float(bm.cost_usd or 0.0),
+                }
+                for bm in bm_rows
+            ]
+
         results.append(
             {
                 "session_id": row.session_id,
@@ -147,6 +199,7 @@ def query_sessions(
                 "duration_seconds": duration,
                 "msgs": int(row.msgs),
                 "models": models,
+                "by_model": by_model,
                 "tokens_total": tokens_total,
                 "tokens_input": tokens_input,
                 "tokens_output": tokens_output,
