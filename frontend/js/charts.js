@@ -405,24 +405,51 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 if (projCountByPid[pid] === undefined) projCountByPid[pid] = 0;
                 const style = getSeriesStyle(pid, projCountByPid[pid]++);
 
-                const historicalNulls = bucketEpochs.map(() => null);
-                const anchorPct = fe.now_pct ?? 0;
                 const targetPct = Math.min(100, fe.projected_pct);
-                const futureData = futureEpochs.map((_, i) => {
-                    const frac = futureEpochs.length === 1 ? 1 : i / (futureEpochs.length - 1);
+
+                // Anchor the dashed projection at the literal end of the solid line — the
+                // last historical bucket's *value*, not the forecast's regressed now_pct —
+                // so the two segments meet without a vertical jump. The line then ramps
+                // straight to targetPct at the reset, using the anchor's epoch as the
+                // interpolation origin so the whole projection is one diagonal.
+                const historicalNulls = bucketEpochs.map(() => null);
+                let lastHistIdx = -1;
+                let lastHistValue = null;
+                for (let i = bucketEpochs.length - 1; i >= 0; i--) {
+                    const b = buckets[bucketEpochs[i]]?.[key];
+                    if (b) {
+                        const v = summable ? b.sum : b.sum / b.count;
+                        if (v != null) {
+                            lastHistIdx = i;
+                            lastHistValue = parseFloat(v.toFixed(2));
+                            break;
+                        }
+                    }
+                }
+                const anchorPct = lastHistValue != null ? lastHistValue : (fe.now_pct ?? 0);
+                if (lastHistIdx >= 0) {
+                    historicalNulls[lastHistIdx] = anchorPct;
+                }
+
+                const anchorEpoch = lastHistIdx >= 0 ? bucketEpochs[lastHistIdx] : nowBucket;
+                const targetEpoch = futureEpochs[futureEpochs.length - 1];
+                const span = Math.max(1, targetEpoch - anchorEpoch);
+
+                const futureData = futureEpochs.map(ep => {
+                    const frac = (ep - anchorEpoch) / span;
                     return parseFloat((anchorPct + (targetPct - anchorPct) * frac).toFixed(2));
                 });
 
                 const projSeries = {
                     name: key + ' · projected',
                     type: 'line',
-                    smooth: false,
+                    smooth: true,
                     symbol: 'none',
                     lineStyle: { width: 1.5, type: 'dashed', color: style.color, opacity: 0.7 },
                     itemStyle: { color: style.color, opacity: 0.7 },
                     areaStyle: null,
                     data: [...historicalNulls, ...futureData],
-                    connectNulls: false,
+                    connectNulls: true,
                     legendHoverLink: false,
                     z: 3,
                     tooltip: { show: false },
