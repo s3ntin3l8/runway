@@ -138,7 +138,7 @@ function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, 
 }
 
 const _FC_WINDOW_LABELS = {
-    session: '5h rolling',
+    session: '5h fixed',
     daily:   '24h fixed',
     weekly:  '7d fixed',
     monthly: '30d fixed',
@@ -221,6 +221,9 @@ function _fcPoolStack(quotaCards, forecastMap) {
         const glideAhead = p.glide != null && p.used > p.glide + 4;
         const glideBehind = p.glide != null && p.used < p.glide - 4;
         const fc = forecastMap?.get(_fcForecastKey(p.card));
+        const forecastHtml = fc?.projected_pct != null
+            ? `<div class="pforecast" style="left:${Math.min(fc.projected_pct, 100).toFixed(1)}%" title="Forecast: ${fc.projected_pct.toFixed(1)}% by end of window"></div>`
+            : '';
         const fcBadge = (() => {
             if (!fc || fc.projected_pct == null) return '';
             const color = _FC_STATUS_COLOR[fc.status] || 'var(--text-dim)';
@@ -251,6 +254,7 @@ function _fcPoolStack(quotaCards, forecastMap) {
                 <div class="pmeter">
                     <div class="pused" style="width:${p.used}%"></div>
                     ${glideHtml}
+                    ${forecastHtml}
                 </div>
                 ${glideFootHtml}
             </div>
@@ -289,6 +293,10 @@ function _fcCriticalGauge(card, _forecastMap) {
     const glideHtml = glide != null
         ? `<div class="glide" style="left:${glide.toFixed(1)}%" title="ideal pace by elapsed time"></div>`
         : '';
+    const gaugeFc = _forecastMap?.get(_fcForecastKey(card));
+    const gaugeForecastHtml = gaugeFc?.projected_pct != null
+        ? `<div class="forecast" style="left:${Math.min(gaugeFc.projected_pct, 100).toFixed(1)}%" title="Forecast: ${gaugeFc.projected_pct.toFixed(1)}% by end of window"></div>`
+        : '';
     const glideTarget = glide != null
         ? `<span>glide-path target <b>${Math.round(glide)}%</b></span>`
         : '';
@@ -302,6 +310,7 @@ function _fcCriticalGauge(card, _forecastMap) {
             <div class="ticks"></div>
             <div class="used" style="width:${used}%"></div>
             ${glideHtml}
+            ${gaugeForecastHtml}
             <div class="pct-label">${used}%</div>
         </div>
         <div class="fc-gauge-foot" style="margin-top:6px">
