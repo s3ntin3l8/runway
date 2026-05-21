@@ -106,10 +106,12 @@ export function buildSessionCard(s) {
     const end   = s.ts_end ? formatLocalTime(s.ts_end) : '…';
     const time  = `${start}–${end}`;
 
-    const modelLabel = s.models && s.models.length === 1
-        ? s.models[0]
-        : s.models && s.models.length > 1
-            ? `${s.models.length} models`
+    const byModel  = Array.isArray(s.by_model) ? s.by_model : [];
+    const nModels  = byModel.length || (s.models?.length ?? 0);
+    const modelLabel = nModels === 1
+        ? (byModel[0]?.model_id || s.models?.[0] || 'unknown')
+        : nModels > 1
+            ? `${nModels} models`
             : 'unknown';
     const dur   = _fmtDuration(s.duration_seconds || 0);
     const subN  = s.subagent_msgs || 0;
@@ -129,11 +131,30 @@ export function buildSessionCard(s) {
     const cch_pct   = s.cache_pct > 0 ? `cache ${s.cache_pct}%` : '';
     const detail    = [tok_in, tok_out, tok_read, tok_write, cch_pct].filter(Boolean).join(' · ');
 
+    const modelRows = nModels > 1
+        ? byModel.map(m => {
+            const tot   = `${_fmtTokens(m.tokens_total)} tok`;
+            const io    = (m.tokens_input || m.tokens_output)
+                ? `${_fmtTokens(m.tokens_input)} in / ${_fmtTokens(m.tokens_output)} out`
+                : '';
+            const cache = (m.tokens_cache_read || m.tokens_cache_create)
+                ? `${_fmtTokens((m.tokens_cache_read || 0) + (m.tokens_cache_create || 0))} cache`
+                : '';
+            const breakdown = [io, cache].filter(Boolean).join(' · ');
+            const tokPart   = breakdown ? `${tot} (${breakdown})` : tot;
+            const costStr   = m.cost_usd ? _fmtCost(m.cost_usd) : '';
+            const parts     = [`${m.model_id} × ${m.msgs} turns`, tokPart, costStr].filter(Boolean);
+            return `<span class="m-model-row">${_esc(`⊢ ${parts.join(' · ')}`)}</span>`;
+        }).join('')
+        : '';
+
     const subagents = Array.isArray(s.subagents) ? s.subagents : [];
-    const subagentLine = subagents.length
-        ? '↳ ' + subagents.map(a =>
-            `${a.type} × ${a.turns} · ${_fmtTokens(a.tokens_total)} tok · ${_fmtCost(a.cost_usd)}`
-        ).join('   ')
+    const subagentRows = subagents.map(a =>
+        `<span class="m-subagents">${_esc(`↳ ${a.type} × ${a.turns} · ${_fmtTokens(a.tokens_total)} tok · ${_fmtCost(a.cost_usd)}`)}</span>`
+    ).join('');
+
+    const agentsSep = modelRows && subagentRows
+        ? '<span class="m-agents-sep">agents</span>'
         : '';
 
     const cls = (s.tokens_total || 0) > 500000 ? 'warn' : 'good';
@@ -143,7 +164,9 @@ export function buildSessionCard(s) {
         <span class="msg">${_esc(desc)}</span>
         <span class="v">${_esc(val)}</span>
         ${detail ? `<span class="m-detail">${_esc(detail)}</span>` : ''}
-        ${subagentLine ? `<span class="m-subagents">${_esc(subagentLine)}</span>` : ''}
+        ${modelRows}
+        ${agentsSep}
+        ${subagentRows}
     </div>`;
 }
 

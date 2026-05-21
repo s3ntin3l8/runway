@@ -2783,21 +2783,19 @@ l-table td.num {
 .modal-bg .modal {
     width: 100%; max-width: 720px;
     max-height: calc(100vh - 80px);
-    overflow-y: auto; overflow-x: hidden;
+    overflow: hidden;
     padding: 0;
     display: flex; flex-direction: column;
-    min-width: 0;
+    min-width: 0; min-height: 0;
 }
-.modal-bg .modal::-webkit-scrollbar { width: 8px; }
-.modal-bg .modal::-webkit-scrollbar-thumb { background: var(--hairline-2); }
 /* Prevent flex children from forcing horizontal overflow via their intrinsic content size */
 .modal-bg .modal > *,
 .modal-bg .modal .body,
 .modal-bg .modal .body > * { min-width: 0; max-width: 100%; }
 
-/* sticky header */
+/* header */
 .modal-bg .modal .hd {
-    position: sticky; top: 0; z-index: 5;
+    flex-shrink: 0;
     display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 12px;
     padding: 18px 22px;
     background: var(--surface);
@@ -2810,7 +2808,7 @@ l-table td.num {
 
 /* tab strip */
 .modal-bg .modal .tabs {
-    position: sticky; top: 72px; z-index: 4;
+    flex-shrink: 0;
     display: flex; gap: 0;
     padding: 0 22px;
     background: var(--surface);
@@ -2827,8 +2825,10 @@ l-table td.num {
 .modal-bg .modal .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
 .modal-bg .modal .tabs button:hover:not(.on) { color: var(--ink-2); }
 
-/* body */
-.modal-bg .modal .body { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 18px; }
+/* body — scrolls only when its own content overflows */
+.modal-bg .modal .body::-webkit-scrollbar { width: 8px; }
+.modal-bg .modal .body::-webkit-scrollbar-thumb { background: var(--hairline-2); }
+.modal-bg .modal .body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 18px; }
 .modal-bg .modal .body h4 { margin: 0 0 10px; font: 700 9px var(--font-family-mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.14em; }
 
 /* loading/error states */
@@ -2846,9 +2846,10 @@ l-table td.num {
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--hairline-2);
 }
+.m-hero > * { min-width: 0; container-type: inline-size; }
 .m-hero .label { font: 700 9px var(--font-family-mono); color: var(--ink-3); letter-spacing: 0.14em; text-transform: uppercase; }
 .m-hero .name { font: 600 12px var(--font-family-mono); color: var(--ink); margin-top: 4px; }
-.m-hero .pct { font: 700 38px var(--font-family-mono); color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; margin-top: 8px; letter-spacing: -0.02em; }
+.m-hero .pct { font: 700 clamp(14px, 16cqi, 38px) var(--font-family-mono); color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; margin-top: 8px; letter-spacing: -0.02em; }
 .m-hero .pct em { font-style: normal; font-size: 14px; color: var(--ink-3); margin-left: 4px; }
 .m-hero .abs { font: 500 11px var(--font-family-mono); color: var(--ink-3); margin-top: 4px; }
 .m-hero .gbar { position: relative; height: 14px; margin-top: 12px; background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--hairline-2); overflow: hidden; }
@@ -2945,7 +2946,16 @@ l-table td.num {
 .m-event .msg { color: var(--ink); }
 .m-event .v { color: var(--ink-3); font-size: 10px; }
 .m-event .m-detail { grid-column: 1 / -1; color: var(--ink-3); font-size: 10px; padding-top: 2px; }
+.m-event .m-model-row { grid-column: 1 / -1; color: var(--ink-3); font-size: 10px; padding-top: 1px; opacity: 0.55; }
 .m-event .m-subagents { grid-column: 1 / -1; color: var(--ink-3); font-size: 10px; padding-top: 1px; opacity: 0.75; }
+.m-event .m-agents-sep {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 6px;
+    margin: 3px 0 1px;
+    color: var(--ink-3); font-size: 9px; letter-spacing: 0.08em; opacity: 0.6;
+}
+.m-event .m-agents-sep::before,
+.m-event .m-agents-sep::after { content: ''; flex: 1; height: 1px; background: var(--hairline-2); }
 
 /* sparkline tabs */
 .m-spark { padding: 14px; box-shadow: inset 0 0 0 1px var(--hairline-2); }
