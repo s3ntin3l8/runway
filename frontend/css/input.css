@@ -2398,6 +2398,24 @@ l-table td.num {
 .fc-gauge.behind .glide,
 .fc-gauge.behind .glide::before,
 .fc-gauge.behind .glide::after { background: var(--warn); }
+.fc-gauge .forecast {
+    position: absolute; top: -8px; bottom: -8px; width: 2px;
+    background: var(--crit);
+    box-shadow: 0 0 0 1px var(--surface);
+    transition: left 600ms cubic-bezier(.2,.6,.2,1);
+}
+.fc-gauge .forecast::before {
+    content: ""; position: absolute; left: 50%; top: -4px;
+    width: 8px; height: 4px; transform: translateX(-50%);
+    background: var(--crit);
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.fc-gauge .forecast::after {
+    content: ""; position: absolute; left: 50%; bottom: -4px;
+    width: 8px; height: 4px; transform: translateX(-50%);
+    background: var(--crit);
+    clip-path: polygon(50% 0, 0 100%, 100% 100%);
+}
 .fc-gauge .ticks {
     position: absolute; inset: 0;
     pointer-events: none;
@@ -2503,6 +2521,15 @@ l-table td.num {
 .fc-pool-row .pmeter .pglide::before {
     content: ""; position: absolute; top: -3px; left: -2px;
     width: 5px; height: 3px; background: var(--text-dim);
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.fc-pool-row .pmeter .pforecast {
+    position: absolute; top: -3px; bottom: -3px; width: 2px;
+    background: var(--crit); opacity: 0.85;
+}
+.fc-pool-row .pmeter .pforecast::before {
+    content: ""; position: absolute; top: -3px; left: -2px;
+    width: 5px; height: 3px; background: var(--crit);
     clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .fc-pool-row .pright {
