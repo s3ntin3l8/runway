@@ -82,6 +82,7 @@ class ChatGPTWebOAuthMixin:
                 }
 
         # Priority 4: Browser Cookies (local or forwarded)
+        # 4a: monolithic session token (backward compat — older browsers / manual paste)
         for c_key in (
             "session_cookie",
             "cookie_session",
@@ -107,7 +108,10 @@ class ChatGPTWebOAuthMixin:
                 self._current_input_source = input_source
                 if client:
                     # Refresh Bearer token using session cookie
-                    refreshed = await self._refresh_access_token(client, session_token)
+                    oai_sc = tokens.get("cookie_oai-sc") if token_metadata else None
+                    refreshed = await self._refresh_access_token(
+                        client, session_token, oai_sc=oai_sc
+                    )
                     if refreshed:
                         self._refreshed_token = refreshed
                         self._refreshed_token_expiry = now + timedelta(hours=1)
@@ -126,6 +130,47 @@ class ChatGPTWebOAuthMixin:
                         }
                 else:
                     # When client is None (e.g. is_configured), just report that we have a session token
+                    return {
+                        "token": "present_via_session_cookie",
+                        "source": self.DATA_SOURCE_WEB,
+                        "input_source": input_source,
+                    }
+
+        # Priority 4b: Chunked NextAuth.js session token (.0 / .1 suffix).
+        # Modern browsers split the token when it exceeds ~4 KB. The sidecar
+        # collects each chunk under its own key; we reassemble by concatenation
+        # before the /api/auth/session exchange.
+        token_metadata = await token_cache.get_with_metadata("chatgpt", account_id=self.account_id)
+        if token_metadata:
+            tokens, metadata = token_metadata
+            chunk0 = tokens.get("cookie___Secure-next-auth.session-token.0", "")
+            chunk1 = tokens.get("cookie___Secure-next-auth.session-token.1", "")
+            if chunk0:
+                session_token = chunk0 + chunk1
+                oai_sc = tokens.get("cookie_oai-sc")
+                source_meta = metadata.get("source") or "sidecar"
+                input_source = "config" if source_meta in ("config", "manual_config") else "sidecar"
+                self._current_input_source = input_source
+                if client:
+                    refreshed = await self._refresh_access_token(
+                        client, session_token, oai_sc=oai_sc
+                    )
+                    if refreshed:
+                        self._refreshed_token = refreshed
+                        self._refreshed_token_expiry = now + timedelta(hours=1)
+                        self._refreshed_input_source = input_source
+                        await token_cache.store(
+                            "chatgpt",
+                            {"oauth_token": refreshed},
+                            account_id=self.account_id,
+                            source=input_source if input_source == "config" else "server",
+                        )
+                        return {
+                            "token": refreshed,
+                            "source": self.DATA_SOURCE_WEB,
+                            "input_source": input_source,
+                        }
+                else:
                     return {
                         "token": "present_via_session_cookie",
                         "source": self.DATA_SOURCE_WEB,
@@ -177,13 +222,26 @@ class ChatGPTWebOAuthMixin:
         return self._device_id
 
     async def _refresh_access_token(
-        self, client: httpx.AsyncClient, session_token: str
+        self,
+        client: httpx.AsyncClient,
+        session_token: str,
+        oai_sc: str | None = None,
     ) -> str | None:
-        """Exchange session cookie for a Bearer accessToken."""
+        """Exchange session cookie for a Bearer accessToken.
+
+        ``session_token`` may be either the monolithic
+        ``__Secure-next-auth.session-token`` value or the concatenation of the
+        ``.0`` / ``.1`` NextAuth.js chunks.  ``oai_sc`` is the OpenAI
+        service-credential cookie that newer ChatGPT deployments require
+        alongside the session token; it is sent as a second cookie when present.
+        """
         try:
             url = "https://chatgpt.com/api/auth/session"
+            cookie_parts = [f"__Secure-next-auth.session-token={session_token}"]
+            if oai_sc:
+                cookie_parts.append(f"oai-sc={oai_sc}")
             headers = {
-                "Cookie": f"__Secure-next-auth.session-token={session_token}",
+                "Cookie": "; ".join(cookie_parts),
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
                 "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
@@ -199,7 +257,11 @@ class ChatGPTWebOAuthMixin:
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("accessToken")
-            logger.debug(f"Failed to refresh ChatGPT token: HTTP {resp.status_code}")
+            logger.warning(
+                "Failed to refresh ChatGPT token: HTTP %d — %s",
+                resp.status_code,
+                resp.text[:300],
+            )
         except Exception as e:
-            logger.debug(f"Error refreshing ChatGPT token: {e}")
+            logger.warning("Error refreshing ChatGPT token: %s", e)
         return None

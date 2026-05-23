@@ -160,7 +160,7 @@
       "api_key_label": "Bearer Token (api)",
       "api_key_help": "The Bearer eyJ... string from ChatGPT DevTools Network tab",
       "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "The __Secure-next-auth.session-token value from ChatGPT DevTools",
+      "session_cookie_help": "Paste your full cookie string from DevTools → Application → Cookies → chatgpt.com. Include __Secure-next-auth.session-token.0, .1, and oai-sc if present (modern browsers split the session token into chunks).",
       "rules": [
         {
           "type": "env",
@@ -184,6 +184,24 @@
           "domains": ["chatgpt.com"],
           "name": "__Secure-next-auth.session-token",
           "mapping": { "value": "cookie___Secure-next-auth.session-token" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["chatgpt.com"],
+          "name": "__Secure-next-auth.session-token.0",
+          "mapping": { "value": "cookie___Secure-next-auth.session-token.0" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["chatgpt.com"],
+          "name": "__Secure-next-auth.session-token.1",
+          "mapping": { "value": "cookie___Secure-next-auth.session-token.1" }
+        },
+        {
+          "type": "cookie",
+          "domains": ["chatgpt.com"],
+          "name": "oai-sc",
+          "mapping": { "value": "cookie_oai-sc" }
         },
         {
           "type": "env",

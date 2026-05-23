@@ -66,6 +66,9 @@ class ProviderConfig(SQLModel, table=True):
     session_cookie_encrypted: str | None = Field(
         default=None
     )  # encrypted session/auth cookie override
+    oai_sc_cookie_encrypted: str | None = Field(
+        default=None
+    )  # encrypted oai-sc service-credential cookie (ChatGPT)
     account_label: str | None = None
     poll_interval_seconds: int | None = None  # None = use collector default TTL
     collection_strategies_json: str | None = Field(default=None)  # JSON list of {id, enabled}
@@ -114,6 +117,21 @@ class ProviderConfig(SQLModel, table=True):
             self.session_cookie_encrypted = encryption_service.encrypt_string(value)
         else:
             self.session_cookie_encrypted = None
+
+    @property
+    def oai_sc_cookie(self) -> str | None:
+        """Decrypt and return the stored oai-sc cookie, or None if not set."""
+        if not self.oai_sc_cookie_encrypted:
+            return None
+        return encryption_service.decrypt_string(self.oai_sc_cookie_encrypted)
+
+    @oai_sc_cookie.setter
+    def oai_sc_cookie(self, value: str | None) -> None:
+        """Encrypt and store the oai-sc cookie."""
+        if value:
+            self.oai_sc_cookie_encrypted = encryption_service.encrypt_string(value)
+        else:
+            self.oai_sc_cookie_encrypted = None
 
 
 class SystemConfig(SQLModel, table=True):
