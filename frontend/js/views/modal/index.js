@@ -8,12 +8,12 @@
  * The modal markup is injected into #provider-modal (added to index.html).
  */
 
-import { fetchHeatmap, fetchSessions, fetchForecast } from '../../api.js';
+import { fetchHeatmap, fetchSessions, fetchForecast, fetchHistoryChart } from '../../api.js';
 import { getUserTz } from '../../utils/tz.js';
 import { STATE } from '../../state.js';
 import { providerDisplayLabel } from '../../components.js';
 import { escapeHTML as _esc } from '../../utils/html.js';
-import { buildOverviewPane, wireOverviewSparkTabs } from './overview.js';
+import { buildOverviewPane, wireOverviewSparkTabs, wireOverviewSparkHover } from './overview.js';
 import { buildForecastPane, wireForecastPane, disposeTrajectoryCharts } from './forecast.js';
 import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip, wireUsageSparkHover } from './usage.js';
 import { buildCostPane, wireCostPane } from './cost.js';
@@ -84,8 +84,22 @@ async function _renderPane(tab) {
                     _modalCache.recentSessions = sd.sessions || [];
                 } catch { _modalCache.recentSessions = []; }
             }
-            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions);
-            wireOverviewSparkTabs(_modalCache.heatmap);
+            if (!_modalCache.quotaChart) {
+                // Fetch all three ranges concurrently; null on error (chart handles empty gracefully)
+                const [c24h, c7d, c30d] = await Promise.allSettled([
+                    fetchHistoryChart({ provider_id: providerId, account_id: accountId, days: 1,  metric: 'percent' }),
+                    fetchHistoryChart({ provider_id: providerId, account_id: accountId, days: 7,  metric: 'percent' }),
+                    fetchHistoryChart({ provider_id: providerId, account_id: accountId, days: 30, metric: 'percent' }),
+                ]);
+                _modalCache.quotaChart = {
+                    '24h': c24h.status === 'fulfilled' ? c24h.value : null,
+                    '7d':  c7d.status  === 'fulfilled' ? c7d.value  : null,
+                    '30d': c30d.status === 'fulfilled' ? c30d.value : null,
+                };
+            }
+            body.innerHTML = buildOverviewPane(entry, cumData, _modalCache.heatmap, _modalCache.recentSessions, _modalCache.quotaChart['24h']);
+            wireOverviewSparkTabs(_modalCache.quotaChart);
+            wireOverviewSparkHover();
 
         } else if (tab === 'forecast') {
             if (!_modalCache.forecast) {
