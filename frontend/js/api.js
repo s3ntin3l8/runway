@@ -261,6 +261,18 @@ export async function postTokenRefresh(provider, accountId) {
     return await resp.json();
 }
 
+export async function deleteTokenHealth(provider, accountId) {
+    const resp = await fetchWithAuth(
+        `/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
+        { method: 'DELETE' }
+    );
+    if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
+    return await resp.json();
+}
+
 /**
  * Provider Configuration
  */

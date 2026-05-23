@@ -22,6 +22,7 @@ from app.core.rate_limit import limiter
 from app.models.db import SystemConfig
 from app.services.collector_manager import manager
 from app.services.poller import poller
+from app.services.token_auto_refresher import token_auto_refresher
 
 # Propagate the resolved display tz into the process so log %(asctime)s and
 # any libc-backed time formatting render in the user's local zone. Pydantic
@@ -84,9 +85,15 @@ async def lifespan(app: FastAPI):
     # Start background poller (keeps registry fresh every 15 min)
     poller.start()
 
+    # Start background token auto-refresher (rolls JWTs before they expire,
+    # independent of poller cadence).
+    if settings.TOKEN_AUTO_REFRESH_ENABLED:
+        token_auto_refresher.start()
+
     yield
     # Shutdown logic
     await poller.stop()
+    await token_auto_refresher.stop()
     await manager.close()
 
 

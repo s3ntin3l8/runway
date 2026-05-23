@@ -10,13 +10,14 @@ from typing import Any
 from sqlmodel import Session
 from sqlmodel import select as sqlselect
 
+from app.core.config import settings
 from app.core.db import engine
 from app.models.db import ProviderConfig
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
-EXPIRY_WARNING_SECS = 86400  # 24 hours
+EXPIRY_WARNING_SECS = 86400  # 24 hours — for tokens that require manual re-auth
 
 
 def _parse_jwt_exp(token: str) -> float | None:
@@ -33,7 +34,11 @@ def _parse_jwt_exp(token: str) -> float | None:
         return None
 
 
-def _classify_status(exp: float | None, is_opaque: bool = False) -> str:
+def _classify_status(
+    exp: float | None,
+    is_opaque: bool = False,
+    can_refresh: bool = False,
+) -> str:
     if exp is None:
         # If we have no JWT expiry, but we have a token value (is_opaque),
         # it's considered "valid" (READY).
@@ -41,7 +46,18 @@ def _classify_status(exp: float | None, is_opaque: bool = False) -> str:
     now = time.time()
     if exp < now:
         return "expired"
-    if exp - now < EXPIRY_WARNING_SECS:
+    seconds_left = exp - now
+
+    # Tokens with a refresh_token are auto-rolled by TokenAutoRefresher every
+    # TOKEN_AUTO_REFRESH_INTERVAL_SECONDS. Short-lived access tokens (Gemini's
+    # 60-min JWT) would otherwise sit permanently in the 24h "expiring" bucket.
+    # Only warn when the next auto-refresh tick is too late to save the token.
+    if can_refresh and settings.TOKEN_AUTO_REFRESH_ENABLED:
+        if seconds_left < settings.TOKEN_AUTO_REFRESH_INTERVAL_SECONDS:
+            return "expiring"
+        return "valid"
+
+    if seconds_left < EXPIRY_WARNING_SECS:
         return "expiring"
     return "valid"
 
@@ -77,6 +93,7 @@ class TokenHealthService:
 
                 # If no JWT expiry found, but we have ANY token, it's opaque/ready
                 is_opaque = (exp is None) and (len(tokens) > 0)
+                can_refresh = "refresh_token" in tokens
 
                 result.append(
                     {
@@ -85,14 +102,16 @@ class TokenHealthService:
                         "account_label": label,
                         "source": info.get("source"),
                         "token_types": list(tokens.keys()),
-                        "status": _classify_status(exp, is_opaque=is_opaque),
+                        "status": _classify_status(
+                            exp, is_opaque=is_opaque, can_refresh=can_refresh
+                        ),
                         "expires_at": (
                             datetime.fromtimestamp(exp, tz=UTC).isoformat()
                             if exp is not None
                             else None
                         ),
                         "ttl_remaining_seconds": info.get("ttl_remaining", 0),
-                        "can_refresh": "refresh_token" in tokens,
+                        "can_refresh": can_refresh,
                     }
                 )
 

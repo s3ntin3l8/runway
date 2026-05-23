@@ -1,6 +1,7 @@
 import { fetchFleet, patchSidecar, deleteSidecarAPI, setSidecarEnabledAPI } from '../api.js';
 import { buildFleetView } from '../components.js';
 import { escapeHTML } from '../utils/html.js';
+import { showAlert, showConfirm, showPrompt } from '../utils/modal-dialog.js';
 
 export async function loadFleetView() {
     const container = document.getElementById('fleet-content');
@@ -15,37 +16,42 @@ export async function loadFleetView() {
 }
 
 export async function editSidecarName(sidecarId) {
-    const newName = prompt('Enter a custom name for this sidecar:', '');
+    const newName = await showPrompt('Rename sidecar', 'Custom name', '');
     if (newName === null) return;
     try {
-        await patchSidecar(sidecarId, { custom_name: newName.trim() || null });
+        await patchSidecar(sidecarId, { custom_name: newName || null });
         await loadFleetView();
     } catch (err) {
-        alert('Failed to rename: ' + err.message);
+        await showAlert('Failed to rename', err.message);
     }
 }
 
 export async function addSidecarTag(sidecarId) {
-    const tag = prompt('Enter a tag for this sidecar:');
-    if (!tag || !tag.trim()) return;
+    const tag = await showPrompt('Add tag', 'Tag', '');
+    if (!tag) return;
     try {
         const fleet = await fetchFleet();
         const sidecar = fleet.sidecars.find(s => s.sidecar_id === sidecarId);
-        const tags = [...(sidecar?.tags || []), tag.trim()];
+        const tags = [...(sidecar?.tags || []), tag];
         await patchSidecar(sidecarId, { tags });
         await loadFleetView();
     } catch (err) {
-        alert('Failed to add tag: ' + err.message);
+        await showAlert('Failed to add tag', err.message);
     }
 }
 
 export async function deleteSidecar(sidecarId) {
-    if (!confirm(`Remove sidecar "${sidecarId}" from the registry?`)) return;
+    const ok = await showConfirm(
+        'Remove sidecar',
+        `Remove sidecar "${sidecarId}" from the registry?`,
+        { danger: true, okLabel: 'Remove' }
+    );
+    if (!ok) return;
     try {
         await deleteSidecarAPI(sidecarId);
         await loadFleetView();
     } catch (err) {
-        alert('Failed to delete: ' + err.message);
+        await showAlert('Failed to delete', err.message);
     }
 }
 
@@ -56,7 +62,12 @@ export async function toggleSidecarEnabled(sidecarId, currentlyEnabled) {
     const desc = willEnable
         ? `Resume collection on "${sidecarId}"?`
         : `Stop collection on "${sidecarId}"?\n\nThe sidecar will keep checking in but won't collect from any providers until you resume it.`;
-    if (!confirm(desc)) return;
+    const ok = await showConfirm(
+        willEnable ? 'Resume sidecar' : 'Pause sidecar',
+        desc,
+        { okLabel: willEnable ? 'Resume' : 'Pause', danger: !willEnable }
+    );
+    if (!ok) return;
 
     const card = document.querySelector(`[data-sidecar="${CSS.escape(sidecarId)}"]`);
     const btn = card?.querySelector('button[data-sidecar-toggle]');
@@ -87,7 +98,7 @@ export async function toggleSidecarEnabled(sidecarId, currentlyEnabled) {
             if (btn) btn.innerHTML = originalHTML;
             setBtnState(originalHTML, '', false);
         }, 2500);
-        alert(`Failed to ${verb} sidecar: ` + err.message);
+        await showAlert(`Failed to ${verb} sidecar`, err.message);
     }
 }
 

@@ -1,0 +1,187 @@
+# Deployment Guide
+
+Runway is always **server + sidecar(s)**. Two axes vary independently:
+
+- **Server runtime** — Python (`make dev-all` / `make run`) **or** Docker (`docker run` / Compose).
+- **Sidecar count** — one sidecar on the same host (single-developer setup) **or** N sidecars across remote workstations (fleet setup).
+
+```
+                     ┌────────────────────────┐
+                     │        Server          │
+                     │  Python  ──or──  Docker│
+   ┌──── Sidecar ───▶│                        │
+   │                 │  • Dashboard           │
+   │   /api/v1/      │  • API + web collectors│
+   │   fleet/ingest  │  • Aggregation + DB    │
+   └──── Sidecar ───▶│                        │
+       (1..N hosts)  └────────────────────────┘
+```
+
+The server never performs local detection itself — all LSP probes, browser cookies, and IDE/file introspection live in the sidecar. The sidecar batches up to 1000 events per push to `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP).
+
+## Server runtime
+
+### Python
+
+For local development and single-machine setups:
+
+```bash
+make install                # venv, deps, git hooks
+cp .env.example .env        # add API keys
+make dev-all                # server + local sidecar, hot reload, Ctrl-C stops both
+```
+
+For production-style runs (no hot reload, no sidecar autostart):
+
+```bash
+make run                    # server only
+make sidecar                # in a second shell, or run via a process manager
+```
+
+Defaults: server binds `127.0.0.1:8765`. Set `APP_HOST=0.0.0.0` in `.env` for LAN access.
+
+### Docker
+
+For servers, headless environments, or team dashboards:
+
+```bash
+docker run -d \
+  --name runway \
+  -p 8765:8765 \
+  -e INGEST_API_KEY=your-secret-key \
+  ghcr.io/s3ntin3l8/ai-usage-tracker:latest
+```
+
+Compose example:
+
+```yaml
+services:
+  runway:
+    image: ghcr.io/s3ntin3l8/ai-usage-tracker:latest
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/home/runway/.config/runway
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/v1/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+```
+
+> [!IMPORTANT]
+> **Docker runs the server, not the sidecar.** Containers have no access to native desktop keychains or browser cookies. Every cookie-/local-file-backed collector (Claude, ChatGPT, Ollama, Kimi Coding, OpenCode, Antigravity, …) needs a sidecar running on the host where those credentials live.
+
+When `APP_HOST != 127.0.0.1`, the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, and an explicit `CORS_ORIGINS` allow-list. See [SECURITY.md](SECURITY.md).
+
+## Sidecar deployment
+
+### Same host
+
+Runs alongside a Python server during development, or alongside a Dockerised server on the same machine:
+
+```bash
+make sidecar
+```
+
+`make sidecar` sources `.env`, so `RUNWAY_CONFIG_DIR` and `INGEST_API_KEY` automatically align with the local server. `make dev-all` does this in one command (server + sidecar in parallel, Ctrl-C stops both).
+
+### Remote hosts
+
+Each workstation runs its own sidecar pointed at the server:
+
+```bash
+python3 scripts/sidecar.py \
+  --api-url http://runway-server:8765 \
+  --api-key <strong-shared-secret>
+```
+
+Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and payload format.
+
+The sidecar only needs outbound HTTP — no inbound ports.
+
+## Per-provider sidecar requirements
+
+| Provider | Sidecar required? | Notes |
+|----------|:-----------------:|-------|
+| **Claude** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CLAUDE_CODE_OAUTH_TOKEN` works server-only |
+| **Gemini** | No (OAuth on server) | Sidecar adds local-log enrichment |
+| **GitHub Copilot** | No | `GITHUB_TOKEN` API works everywhere |
+| **ChatGPT** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CHATGPT_OAUTH_TOKEN` works server-only |
+| **OpenRouter** | No | `OPENROUTER_API_KEY` works everywhere |
+| **MiniMax** | No | `MINIMAX_API_KEY` works everywhere |
+| **Ollama** | ⚠️ Yes | Cookie extraction needs host access |
+| **OpenCode** | Optional | Web API preferred, sidecar provides local DB fallback |
+| **zAI API / zAI Plan** | No | API key works everywhere |
+| **Kimi API** | No | `KIMI_API_KEY` works everywhere |
+| **Kimi Coding** | ⚠️ Yes | Sidecar extracts cookie (or set `KIMI_AUTH_TOKEN`) |
+| **Kimi K2** | No | API key works everywhere |
+| **Antigravity** | ⚠️ Yes | Sidecar-only — reads local IDE JSON file |
+
+**Legend:** ⚠️ Yes = sidecar required for full coverage. "No" means the server-side API path is enough, though a sidecar adds enrichment (token breakdowns, session counts, per-message events).
+
+## Configuration
+
+The relevant env vars apply to both runtimes:
+
+| Variable | Required | Purpose |
+|----------|:--------:|---------|
+| `INGEST_API_KEY` | ✅ for remote sidecars (recommended for all) | HMAC-signing secret shared between server and sidecars |
+| `GITHUB_TOKEN` | optional | GitHub Copilot API |
+| `OPENROUTER_API_KEY` | optional | OpenRouter API |
+| `MINIMAX_API_KEY` | optional | MiniMax API |
+| `KIMI_API_KEY` | optional | Kimi API |
+| `ZAI_API_KEY` | optional | zAI API & Plan |
+| `DB_ENCRYPTION_KEY` | ✅ when `APP_HOST != 127.0.0.1` | Fernet key for sensitive metadata at rest |
+| `TLS_TERMINATED` | ✅ when `APP_HOST != 127.0.0.1` | Operator assertion that an upstream proxy terminates TLS |
+| `CORS_ORIGINS` | ✅ when `APP_HOST != 127.0.0.1` | Comma-separated origin allow-list |
+| `ADMIN_API_KEY` | optional | Protects dashboard + admin endpoints from non-localhost callers |
+
+For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment the three security gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`) become hard requirements; the server fails fast on startup otherwise.
+
+## Data Collection & Caching
+
+Runway uses **SmartCollector** for intelligent caching.
+
+### Cache TTL
+
+The built-in default for every registered collector is **15 minutes (900 seconds)**, set in `app/services/collector_manager.py`. There is no longer a per-provider TTL table baked into the code — the schedule is uniform.
+
+You can override the polling cadence at two layers:
+
+- **Per-provider** — set `poll_interval_seconds` on a `provider_configs` row (Settings UI → Providers → poll interval). This wins for that `(provider_id, account_id)` pair.
+- **Globally** — set `default_poll_interval_seconds` in `system_config` (Settings UI → App Config). Used whenever a provider row leaves the field null.
+
+Resolution order is per-provider override → global default → built-in 900s. The accompanying smart-polling sleep mode stretches the effective interval to ~2 hours after 45 minutes without a quota change, so an idle dashboard isn't hammering provider APIs.
+
+### Features
+
+- **TTL Caching**: Each provider has configurable cache duration (see above)
+- **Error Tracking**: Monitors consecutive errors, forces retry after threshold
+- **Graceful Degradation**: Returns stale cached data during API failures
+- **Token Cache**: Sidecar-forwarded tokens are kept in-memory only (30-min TTL, never persisted to disk on the server)
+- **Smart sleep**: Idle dashboards downshift the poller to a 2-hour cadence; any usage event or `/api/v1/system/wake` resets it
+
+## Security
+
+### API keys in Docker
+
+**Option 1:** Environment variables (simple, standard)
+**Option 2:** Sidecar-only (no keys in container, requires sidecar on every credential-bearing host)
+**Option 3:** Docker secrets (Swarm/Kubernetes)
+
+### Network
+
+- Use HTTPS in production (reverse proxy terminating TLS)
+- Rotate `INGEST_API_KEY` periodically
+- Sidecars only need outbound HTTP — no inbound ports
+
+---
+
+See [sidecar.md](sidecar.md) for detailed sidecar configuration and the ingest payload format.
+
+*Last updated: 2026-05-21*

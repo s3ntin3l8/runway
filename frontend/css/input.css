@@ -3455,3 +3455,63 @@ l-table td.num {
     color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
 }
+
+/* ============================================
+   MODAL-DIALOG UTILITY — showAlert / Confirm / Prompt
+   ============================================ */
+.modal-bg .modal.md-dialog {
+    max-width: 440px;
+    background: var(--surface);
+    box-shadow: 0 24px 60px rgb(0 0 0 / 0.5), inset 0 0 0 1px var(--hairline-2);
+}
+.modal-bg .modal.md-dialog .body.md-dialog-body {
+    padding: 20px 22px 22px;
+    gap: 14px;
+}
+.md-dialog-msg {
+    margin: 0;
+    font: 500 12px var(--font-family-mono);
+    color: var(--ink-2);
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.md-dialog-label {
+    font: 700 9px var(--font-family-mono);
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}
+.md-dialog-input {
+    font: 500 12px var(--font-family-mono);
+    background: var(--surface-3);
+    color: var(--ink);
+    padding: 8px 10px;
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--hairline-2);
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+.md-dialog-input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+.md-dialog-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+.btn-danger {
+    font: 700 10px var(--mono);
+    padding: 6px 12px;
+    border-radius: 0;
+    cursor: pointer;
+    border: 0;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    background: var(--crit);
+    color: var(--bg);
+    box-shadow: inset 0 0 0 1px var(--crit);
+}
+.btn-danger:hover { filter: brightness(1.1); }

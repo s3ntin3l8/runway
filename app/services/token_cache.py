@@ -14,6 +14,8 @@ import logging
 import time
 from typing import Any
 
+from app.core.utils import IdentityExtractor
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +36,22 @@ class TokenCache:
         self._lock = asyncio.Lock()
 
     def _derive_account_id(self, tokens: dict[str, str]) -> str:
-        """Derive a stable-ish account ID from tokens if none provided."""
-        # Try to find a reasonably unique and stable token
+        """Derive a stable account ID from tokens.
+
+        Prefers identity claims (email / sub) carried by an id_token over
+        hashing rotating access tokens. Without this, a CLI-driven refresh
+        produces a new oauth_token value → new hash → duplicate cache entry.
+        """
+        id_token = tokens.get("id_token")
+        if id_token:
+            payload = IdentityExtractor.extract_jwt_payload(id_token)
+            email = payload.get("email")
+            if email:
+                return email.lower()
+            sub = payload.get("sub")
+            if sub:
+                return str(sub)
+
         ident = (
             tokens.get("refresh_token")
             or tokens.get("oauth_token")
@@ -65,6 +81,12 @@ class TokenCache:
         Returns:
             str: The account_id used for storage
         """
+        if not account_label and tokens.get("id_token"):
+            payload = IdentityExtractor.extract_jwt_payload(tokens["id_token"])
+            email = payload.get("email")
+            if email:
+                account_label = email
+
         if not account_id:
             account_id = self._derive_account_id(tokens)
 

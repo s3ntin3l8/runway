@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from app.core.config import settings
+from app.core.utils import IdentityExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,15 @@ _REFRESH_ENDPOINTS: dict[str, str] = {
 
 _PROVIDER_CLIENT_IDS: dict[str, str] = {
     "anthropic": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-    "gemini": "",
+    "gemini": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
     "chatgpt": "app_EMoamEEZ73f0CkXaXp7hrann",
 }
+
+# Gemini CLI's OAuth client is a Google "desktop app" client — Google requires
+# `client_secret` for the refresh_token grant on these too, and the CLI ships
+# it embedded in its binary (public by necessity). Sourced from
+# github.com/google-gemini/gemini-cli packages/core/src/code_assist/oauth2.ts.
+_GEMINI_CLI_CLIENT_SECRET = "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"
 
 
 async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str, str]:
@@ -46,10 +53,20 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
         client_id = tokens.get("client_id") or settings.CLAUDE_OAUTH_CLIENT_ID
         payload["client_id"] = client_id
     elif provider == "gemini":
-        client_id = tokens.get("client_id") or settings.GEMINI_OAUTH_CLIENT_ID
-        if client_id:
-            payload["client_id"] = client_id
-        client_secret = tokens.get("client_secret") or settings.GEMINI_OAUTH_CLIENT_SECRET
+        gem_client_id: str | None = tokens.get("client_id") or settings.GEMINI_OAUTH_CLIENT_ID
+        # Gemini CLI tokens carry the client_id as the JWT `aud` claim, then
+        # finally the well-known CLI client_id baked into the published binary.
+        if not gem_client_id and tokens.get("id_token"):
+            gem_client_id = IdentityExtractor.get_client_id_from_jwt(tokens["id_token"])
+        if not gem_client_id:
+            gem_client_id = _PROVIDER_CLIENT_IDS.get("gemini") or None
+        if gem_client_id:
+            payload["client_id"] = gem_client_id
+        client_secret = (
+            tokens.get("client_secret")
+            or settings.GEMINI_OAUTH_CLIENT_SECRET
+            or _GEMINI_CLI_CLIENT_SECRET
+        )
         if client_secret:
             payload["client_secret"] = client_secret
     elif provider == "chatgpt":
@@ -78,6 +95,11 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
         updated["oauth_token"] = data["access_token"]
     if "refresh_token" in data:
         updated["refresh_token"] = data["refresh_token"]
+    # Google returns a fresh id_token when the scope includes openid — we have
+    # to capture it because token_health uses its `exp` claim to classify the
+    # entry's status. Keeping the old one would leave the row stuck as expired.
+    if "id_token" in data:
+        updated["id_token"] = data["id_token"]
 
     logger.info(f"Refreshed OAuth token for provider={provider}")
     return updated

@@ -121,7 +121,10 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             logger.warning("No refresh token in Gemini credentials")
             return None
 
-        # Auto-discover client_id from explicit field or id_token if not in settings
+        # Auto-discover client_id: env var → creds file → id_token aud claim →
+        # well-known Gemini CLI client_id (last-resort, matches CLI defaults).
+        from app.services.token_refresher import _GEMINI_CLI_CLIENT_SECRET, _PROVIDER_CLIENT_IDS
+
         client_id = settings.GEMINI_OAUTH_CLIENT_ID
         if not client_id:
             client_id = creds.get("client_id") or creds.get("clientId")
@@ -133,8 +136,17 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 logger.info(f"Auto-discovered Gemini Client ID: {client_id[:10]}...")
 
         if not client_id:
+            client_id = _PROVIDER_CLIENT_IDS.get("gemini")
+
+        if not client_id:
             logger.warning("Gemini Client ID missing (set GEMINI_OAUTH_CLIENT_ID)")
             return None
+
+        client_secret = (
+            creds.get("client_secret")
+            or settings.GEMINI_OAUTH_CLIENT_SECRET
+            or _GEMINI_CLI_CLIENT_SECRET
+        )
 
         try:
             resp = await http_request_with_retry(
@@ -143,6 +155,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 "https://oauth2.googleapis.com/token",
                 data={
                     "client_id": client_id,
+                    "client_secret": client_secret,
                     "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
                 },
@@ -155,6 +168,11 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 creds["access_token"] = new_data["access_token"]
                 # Expiry is in seconds in response, convert to ms
                 creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
+
+                # Persist back to the on-disk credentials file so the next
+                # collector tick doesn't re-read a stale access_token and
+                # overwrite the freshly-refreshed cache entry.
+                self._persist_credentials(creds)
 
                 # Update sidecar cache
                 await self._store_sidecar_token(
