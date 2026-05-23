@@ -76,6 +76,18 @@ function _buildSparkSvg(cells, range) {
     return { svgHtml, yTicks, series };
 }
 
+/** Build X-axis label strip HTML for the given time range. */
+function _buildXLabels(range) {
+    const labels = range === '24h'
+        ? ['00:00', '06:00', '12:00', '18:00', '24:00']
+        : range === '7d'
+            ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+            : ['', '+7d', '+14d', '+21d', '+28d'];
+    return `<div class="m-spark-x-axis" id="pu-x-axis">${
+        labels.map(l => `<span>${_esc(l)}</span>`).join('')
+    }</div>`;
+}
+
 /** Build heatmap cells HTML — 7 × 24 grid, Mon-first row order. */
 function _buildHeatGrid(rawCells, accentHue) {
     // rawCells: flat 168 values where index = day_of_week(0=Sun)*24 + hour
