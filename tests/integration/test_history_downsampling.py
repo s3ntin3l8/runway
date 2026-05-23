@@ -163,6 +163,8 @@ def test_query_snapshots_sql_pagination_total(session):
     """200 distinct (series, bucket) pairs ⇒ paginates 50 per page in SQL."""
     now = datetime.now(UTC)
     # 200 distinct model_ids, one snapshot each: each is its own (series, bucket).
+    # pct_used starts at 1 — zero-pct buckets are filtered out of the page
+    # query, and we want to count all 200 rows here.
     for i in range(200):
         session.add(
             QuotaSnapshot(
@@ -171,7 +173,7 @@ def test_query_snapshots_sql_pagination_total(session):
                 window_type="weekly",
                 model_id=f"m-{i:03d}",
                 ts=now - timedelta(minutes=i),
-                pct_used=float(i),
+                pct_used=float(i + 1),
             )
         )
     session.commit()
@@ -213,6 +215,33 @@ def test_query_snapshots_window_type_filter(session):
     assert daily["total"] == 1
     assert daily["rows"][0]["window_type"] == "daily"
     assert all_["total"] == 2
+
+
+def test_query_snapshots_hides_zero_pct_from_count_and_rows(session):
+    """Zero-pct buckets are hidden in both the page rows and the total count,
+    so pagination stays accurate (no empty late pages). Regression for the
+    case where server returned 200-row totals but later pages were all zeros
+    and the client filtered them, leaving "no data" tables mid-pagination."""
+    now = datetime.now(UTC)
+    # 5 distinct series, each in its own (series, bucket): 3 with non-zero
+    # pct_used, 2 with pct_used=0. Only the 3 non-zero should be counted.
+    for i, pct in enumerate([0.0, 10.0, 0.0, 25.0, 40.0]):
+        session.add(
+            QuotaSnapshot(
+                provider_id="anthropic",
+                account_id="user@example.com",
+                window_type="weekly",
+                model_id=f"m-{i}",
+                ts=now - timedelta(minutes=i),
+                pct_used=pct,
+            )
+        )
+    session.commit()
+
+    result = query_snapshots(session, days=1, limit=50)
+    assert result["total"] == 3
+    assert len(result["rows"]) == 3
+    assert sorted(r["pct_used"] for r in result["rows"]) == [10.0, 25.0, 40.0]
 
 
 def test_query_snapshots_preserves_null_pct_used(session):

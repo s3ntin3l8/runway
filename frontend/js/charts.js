@@ -217,11 +217,14 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     }
 
     // Drop series whose value is zero (or null) across every visible bucket.
+    // For percent we test the bucket MAX, mirroring the display reducer below —
+    // averaging would dilute a mid-bucket peak (e.g. a 46% Gemini Pro spike
+    // averaged with 0% sibling buckets reads as ~6% and falsely filters out).
     const nonZeroKeys = seriesKeys.filter(key => {
         for (const ep of bucketEpochs) {
             const b = buckets[ep]?.[key];
             if (!b) continue;
-            const v = summable ? b.sum : b.sum / b.count;
+            const v = summable ? b.sum : b.max;
             if (v != null && v !== 0) return true;
         }
         return false;
@@ -255,7 +258,9 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         const seriesData = bucketEpochs.map(ep => {
             const b = buckets[ep]?.[key];
             if (!b) return null;
-            const v = summable ? b.sum : b.sum / b.count;
+            // Percent: take the bucket peak (matches the server's MAX(pct_used)
+            // bucketing). Tokens/cost stay additive.
+            const v = summable ? b.sum : b.max;
             return parseFloat(v.toFixed(2));
         });
         const seriesName = displayName ? `${pid.toUpperCase()}: ${displayName}` : pid.toUpperCase();

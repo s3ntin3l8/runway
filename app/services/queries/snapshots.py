@@ -389,26 +389,15 @@ def _build_window_stats_for_rows(
 # the previous *existing* bucket for that series, not the previous calendar
 # bucket. This matches the prior Python behavior (it iterated existing rows).
 _SNAPSHOTS_COUNT_SQL = text(
-    """
-    WITH bucketed AS (
-        SELECT DISTINCT
-            (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds) AS bucket,
-            provider_id, account_id, window_type, model_id
-        FROM quota_snapshots
-        WHERE ts >= :since
-          AND (:provider_id IS NULL OR provider_id = :provider_id)
-          AND (:account_id  IS NULL OR account_id  = :account_id)
-          AND (:window_type IS NULL OR window_type = :window_type)
-    )
-    SELECT COUNT(*) AS n FROM bucketed
-    """
-)
-
-_CHART_PERCENT_SQL = text(
+    # Counts only buckets whose latest snapshot has a non-zero pct_used (NULL
+    # is preserved so "unknown %" rows still surface). This matches the rows
+    # the page query will actually return — without the filter, pagination
+    # totals included zero rows that the user never sees, producing empty
+    # late pages.
     """
     WITH bucketed AS (
         SELECT
-            ts, pct_used, provider_id, account_id, window_type, model_id,
+            pct_used,
             ROW_NUMBER() OVER (
                 PARTITION BY provider_id, account_id, window_type, model_id,
                              (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
@@ -416,13 +405,32 @@ _CHART_PERCENT_SQL = text(
             ) AS rn
         FROM quota_snapshots
         WHERE ts >= :since
-          AND pct_used IS NOT NULL
           AND (:provider_id IS NULL OR provider_id = :provider_id)
           AND (:account_id  IS NULL OR account_id  = :account_id)
+          AND (:window_type IS NULL OR window_type = :window_type)
     )
-    SELECT ts, pct_used, provider_id, account_id, window_type, model_id
-    FROM bucketed
-    WHERE rn = 1
+    SELECT COUNT(*) AS n FROM bucketed
+    WHERE rn = 1 AND (pct_used IS NULL OR pct_used > 0)
+    """
+)
+
+_CHART_PERCENT_SQL = text(
+    # Bucket aggregate is MAX(pct_used), not the latest sample in the bucket.
+    # A daily-resetting quota whose reset falls near the end of the UTC bucket
+    # (e.g. Gemini Pro at ~21:08 UTC) would otherwise read 0 for the whole day —
+    # peak captures the actual usage the user is asking the chart about.
+    """
+    SELECT
+        MIN(ts)       AS ts,
+        MAX(pct_used) AS pct_used,
+        provider_id, account_id, window_type, model_id
+    FROM quota_snapshots
+    WHERE ts >= :since
+      AND pct_used IS NOT NULL
+      AND (:provider_id IS NULL OR provider_id = :provider_id)
+      AND (:account_id  IS NULL OR account_id  = :account_id)
+    GROUP BY provider_id, account_id, window_type, model_id,
+             (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
     ORDER BY provider_id, window_type, model_id, ts ASC
     """
 )
@@ -468,6 +476,10 @@ _SNAPSHOTS_PAGE_SQL = text(
             ELSE ROUND(pct_used - prev_pct, 2)
         END AS delta
     FROM with_delta
+    -- Skip rows the table view would have hidden anyway. The LAG in with_delta
+    -- still runs over the unfiltered bucketed series, so deltas remain
+    -- "vs. previous existing bucket" (zero rows just don't surface).
+    WHERE pct_used IS NULL OR pct_used > 0
     ORDER BY ts DESC
     LIMIT :limit OFFSET :offset
     """
