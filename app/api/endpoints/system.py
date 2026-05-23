@@ -69,7 +69,6 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
 
     return {
         "project_name": settings.PROJECT_NAME,
-        "run_mode": settings.RUN_MODE,
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
@@ -670,6 +669,7 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
                 tokens["cookie_sessionKey"] = row.api_key
 
             await token_cache.store(provider_id, tokens, account_id="default", source="config")
+    oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.session_cookie is not None:
         val = body.session_cookie
         if val and ";" in val or "=" in val:
@@ -688,12 +688,24 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
                             found = part[11:].strip()
                             break
             elif provider_id == "chatgpt":
-                # Extract __Secure-next-auth.session-token
+                # Handle both monolithic and NextAuth.js chunked (.0 / .1) session tokens.
+                # Also extract oai-sc if present — it is required by /api/auth/session.
+                chunk0: str | None = None
+                chunk1: str | None = None
                 for part in val.split(";"):
                     part = part.strip()
-                    if part.startswith("__Secure-next-auth.session-token="):
-                        found = part[32:].strip()
-                        break
+                    if part.startswith("__Secure-next-auth.session-token.0="):
+                        # len("__Secure-next-auth.session-token.0=") == 35
+                        chunk0 = part[35:]
+                    elif part.startswith("__Secure-next-auth.session-token.1="):
+                        chunk1 = part[35:]
+                    elif part.startswith("__Secure-next-auth.session-token="):
+                        # len("__Secure-next-auth.session-token=") == 33
+                        found = part[33:]
+                    elif part.startswith("oai-sc="):
+                        oai_sc_val = part[7:]
+                if chunk0:
+                    found = chunk0 + (chunk1 or "")
             elif provider_id == "opencode":
                 # Extract auth cookie value if user pasted full "auth=<value>" string
                 for part in val.split(";"):
@@ -707,6 +719,10 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
 
         row.session_cookie = val if val else None
 
+        # Persist oai-sc alongside session cookie (ChatGPT only)
+        if provider_id == "chatgpt":
+            row.oai_sc_cookie = oai_sc_val  # None clears an existing value
+
         # Propagate to token_cache so collectors can find it immediately
         if row.session_cookie:
             # Map generic session_cookie to all common provider-specific keys
@@ -717,6 +733,8 @@ async def upsert_provider_config(  # noqa: PLR0915 — known-debt: per-field val
                 "cookie_sessionKey": row.session_cookie,
                 "cookie___Secure-next-auth.session-token": row.session_cookie,
             }
+            if provider_id == "chatgpt" and oai_sc_val:
+                tokens["cookie_oai-sc"] = oai_sc_val
 
             await token_cache.store(provider_id, tokens, account_id="default", source="config")
 

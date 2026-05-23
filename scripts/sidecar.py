@@ -202,6 +202,29 @@ __REGISTRY__: dict[str, Any] = {
                     "name": "__Secure-next-auth.session-token",
                     "mapping": {"value": "cookie___Secure-next-auth.session-token"},
                 },
+                # NextAuth.js splits the session token into .0 / .1 chunks when it
+                # exceeds the 4 KB cookie size limit. Collect both so the server can
+                # reassemble them before the /api/auth/session exchange.
+                {
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "__Secure-next-auth.session-token.0",
+                    "mapping": {"value": "cookie___Secure-next-auth.session-token.0"},
+                },
+                {
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "__Secure-next-auth.session-token.1",
+                    "mapping": {"value": "cookie___Secure-next-auth.session-token.1"},
+                },
+                # OpenAI service-credential cookie — required by the /api/auth/session
+                # token-exchange endpoint alongside the session token.
+                {
+                    "type": "cookie",
+                    "domains": ["chatgpt.com"],
+                    "name": "oai-sc",
+                    "mapping": {"value": "cookie_oai-sc"},
+                },
                 {
                     "type": "file",
                     "paths": ["~/.codex/auth.json", "{{CONFIG_DIR:codex}}/auth.json"],

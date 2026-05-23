@@ -262,6 +262,10 @@ class CollectorManager:
                 }
             )
 
+        # Handle oai-sc service-credential cookie (ChatGPT only)
+        if r.provider_id == "chatgpt" and r.oai_sc_cookie:
+            all_tokens["cookie_oai-sc"] = r.oai_sc_cookie
+
         if all_tokens:
             await token_cache.store(
                 r.provider_id,
