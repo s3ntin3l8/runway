@@ -33,13 +33,24 @@ function renderTokenAlerts(tokenHealthResult) {
     const isErr = expired.length > 0;
     const color = isErr ? 'var(--crit)' : 'var(--warn)';
 
-    // Build message: "> chatgpt · expired  ·  gemini · expiring soon"
-    const fmt = t => t.provider + (t.account_label ? ` (${t.account_label})` : '');
+    // Format expiry time remaining for expiring tokens (e.g. "in 23h", "in 2d")
+    const fmtRemaining = t => {
+        if (!t.expires_at) return 'soon';
+        const h = Math.round((new Date(t.expires_at) - Date.now()) / 3_600_000);
+        return h >= 48 ? `in ${Math.round(h / 24)}d` : `in ${h}h`;
+    };
+
+    const fmt = t => t.account_label
+        ? `${t.provider} (${t.account_label})`
+        : t.provider;
+
+    // "TOKEN AUTH  ·  chatgpt expired  ·  gemini expiring in 23h"
+    const label = isErr ? 'TOKEN AUTH' : 'TOKEN AUTH';
     const parts = [
-        ...expired.map(t  => `${fmt(t)} · expired`),
-        ...expiring.map(t => `${fmt(t)} · expiring soon`),
+        ...expired.map(t  => `${fmt(t)} expired`),
+        ...expiring.map(t => `${fmt(t)} expiring ${fmtRemaining(t)}`),
     ];
-    msg.textContent = '> ' + parts.join('  ·  ');
+    msg.textContent = `${label}  ·  ${parts.join('  ·  ')}`;
 
     // Apply severity-appropriate colour
     banner.style.background  = `color-mix(in srgb,${color} 8%,transparent)`;
@@ -52,13 +63,10 @@ function renderTokenAlerts(tokenHealthResult) {
         link.style.color = color;
         link.onclick = (e) => {
             e.preventDefault();
-            // Navigate to Settings and open the Tokens tab
-            if (typeof window.navigateTo === 'function') window.navigateTo('settings');
-            // Attempt to activate the tokens tab after the view mounts
-            setTimeout(() => {
-                const tab = document.querySelector('[data-settings-tab="tokens"]');
-                if (tab) tab.click();
-            }, 150);
+            // Pre-select the tokens section so it opens there directly
+            localStorage.setItem('settings_section', 'tokens');
+            // Navigate via hash — the hashchange listener in app.js handles the rest
+            location.hash = '#settings';
         };
     }
 

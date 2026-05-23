@@ -416,9 +416,18 @@ async function renderHistoryChart() {
             // Filter to visible providers only — a hidden provider's reset_at must not
             // extend the X-axis or anchor other series' forecast horizons.
             const activeForForecast = historyState.activeProviders;
-            projectionEntries = (fd.forecasts || []).filter(e =>
-                !activeForForecast || activeForForecast.has(e.provider_id)
-            );
+            projectionEntries = (fd.forecasts || []).filter(e => {
+                // Hide providers toggled off in the legend
+                if (activeForForecast && !activeForForecast.has(e.provider_id)) return false;
+                // Safety guard: session windows are ≤5 h by definition; any session
+                // entry with reset_at >12 h out is stale/mis-classified data and
+                // would drag the X-axis out by days.
+                if (e.window_type === 'session' && e.reset_at) {
+                    const remainingMs = new Date(e.reset_at) - Date.now();
+                    if (remainingMs > 12 * 60 * 60 * 1000) return false;
+                }
+                return true;
+            });
         } catch (err) {
             console.warn('[history] forecast fetch for overlay failed:', err?.message);
         }
