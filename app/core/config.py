@@ -124,8 +124,11 @@ class Settings(BaseSettings):
     GEMINI_SESSIONS_DIR: str = Field(
         default_factory=lambda: os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions")
     )
+    # Gemini CLI hardcodes ~/.gemini/oauth_creds.json on every platform
+    # (not XDG-compliant — see github.com/google-gemini/gemini-cli
+    # packages/core/src/utils/paths.ts: GEMINI_DIR = '.gemini').
     GEMINI_OAUTH_PATH: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("gemini"), "oauth_creds.json")
+        default_factory=lambda: os.path.join(os.path.expanduser("~"), ".gemini", "oauth_creds.json")
     )
     ANTHROPIC_OAUTH_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "oauth_creds.json")

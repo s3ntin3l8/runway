@@ -317,15 +317,25 @@ async def refresh_token(
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Attempt proactive OAuth token refresh for supported providers."""
-    tokens = await token_cache.get(provider, account_id) or {}
+    cached = await token_cache.get_with_metadata(provider, account_id)
+    if not cached:
+        raise HTTPException(status_code=404, detail="No cached token for this account")
+    tokens, meta = cached
     if "refresh_token" not in tokens:
         raise HTTPException(status_code=400, detail="No refresh token available")
 
-    from app.services.token_refresher import refresh_oauth_token
+    from app.services.token_refresher import persist_to_local_file, refresh_oauth_token
 
     try:
         new_tokens = await refresh_oauth_token(provider, tokens)
-        await token_cache.store(provider, new_tokens, account_id)
+        await token_cache.store(
+            provider,
+            new_tokens,
+            account_id,
+            account_label=meta.get("account_label"),
+            source=meta.get("source"),
+        )
+        persist_to_local_file(provider, new_tokens, meta.get("source"))
         return {"status": "refreshed"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
