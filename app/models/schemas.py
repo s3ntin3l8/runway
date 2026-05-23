@@ -46,6 +46,13 @@ class LimitCard(BaseModel):
     variant: str | None = (
         None  # per-card disambiguator under same (provider, account, model_id, window_type)
     )
+    # Explicit signal that this card shares a physical quota with other cards
+    # carrying the same non-null value. Set by collectors that know multiple
+    # model rows draw from one bucket (e.g. Antigravity's per-model session
+    # cards all reference the same session limit). Cards with `None` stand
+    # alone — the dashboard never clusters them by behavioral similarity.
+    # Convention: f"{provider_id}:{window_type}:{reset_at_iso}".
+    quota_pool_id: str | None = None
     # Token usage breakdown from usage page scraping
     token_usage: dict[str, Any] | None = (
         None  # {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "total": 0}

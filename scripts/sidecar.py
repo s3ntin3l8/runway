@@ -1613,6 +1613,12 @@ class GenericCollector:
                                     if reset_ts is not None
                                     else None
                                 )
+                                w_type = _infer_antigravity_window_type(reset_at)
+                                reset_iso = reset_at.isoformat() if reset_at else None
+                                # All per-model cards from this file share one
+                                # physical Antigravity quota — pool_id lets the
+                                # dashboard cluster them as one SHARED bar.
+                                pool_id = f"antigravity:{w_type}:{reset_iso}" if reset_iso else None
                                 results.append(
                                     {
                                         "service_name": m_name,
@@ -1630,8 +1636,9 @@ class GenericCollector:
                                         "used_value": round(100.0 - rem, 4),
                                         "limit_value": 100.0,
                                         "unit_type": "percent",
-                                        "window_type": _infer_antigravity_window_type(reset_at),
-                                        "reset_at": reset_at.isoformat() if reset_at else None,
+                                        "window_type": w_type,
+                                        "reset_at": reset_iso,
+                                        "quota_pool_id": pool_id,
                                         "metadata": {
                                             "name": m_name,
                                             "remaining_percent": rem,
@@ -1969,6 +1976,10 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 except (TypeError, ValueError):
                     reset_dt = None
         reset_at = reset_dt.isoformat() if reset_dt else None
+        w_type = _infer_antigravity_window_type(reset_dt)
+        # Per-model cards from one LSP response share a physical quota; pool_id
+        # tells the dashboard to render them as a single SHARED row.
+        pool_id = f"antigravity:{w_type}:{reset_at}" if reset_at else None
         results.append(
             {
                 "service_name": label,
@@ -1989,8 +2000,9 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "limit_value": 100.0,
                 "pct_used": round(100.0 - rem_pct, 4),
                 "unit_type": "percent",
-                "window_type": _infer_antigravity_window_type(reset_dt),
+                "window_type": w_type,
                 "reset_at": reset_at,
+                "quota_pool_id": pool_id,
             }
         )
 
@@ -2180,8 +2192,24 @@ def run_collection(
         try:
             logging.info(f"  [{provider_id}] collecting...")
             metrics = GenericCollector.collect_provider(provider_id, provider_config)
-            if metrics:
-                logging.info(f"  [{provider_id}] {len(metrics)} card(s)")
+            # Mirror the server's token-only predicate (fleet.py:118) so the
+            # log lines line up with what the ingest endpoint actually does.
+            token_cards = sum(
+                1
+                for c in metrics
+                if c.get("remaining") == "Token" and c.get("unit") in ("oauth", "api_key", "cookie")
+            )
+            quota_cards = len(metrics) - token_cards
+            if quota_cards and token_cards:
+                logging.info(
+                    f"  [{provider_id}] {quota_cards} quota card(s), {token_cards} token card(s)"
+                )
+            elif quota_cards:
+                logging.info(f"  [{provider_id}] {quota_cards} quota card(s)")
+            elif token_cards:
+                logging.info(
+                    f"  [{provider_id}] pushed {token_cards} token card(s) (server fetches quota)"
+                )
             else:
                 logging.info(f"  [{provider_id}] no data")
             all_metrics.extend(metrics)
