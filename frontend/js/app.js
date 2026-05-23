@@ -5,6 +5,7 @@ import { ensureSortable } from './sortable.js';
 import { buildGitHubOAuthModal, buildFleetView, buildTokenHealthPanel, escapeHTMLAttr, buildProviderSparklineStrip } from './components.js';
 import { updateCharts, destroyCharts } from './charts.js';
 import { escapeHTML } from './utils/html.js';
+import { showConfirm } from './utils/modal-dialog.js';
 import { loadDashboard, initDashboardView, setFilter, setFilterDimension } from './views/dashboard.js';
 
 // Non-dashboard views are lazy-loaded — they aren't needed for the initial
@@ -514,7 +515,12 @@ function cancelGitHubLogin() {
 }
 
 async function handleGitHubLogout() {
-    if (confirm('Disconnect GitHub account?')) {
+    const ok = await showConfirm(
+        'Disconnect GitHub',
+        'Disconnect GitHub account?',
+        { okLabel: 'Disconnect', danger: true }
+    );
+    if (ok) {
         await logoutGitHub();
         await checkGitHubStatus();
         

@@ -1,5 +1,6 @@
-import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
+import { fetchProviderConfigs, putProviderConfig, fetchTokenHealth, postTokenRefresh, deleteTokenHealth, fetchSettings, fetchAppConfig, putAppConfig } from '../api.js';
 import { setRunwayConfig } from '../utils/tz.js';
+import { showAlert, showConfirm } from '../utils/modal-dialog.js';
 
 const COMMON_TIMEZONES = [
     'UTC',
@@ -182,7 +183,7 @@ export async function renderProvidersSection(pane) {
                     flashRow(pane, providerId);
                 } catch (err) {
                     sel.value = prev ?? '';
-                    alert(`Save failed: ${err.message}`);
+                    showAlert('Save failed', err.message);
                 }
             });
         });
@@ -207,7 +208,7 @@ export async function renderProvidersSection(pane) {
                 } catch (err) {
                     toggle.classList.toggle('on', !newEnabled);
                     toggle.querySelector('span').textContent = !newEnabled ? 'On' : 'Off';
-                    alert(`Save failed: ${err.message}`);
+                    showAlert('Save failed', err.message);
                 }
             });
         });
@@ -445,7 +446,7 @@ async function saveProviderConfig(pane, providerId) {
         renderProvidersSection(pane);
     } catch (err) {
         if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
-        alert(`Save failed: ${err.message}`);
+        showAlert('Save failed', err.message);
     }
 }
 
@@ -573,28 +574,26 @@ export async function refreshToken(provider, accountId) {
             const pane = document.getElementById('settings-pane');
             if (pane) renderTokensSection(pane);
         } else {
-            alert('Refresh reported non-success: ' + JSON.stringify(d));
+            await showAlert('Refresh reported non-success', JSON.stringify(d));
         }
     } catch (err) {
-        alert('Token refresh failed: ' + err.message);
+        await showAlert('Token refresh failed', err.message);
     }
 }
 
 export async function deleteToken(provider, accountId) {
-    if (!confirm(`Purge the ${provider} session for ${accountId} from the live cache?`)) return;
+    const ok = await showConfirm(
+        'Purge cached session',
+        `Remove the ${provider} session for ${accountId} from the live cache?`,
+        { danger: true, okLabel: 'Purge' }
+    );
+    if (!ok) return;
     try {
-        const res = await fetch(`/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`, {
-            method: 'DELETE',
-        });
-        const d = await res.json();
-        if (res.ok) {
-            const pane = document.getElementById('settings-pane');
-            if (pane) renderTokensSection(pane);
-        } else {
-            alert('Purge failed: ' + (d.detail || JSON.stringify(d)));
-        }
+        await deleteTokenHealth(provider, accountId);
+        const pane = document.getElementById('settings-pane');
+        if (pane) renderTokensSection(pane);
     } catch (err) {
-        alert('Delete failed: ' + err.message);
+        await showAlert('Purge failed', err.message);
     }
 }
 
@@ -706,7 +705,11 @@ export async function patchWebhook(id, field, value) {
 export async function testWebhook(id) {
     const res = await fetch(`/api/v1/system/webhooks/${id}/test`, { method: 'POST' });
     const data = await res.json();
-    alert(res.ok ? 'Test sent!' : `Failed: ${data.detail}`);
+    if (res.ok) {
+        await showAlert('Test sent', 'The webhook was triggered.');
+    } else {
+        await showAlert('Webhook test failed', data.detail || `HTTP ${res.status}`);
+    }
 }
 
 export async function deleteWebhook(id) {
@@ -746,10 +749,6 @@ async function renderSystemSection(pane) {
                 </div>
             </header>
             <div class="sys-grid">
-                <div class="sys-row">
-                    <div><div class="sys-k">Run Mode</div></div>
-                    <span class="inp" style="display:block;width:auto;">${escapeHTML(s.run_mode)}</span>
-                </div>
                 <div class="sys-row">
                     <div><div class="sys-k">Host / Port</div></div>
                     <span style="font:400 12px var(--sans);color:var(--ink);">${escapeHTML(s.app_host)}:${s.app_port}</span>

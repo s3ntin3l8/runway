@@ -1,8 +1,17 @@
+import base64
+import json
 import time
 
 import pytest
 
 from app.services.token_cache import TokenCache
+
+
+def _make_id_token(payload: dict) -> str:
+    """Build an unsigned JWT (header.payload.signature) — signature is not verified."""
+    def b64(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
 
 
 @pytest.fixture
@@ -57,6 +66,39 @@ async def test_identity_promotion(cache):
     # Verify promotion
     accs = await cache.get_accounts("anthropic")
     assert accs[0]["account_label"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_derive_account_id_prefers_id_token_email(cache):
+    """Rotating tokens (oauth_token) must not produce a new entry on refresh."""
+    id_token = _make_id_token({"email": "User@Example.com", "sub": "12345"})
+
+    acc1 = await cache.store("gemini", {"oauth_token": "v1", "id_token": id_token})
+    acc2 = await cache.store("gemini", {"oauth_token": "v2", "id_token": id_token})
+
+    assert acc1 == acc2 == "user@example.com"
+    assert len(await cache.get_accounts("gemini")) == 1
+
+
+@pytest.mark.asyncio
+async def test_derive_account_id_falls_back_to_sub(cache):
+    id_token = _make_id_token({"sub": "google-uid-7777"})
+    acc = await cache.store("gemini", {"oauth_token": "v1", "id_token": id_token})
+    assert acc == "google-uid-7777"
+
+
+@pytest.mark.asyncio
+async def test_derive_account_id_hash_fallback_without_id_token(cache):
+    acc = await cache.store("gemini", {"oauth_token": "abc"})
+    assert acc != "abc" and len(acc) == 12  # 12-char sha256 prefix
+
+
+@pytest.mark.asyncio
+async def test_id_token_email_becomes_account_label(cache):
+    id_token = _make_id_token({"email": "owner@example.com"})
+    await cache.store("gemini", {"oauth_token": "v1", "id_token": id_token})
+    accs = await cache.get_accounts("gemini")
+    assert accs[0]["account_label"] == "owner@example.com"
 
 
 @pytest.mark.asyncio

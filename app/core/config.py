@@ -56,7 +56,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     PROJECT_NAME: str = "Runway — AI Limits Dashboard"
-    RUN_MODE: str = "standalone"
 
     # GitHub OAuth
     GITHUB_CLIENT_ID: str = "Iv1.b507a08c87ecfe98"
@@ -99,6 +98,14 @@ class Settings(BaseSettings):
     GEMINI_OAUTH_CLIENT_ID: str = ""
     GEMINI_OAUTH_CLIENT_SECRET: str = ""
     CLAUDE_OAUTH_CLIENT_ID: str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+    # Background OAuth auto-refresh — scans the in-memory token cache and
+    # refreshes any JWT-bearing token whose `exp` falls inside the threshold.
+    # Independent from the collector's opportunistic refresh, so tokens stay
+    # fresh even when the poller is dormant.
+    TOKEN_AUTO_REFRESH_ENABLED: bool = True
+    TOKEN_AUTO_REFRESH_INTERVAL_SECONDS: int = 300
+    TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS: int = 600
 
     KEYCHAIN_PROMPT_MODE: str = "always"
 

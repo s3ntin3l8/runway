@@ -164,6 +164,34 @@ class TestRefreshOAuthTokenGemini:
         assert sent_data["client_secret"] == "fallback_secret"
         assert result["oauth_token"] == "gemini_access"
 
+    async def test_falls_back_to_id_token_aud_for_client_id(self, monkeypatch):
+        """Gemini CLI tokens carry the client_id only as the JWT aud claim."""
+        import base64
+        import json
+
+        from app.services import token_refresher
+
+        monkeypatch.setattr(token_refresher.settings, "GEMINI_OAUTH_CLIENT_ID", "")
+
+        def _jwt(payload: dict) -> str:
+            def b64(d):
+                return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+            return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
+
+        id_token = _jwt({"aud": "cli-app.apps.googleusercontent.com"})
+
+        body = {"access_token": "gemini_access"}
+        resp = _make_mock_response(200, body)
+        ctx = _make_async_client(resp)
+
+        tokens = {"refresh_token": "g_refresh", "id_token": id_token}
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            await refresh_oauth_token("gemini", tokens)
+
+        sent_data = ctx.__aenter__.return_value.post.call_args.kwargs["data"]
+        assert sent_data["client_id"] == "cli-app.apps.googleusercontent.com"
+
 
 class TestRefreshOAuthTokenHTTPErrors:
     async def test_http_4xx_raises_http_status_error(self):

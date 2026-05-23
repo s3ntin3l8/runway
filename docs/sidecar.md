@@ -270,7 +270,7 @@ docker run -p 8765:8765 -e INGEST_API_KEY=secret runway
 python3 scripts/sidecar.py --daemon
 ```
 
-See [Deployment Modes Guide](deployment-modes.md) for complete setup.
+See [Deployment Guide](deployment.md) for complete setup.
 
 ## Offline Queue
 

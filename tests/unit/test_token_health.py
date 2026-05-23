@@ -70,6 +70,30 @@ class TestClassifyStatus:
         # With is_opaque, it is valid (READY)
         assert _classify_status(None, is_opaque=True) == "valid"
 
+    def test_can_refresh_suppresses_24h_warning(self):
+        """Short-lived tokens with a refresh_token are auto-rolled — don't warn."""
+        exp = time.time() + 3600  # 1 hour left
+        # Without refresh path → "expiring" under the 24h rule.
+        assert _classify_status(exp, can_refresh=False) == "expiring"
+        # With refresh path → "valid" because auto-refresher will roll it.
+        assert _classify_status(exp, can_refresh=True) == "valid"
+
+    def test_can_refresh_still_warns_when_imminent(self, monkeypatch):
+        """If exp is inside the auto-refresh interval the next tick is too late."""
+        from app.services import token_health
+
+        monkeypatch.setattr(token_health.settings, "TOKEN_AUTO_REFRESH_INTERVAL_SECONDS", 300)
+        exp = time.time() + 100  # 100s < 300s interval → imminent
+        assert _classify_status(exp, can_refresh=True) == "expiring"
+
+    def test_can_refresh_falls_back_when_auto_refresh_disabled(self, monkeypatch):
+        """If the user turned off auto-refresh, behave like the legacy 24h rule."""
+        from app.services import token_health
+
+        monkeypatch.setattr(token_health.settings, "TOKEN_AUTO_REFRESH_ENABLED", False)
+        exp = time.time() + 3600
+        assert _classify_status(exp, can_refresh=True) == "expiring"
+
 
 class TestTokenHealthService:
     @pytest.mark.asyncio
