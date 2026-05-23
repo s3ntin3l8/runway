@@ -446,8 +446,10 @@ function renderSnapshotTable() {
     const cache = historyState._windowsCache;
     if (!cache) { container.innerHTML = '<p class="ht-empty">Loading…</p>'; return; }
 
-    const allRows = cache.rows || [];
-    const rows = allRows.filter(r => r.pct_used == null || r.pct_used > 0);
+    // Server already filters zero-pct rows (see query_snapshots), so no
+    // client-side filtering is needed — and `cache.total` reflects the visible
+    // count, keeping the pager accurate.
+    const rows = cache.rows || [];
     if (!rows.length) {
         container.innerHTML = '<p class="ht-empty">No data for selected range.</p>';
         return;
@@ -490,9 +492,7 @@ function renderSnapshotTable() {
     if (metaEl) {
         const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
             ?? `${historyState.days}d`;
-        const hiddenCount = allRows.length - rows.length;
-        const hiddenNote = hiddenCount > 0 ? ` · ${hiddenCount} zero-usage hidden` : '';
-        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}${hiddenNote}`;
+        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
     }
 
     container.innerHTML = `
