@@ -1992,7 +1992,7 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
                 "unit": "capacity",
                 "reset": human_delta(reset_dt),
                 "pace": "Continuous",
-                "health": "good" if rem_pct > 30 else "warning",
+                "health": "critical" if rem_pct < 10 else "warning" if rem_pct < 30 else "good",
                 "detail": f"{plan} | {email} [LSP]",
                 "data_source": "local",
                 "input_source": "sidecar",
@@ -2016,7 +2016,8 @@ def _ag_parse_lsp_response(data: dict[str, Any], icon: str) -> list[dict[str, An
         amount = str(cred.get("creditAmount", "0"))
         display = name_map.get(c_type, c_type.replace("_", " ").title())
         try:
-            health = "good" if int(amount) > 100 else "warning"
+            n = int(amount)
+            health = "critical" if n <= 10 else "warning" if n <= 100 else "good"
         except ValueError:
             health = "warning"
         results.append(
