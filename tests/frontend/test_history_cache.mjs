@@ -20,21 +20,21 @@ import {
 // ---------------------------------------------------------------------------
 
 test('_cacheKey is stable across calls', () => {
-    const a = _cacheKey({ metric: 'percent', providerFilter: 'anthropic', windowFilter: 'all' });
-    const b = _cacheKey({ metric: 'percent', providerFilter: 'anthropic', windowFilter: 'all' });
+    const a = _cacheKey({ metric: 'percent', windowFilter: 'all' });
+    const b = _cacheKey({ metric: 'percent', windowFilter: 'all' });
     assert.equal(a, b);
 });
 
 test('_cacheKey distinguishes metric', () => {
-    const a = _cacheKey({ metric: 'percent', providerFilter: null, windowFilter: 'all' });
-    const b = _cacheKey({ metric: 'tokens',  providerFilter: null, windowFilter: 'all' });
+    const a = _cacheKey({ metric: 'percent', windowFilter: 'all' });
+    const b = _cacheKey({ metric: 'tokens',  windowFilter: 'all' });
     assert.notEqual(a, b);
 });
 
-test('_cacheKey treats null and missing provider as "*"', () => {
-    const a = _cacheKey({ metric: 'percent', providerFilter: null, windowFilter: 'all' });
-    const b = _cacheKey({ metric: 'percent', providerFilter: undefined, windowFilter: 'all' });
-    assert.equal(a, b);
+test('_cacheKey distinguishes windowFilter', () => {
+    const a = _cacheKey({ metric: 'percent', windowFilter: 'all' });
+    const b = _cacheKey({ metric: 'percent', windowFilter: 'session' });
+    assert.notEqual(a, b);
 });
 
 // ---------------------------------------------------------------------------
@@ -42,30 +42,30 @@ test('_cacheKey treats null and missing provider as "*"', () => {
 // ---------------------------------------------------------------------------
 
 test('_cacheHit returns null on miss', () => {
-    assert.equal(_cacheHit({}, 'percent|*|all', 7), null);
+    assert.equal(_cacheHit({}, 'percent|all', 7), null);
 });
 
 test('_cacheHit returns null when stale', () => {
-    const slot = { 'percent|*|all': { fetchedAt: 0, days: 30, response: {} } };
+    const slot = { 'percent|all': { fetchedAt: 0, days: 30, response: {} } };
     const now = CACHE_TTL_MS + 1;
-    assert.equal(_cacheHit(slot, 'percent|*|all', 7, now), null);
+    assert.equal(_cacheHit(slot, 'percent|all', 7, now), null);
 });
 
 test('_cacheHit returns null when cached.days < requested.days', () => {
-    const slot = { 'percent|*|all': { fetchedAt: 100, days: 1, response: {} } };
-    assert.equal(_cacheHit(slot, 'percent|*|all', 7, 200), null);
+    const slot = { 'percent|all': { fetchedAt: 100, days: 1, response: {} } };
+    assert.equal(_cacheHit(slot, 'percent|all', 7, 200), null);
 });
 
 test('_cacheHit returns entry when fresh and cached.days >= requested.days', () => {
     const entry = { fetchedAt: 100, days: 30, response: { series: [] } };
-    const slot = { 'percent|*|all': entry };
-    assert.equal(_cacheHit(slot, 'percent|*|all', 7, 200), entry);
+    const slot = { 'percent|all': entry };
+    assert.equal(_cacheHit(slot, 'percent|all', 7, 200), entry);
 });
 
 test('_cacheHit returns entry on exact-days match', () => {
     const entry = { fetchedAt: 100, days: 7, response: {} };
-    const slot = { 'percent|*|all': entry };
-    assert.equal(_cacheHit(slot, 'percent|*|all', 7, 200), entry);
+    const slot = { 'percent|all': entry };
+    assert.equal(_cacheHit(slot, 'percent|all', 7, 200), entry);
 });
 
 // ---------------------------------------------------------------------------

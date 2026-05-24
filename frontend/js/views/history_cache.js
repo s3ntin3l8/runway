@@ -7,8 +7,8 @@
 // timeframe buttons.
 export const CACHE_TTL_MS = 45_000;
 
-export function _cacheKey({ metric, providerFilter, windowFilter }) {
-    return `${metric}|${providerFilter ?? '*'}|${windowFilter || 'all'}`;
+export function _cacheKey({ metric, windowFilter }) {
+    return `${metric}|${windowFilter || 'all'}`;
 }
 
 // Returns the cache entry only if it is fresh AND covers at least `requestedDays`.
