@@ -5,17 +5,23 @@
 #
 #  Quick Start:
 #    1. Copy .env.example to .env and configure your API keys
-#    2. docker-compose up -d
+#    2. docker compose pull && docker compose up -d
 #    3. Access dashboard at http://localhost:8765
+#
+#  Pinning: change `:latest` to a specific version (e.g. `:1.0.0`). Available
+#  tags: https://github.com/s3ntin3l8/runway/pkgs/container/runway
+#
+#  Build from source instead of pulling: uncomment the `build:` block below
+#  and run `docker compose up -d --build`.
 #
 #  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 services:
   runway:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: runway:latest
+    image: ghcr.io/s3ntin3l8/runway:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: runway
     ports:
       - "8765:8765"
@@ -31,7 +37,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-volumes:
-  data:
-    driver: local
