@@ -154,7 +154,7 @@ class LatestUsage(SQLModel, table=True):
         # model_id must be in the identity tuple — collectors legitimately
         # emit multiple cards for the same (provider, account, window,
         # variant) tuple that differ only by model (e.g. Claude Sonnet
-        # weekly vs Claude Design weekly). sidecar_id is intentionally
+        # weekly vs Claude Opus weekly). sidecar_id is intentionally
         # excluded so that server-scraped rows and sidecar-enriched rows
         # for the same logical account merge into one row instead of
         # creating duplicates.

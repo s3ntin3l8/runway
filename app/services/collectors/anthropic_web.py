@@ -497,7 +497,7 @@ class AnthropicWebMixin:
                     pass
 
             w_type = classify_anthropic_window_type(api_key)
-            service_name = "Claude Design" if api_key == "seven_day_omelette" else "Claude"
+            service_name = "Claude"
 
             results.append(
                 {
