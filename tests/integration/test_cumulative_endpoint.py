@@ -12,7 +12,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import UsagePeriodRollup
+from app.models.db import UsageEvent, UsagePeriodRollup
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -77,6 +77,34 @@ def _rollup(
     session.add(row)
     session.commit()
     return row
+
+
+def _event(
+    session: Session,
+    event_id: str,
+    ts: datetime,
+    *,
+    provider_id: str = "anthropic",
+    account_id: str = "u@x.com",
+    model_id: str = "sonnet",
+    sidecar_id: str = "dev-01",
+    tokens_input: int = 0,
+    cost_usd: float = 0.0,
+) -> None:
+    session.add(
+        UsageEvent(
+            provider_id=provider_id,
+            account_id=account_id,
+            sidecar_id=sidecar_id,
+            event_id=event_id,
+            ts=ts,
+            kind="message",
+            model_id=model_id,
+            tokens_input=tokens_input,
+            cost_usd=cost_usd,
+        )
+    )
+    session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -204,25 +232,34 @@ def test_full_breakdown_row_skipped(session):
 
 
 def test_multiple_periods_returns_all_three_buckets(session):
-    """lifetime + year + month rows → all three buckets present with correct values."""
+    """lifetime comes from the rollup; year + month are aggregated live from
+    usage_events at the user-local period boundary."""
     now = datetime.now(UTC)
-    year_key = now.strftime("%Y")
-    month_key = now.strftime("%Y-%m")
 
+    # Lifetime stays sourced from the (tz-independent) rollup.
     _rollup(session, period_type="lifetime", period_key="all", msgs=100, tokens_input=5000)
-    _rollup(session, period_type="year", period_key=year_key, msgs=60, tokens_input=3000)
-    _rollup(session, period_type="month", period_key=month_key, msgs=20, tokens_input=1000)
+    # This-month event → counts toward both month and year.
+    _event(session, "m", now, tokens_input=1000)
+    expected_year_tokens, expected_year_msgs = 1000, 1
+    if now.month > 1:
+        # Earlier this year but before this month → counts toward year only.
+        _event(session, "y", now.replace(month=1, day=15, hour=12), tokens_input=2000)
+        expected_year_tokens, expected_year_msgs = 3000, 2
 
     resp = _client().get("/api/v1/usage/cumulative")
     assert resp.status_code == 200
-    entry = resp.json()["cumulative"][0]
+    body = resp.json()
+    entry = body["cumulative"][0]
+    # Index by the server-resolved (tz-aware) keys instead of recomputing.
+    month_bucket = entry[body["current_month_key"]]
+    year_bucket = entry[body["current_year_key"]]
 
     assert entry["lifetime"]["msgs"] == 100
     assert entry["lifetime"]["tokens_input"] == 5000
-    assert entry[f"year_{year_key}"]["msgs"] == 60
-    assert entry[f"year_{year_key}"]["tokens_input"] == 3000
-    assert entry[f"month_{month_key}"]["msgs"] == 20
-    assert entry[f"month_{month_key}"]["tokens_input"] == 1000
+    assert month_bucket["msgs"] == 1
+    assert month_bucket["tokens_input"] == 1000
+    assert year_bucket["msgs"] == expected_year_msgs
+    assert year_bucket["tokens_input"] == expected_year_tokens
 
 
 def test_query_param_filters_period_type(session):

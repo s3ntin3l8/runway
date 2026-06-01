@@ -14,7 +14,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage, UsageEvent, UsagePeriodRollup
+from app.models.db import LatestUsage, UsageEvent
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -74,46 +74,6 @@ def _seed_card(
     )
 
 
-def _seed_rollup(
-    session: Session,
-    *,
-    provider_id: str = "anthropic",
-    account_id: str = "u@x.com",
-    period_type: str = "month",
-    period_key: str | None = None,
-    model_id: str = "",
-    sidecar_id: str = "",
-    tokens_input: int = 0,
-    tokens_output: int = 0,
-    tokens_cache_read: int = 0,
-    tokens_cache_create: int = 0,
-    tokens_reasoning: int = 0,
-    cost_usd: float = 0.0,
-    msgs: int = 0,
-) -> UsagePeriodRollup:
-    if period_key is None:
-        period_key = datetime.now(UTC).strftime("%Y-%m") if period_type == "month" else "all"
-    row = UsagePeriodRollup(
-        provider_id=provider_id,
-        account_id=account_id,
-        period_type=period_type,
-        period_key=period_key,
-        model_id=model_id,
-        sidecar_id=sidecar_id,
-        tokens_input=tokens_input,
-        tokens_output=tokens_output,
-        tokens_cache_read=tokens_cache_read,
-        tokens_cache_create=tokens_cache_create,
-        tokens_reasoning=tokens_reasoning,
-        cost_usd=cost_usd,
-        msgs=msgs,
-        last_updated=datetime.now(UTC),
-    )
-    session.add(row)
-    session.commit()
-    return row
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -158,23 +118,21 @@ def test_fleet_groups_by_provider_account(session: Session):
 
 
 def test_fleet_includes_sidecar_contributions(session: Session):
-    """Per-sidecar rollup rows for the current month appear in sidecar_contributions."""
+    """Per-sidecar token totals for the current local month, aggregated live
+    from usage_events, appear in sidecar_contributions."""
     _seed_card(session, provider_id="anthropic", account_id="u@x.com", pct_used=10.0)
     session.commit()
 
-    month_key = datetime.now(UTC).strftime("%Y-%m")
-    _seed_rollup(
+    _seed_event(
         session,
+        "e1",
+        datetime.now(UTC),
         provider_id="anthropic",
         account_id="u@x.com",
-        period_type="month",
-        period_key=month_key,
-        model_id="",
         sidecar_id="laptop-1",
         tokens_input=9234,
         tokens_output=1500,
         cost_usd=0.42,
-        msgs=7,
     )
 
     resp = _client().get("/api/v1/usage/fleet")
@@ -186,30 +144,21 @@ def test_fleet_includes_sidecar_contributions(session: Session):
     assert contrib["laptop-1"]["tokens_input"] == 9234
     assert contrib["laptop-1"]["tokens_output"] == 1500
     assert contrib["laptop-1"]["cost_usd"] == pytest.approx(0.42)
-    assert contrib["laptop-1"]["msgs"] == 7
+    assert contrib["laptop-1"]["msgs"] == 1
 
 
 def test_fleet_excludes_other_periods(session: Session):
-    """Only current-month rollup rows appear in contributions; lifetime rows are excluded."""
+    """Only events in the current local month contribute; older events are excluded."""
     _seed_card(session, provider_id="anthropic", account_id="u@x.com", pct_used=10.0)
     session.commit()
 
-    month_key = datetime.now(UTC).strftime("%Y-%m")
-
-    # Current-month per-sidecar row — should appear
-    _seed_rollup(
+    # Current-month event — should appear
+    _seed_event(session, "this", datetime.now(UTC), sidecar_id="laptop-1", tokens_input=100)
+    # Event ~40 days ago (prior month) — should NOT appear
+    _seed_event(
         session,
-        period_type="month",
-        period_key=month_key,
-        sidecar_id="laptop-1",
-        tokens_input=100,
-    )
-
-    # Lifetime per-sidecar row — should NOT appear
-    _seed_rollup(
-        session,
-        period_type="lifetime",
-        period_key="all",
+        "old",
+        datetime.now(UTC) - timedelta(days=40),
         sidecar_id="laptop-1",
         tokens_input=999999,
     )
@@ -218,48 +167,27 @@ def test_fleet_excludes_other_periods(session: Session):
     assert resp.status_code == 200
 
     contrib = resp.json()["fleet"][0]["sidecar_contributions"]
-    # laptop-1 is present, but its value comes only from the current-month row
+    # laptop-1 is present, but its value comes only from the current-month event
     assert "laptop-1" in contrib
     assert contrib["laptop-1"]["tokens_input"] == 100
 
 
-def test_fleet_skips_cross_product_rollup(session: Session):
-    """Cross-product rows (model_id != '' AND sidecar_id != '') are excluded.
-
-    Only pure per-sidecar rows (model_id='', sidecar_id!='') should appear.
-    """
+def test_fleet_sidecar_contribution_sums_across_models(session: Session):
+    """A sidecar's contribution sums every model's events under that sidecar."""
     _seed_card(session, provider_id="anthropic", account_id="u@x.com", pct_used=10.0)
     session.commit()
 
-    month_key = datetime.now(UTC).strftime("%Y-%m")
-
-    # Pure per-sidecar row (model_id='', sidecar_id set) — should appear
-    _seed_rollup(
-        session,
-        period_type="month",
-        period_key=month_key,
-        model_id="",
-        sidecar_id="laptop-1",
-        tokens_input=500,
-    )
-
-    # Cross-product row (model_id AND sidecar_id both set) — must NOT appear
-    _seed_rollup(
-        session,
-        period_type="month",
-        period_key=month_key,
-        model_id="claude-sonnet",
-        sidecar_id="laptop-1",
-        tokens_input=9999,
-    )
+    now = datetime.now(UTC)
+    _seed_event(session, "a", now, sidecar_id="laptop-1", model_id="sonnet", tokens_input=500)
+    _seed_event(session, "b", now, sidecar_id="laptop-1", model_id="opus", tokens_input=300)
 
     resp = _client().get("/api/v1/usage/fleet")
     assert resp.status_code == 200
 
     contrib = resp.json()["fleet"][0]["sidecar_contributions"]
     assert "laptop-1" in contrib
-    # tokens_input must be from the per-sidecar row (500), not the cross-product (9999)
-    assert contrib["laptop-1"]["tokens_input"] == 500
+    assert contrib["laptop-1"]["tokens_input"] == 800  # 500 + 300 across models
+    assert contrib["laptop-1"]["msgs"] == 2
 
 
 def test_empty_db_returns_empty_fleet(session: Session):

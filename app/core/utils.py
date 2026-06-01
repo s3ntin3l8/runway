@@ -7,11 +7,38 @@ import random
 import re
 import tempfile
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
+if TYPE_CHECKING:
+    from sqlmodel import Session
+
 logger = logging.getLogger(__name__)
+
+
+def resolve_user_tz(session: "Session") -> ZoneInfo:
+    """Resolve the display timezone for period-boundary math.
+
+    Resolution chain (mirrors the frontend ``getUserTz()`` minus browser
+    detection): ``SystemConfig.user_timezone`` → ``settings.env_timezone``
+    (the ``TZ`` env var) → UTC. Used to anchor "this period" / "yearly"
+    cumulative gauges to the user's local calendar instead of UTC.
+    """
+    from sqlmodel import select
+
+    from app.core.config import settings
+    from app.models.db import SystemConfig
+
+    cfg = session.exec(select(SystemConfig)).first()
+    name = (cfg.user_timezone if cfg else None) or settings.env_timezone
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            logger.warning("Invalid user timezone %r — falling back to UTC.", name)
+    return ZoneInfo("UTC")
 
 
 class IdentityExtractor:
