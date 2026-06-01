@@ -48,15 +48,9 @@ function _buildSidecarCostRows(entry) {
 function _cumBucket(cumData, type) {
     if (!cumData) return null;
     if (type === 'lifetime') return cumData.lifetime || null;
-    if (type === 'month') {
-        const now = new Date();
-        const key = `month_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        return cumData[key] || null;
-    }
-    if (type === 'year') {
-        const key = `year_${new Date().getFullYear()}`;
-        return cumData[key] || null;
-    }
+    // Server-resolved, tz-aware period keys stamped onto the entry (dashboard.js).
+    if (type === 'month') return cumData[cumData.current_month_key] || null;
+    if (type === 'year') return cumData[cumData.current_year_key] || null;
     return null;
 }
 

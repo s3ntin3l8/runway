@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, select
@@ -8,6 +9,7 @@ from sqlmodel import Session, select
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
+from app.core.utils import resolve_user_tz
 from app.models.schemas import ForecastResponse, LimitCard, LimitsResponse
 from app.services.collector_manager import manager
 from app.services.event_query import (
@@ -25,12 +27,32 @@ from app.services.event_query import (
     query_windows,
 )
 from app.services.forecast import compute_all_forecasts
+from app.services.queries import query_cumulative_live
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
 WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 router = APIRouter()
+
+
+def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[str, Any]:
+    """Current month/year boundaries in `tz`, as UTC instants + key strings.
+
+    The "This period" / "Yearly" cumulative gauges reset on the user's local
+    calendar, so they are anchored at local-midnight period starts converted
+    back to UTC instants for the event range scan. `now` (a tz-aware instant)
+    is injectable for deterministic tests; it defaults to the current time.
+    """
+    now_local = (now or datetime.now(UTC)).astimezone(tz)
+    month_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    year_local = now_local.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "month_start_utc": month_local.astimezone(UTC),
+        "year_start_utc": year_local.astimezone(UTC),
+        "current_month": now_local.strftime("%Y-%m"),
+        "current_year": now_local.strftime("%Y"),
+    }
 
 
 @router.get("/limits")
@@ -74,10 +96,10 @@ async def fetch_fleet_view(
       the spec's "Most Restrictive Wins" gauge.
     - secondary_limits: every other card in the same group, used for the
       LED row.
-    - sidecar_contributions: per-sidecar token totals from usage_period_rollup
-      (current month, all-models grain), used by the Fuel Dump bar.
+    - sidecar_contributions: per-sidecar token totals for the current local
+      month, aggregated live from usage_events, used by the Fuel Dump bar.
     """
-    from app.models.db import LatestUsage, UsagePeriodRollup
+    from app.models.db import LatestUsage
 
     records = session.exec(select(LatestUsage)).all()
     cards: list[dict[str, Any]] = []
@@ -136,27 +158,15 @@ async def fetch_fleet_view(
         groups[(pid, aid)] = [synthetic]
 
     now = datetime.now(UTC)
-    # Per-sidecar contribution lookup from usage_period_rollup (current month)
-    month_key = now.strftime("%Y-%m")
-    contrib_rows = session.exec(
-        select(UsagePeriodRollup).where(
-            UsagePeriodRollup.period_type == "month",
-            UsagePeriodRollup.period_key == month_key,
-            UsagePeriodRollup.model_id == "",  # all-models grain
-            UsagePeriodRollup.sidecar_id != "",  # only per-sidecar rows
-        )
-    ).all()
-    contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
-    for cr in contrib_rows:
-        ident = (cr.provider_id, cr.account_id)
-        sb = contrib.setdefault(ident, {}).setdefault(cr.sidecar_id, {})
-        sb["tokens_input"] = cr.tokens_input
-        sb["tokens_output"] = cr.tokens_output
-        sb["tokens_cache_read"] = cr.tokens_cache_read
-        sb["tokens_cache_create"] = cr.tokens_cache_create
-        sb["tokens_reasoning"] = cr.tokens_reasoning
-        sb["cost_usd"] = cr.cost_usd
-        sb["msgs"] = cr.msgs
+    # Per-sidecar contribution for the user-local current month, computed live
+    # from usage_events. The UTC-keyed rollup lags the local month boundary
+    # (e.g. until 02:00 in Berlin summer), so a live range scan keeps the split
+    # aligned with the "This period" gauge.
+    month_start_utc = _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
+    live_month = query_cumulative_live(session, since=month_start_utc)
+    contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {
+        ident: bucket["by_sidecar"] for ident, bucket in live_month.items() if bucket["by_sidecar"]
+    }
 
     fleet = []
     for (pid, aid), gcards in sorted(groups.items()):
@@ -291,8 +301,25 @@ async def get_cumulative_usage(
     rows = session.exec(stmt).all()
 
     now = datetime.now(UTC)
-    current_year = now.strftime("%Y")
-    current_month = now.strftime("%Y-%m")
+    # The default (unfiltered) call powers the live "This period" / "Yearly"
+    # gauges, which reset on the user's local calendar. Anchor those two
+    # buckets at local-tz period starts and compute them live from events;
+    # lifetime + historical drill-downs stay on the UTC rollup.
+    is_default = period_type is None and period_key is None
+    if is_default:
+        anchors = _local_period_anchors(resolve_user_tz(session))
+        current_year = anchors["current_year"]
+        current_month = anchors["current_month"]
+        live_month = query_cumulative_live(session, since=anchors["month_start_utc"])
+        live_year = query_cumulative_live(session, since=anchors["year_start_utc"])
+    else:
+        # Filtered (historical drill-down) path: serve the rollup as-is. The
+        # returned current_*_key here are UTC-based and only meaningful on the
+        # default call — no consumer reads them on a filtered request.
+        current_year = now.strftime("%Y")
+        current_month = now.strftime("%Y-%m")
+        live_month = {}
+        live_year = {}
 
     # Group by (provider_id, account_id) → bucket label → totals + by_model + by_sidecar
     grouped: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
@@ -348,8 +375,9 @@ async def get_cumulative_usage(
         # those are for detailed analytics, not needed at this endpoint.
 
     # Stable shape: every entry always exposes lifetime + current year + current month
-    # (filled with zero-value buckets when absent from the rollup table).
-    expected_keys = ["lifetime", f"year_{current_year}", f"month_{current_month}"]
+    # (filled with zero-value buckets when absent).
+    month_key_out = f"month_{current_month}"
+    year_key_out = f"year_{current_year}"
 
     def _empty_bucket() -> dict[str, Any]:
         return {
@@ -364,18 +392,33 @@ async def get_cumulative_usage(
             "by_sidecar": {},
         }
 
+    # Union identities from the rollup and the live windows so an account that
+    # only has events in the current period (not yet in any historical rollup
+    # bucket beyond lifetime) still gets an entry.
+    idents = set(grouped) | set(live_month) | set(live_year)
     cumulative = []
-    for (pid, aid), buckets in sorted(grouped.items()):
+    for pid, aid in sorted(idents):
+        buckets = grouped.get((pid, aid), {})
         entry: dict[str, Any] = {"provider_id": pid, "account_id": aid}
-        for k in expected_keys:
-            entry[k] = buckets.get(k, _empty_bucket())
+        entry["lifetime"] = buckets.get("lifetime", _empty_bucket())
+        if is_default:
+            entry[year_key_out] = live_year.get((pid, aid), _empty_bucket())
+            entry[month_key_out] = live_month.get((pid, aid), _empty_bucket())
+        else:
+            entry[year_key_out] = buckets.get(year_key_out, _empty_bucket())
+            entry[month_key_out] = buckets.get(month_key_out, _empty_bucket())
         # Surface any additional historical buckets the caller didn't filter out
         for k, v in buckets.items():
             if k not in entry:
                 entry[k] = v
         cumulative.append(entry)
 
-    return {"cumulative": cumulative, "generated_at": now.isoformat()}
+    return {
+        "cumulative": cumulative,
+        "current_month_key": month_key_out,
+        "current_year_key": year_key_out,
+        "generated_at": now.isoformat(),
+    }
 
 
 def _cumulative_bucket_label(period_type: str, period_key: str) -> str:

@@ -906,7 +906,16 @@ export async function loadDashboard() {
         // (provider_id, account_id) and feed the right rail of the Fleet Commander.
         STATE.cumulativeMap = new Map();
         if (cumulativeResult.status === 'fulfilled') {
+            // The current-period bucket keys are resolved server-side in the
+            // user's timezone (so "This period" rolls over on the local
+            // calendar). Stamp them onto each entry — every consumer reads the
+            // entry, not the response envelope — so none recompute boundaries
+            // from the browser clock.
+            const monthKey = cumulativeResult.value.current_month_key;
+            const yearKey = cumulativeResult.value.current_year_key;
             for (const entry of (cumulativeResult.value.cumulative || [])) {
+                entry.current_month_key = monthKey;
+                entry.current_year_key = yearKey;
                 STATE.cumulativeMap.set(
                     `${entry.provider_id}|${entry.account_id || ''}`,
                     entry,

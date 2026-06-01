@@ -432,7 +432,7 @@ function _fcModelsStrip(primaryCard, winAgg, cumulative) {
     // Calendar-month aligns with the modal's "Model mix · this month" view and
     // doesn't go nearly empty when a provider's billing window has just reset
     // (e.g. OpenCode monthly).
-    const monthKey = `month_${new Date().toISOString().slice(0, 7)}`;
+    const monthKey = cumulative?.current_month_key;
     const monthByModel = cumulative?.[monthKey]?.by_model
         && Object.keys(cumulative[monthKey].by_model).length > 0
         ? cumulative[monthKey].by_model : null;
@@ -507,7 +507,7 @@ function _fcModelsStrip(primaryCard, winAgg, cumulative) {
 
 function _fcFuelDump(primaryCard, contributions, winAgg, cumulative) {
     // Source order matches _fcModelsStrip: calendar-month → window aggregation → contributions.
-    const monthKey = `month_${new Date().toISOString().slice(0, 7)}`;
+    const monthKey = cumulative?.current_month_key;
     const monthBySidecar = cumulative?.[monthKey]?.by_sidecar
         && Object.keys(cumulative[monthKey].by_sidecar).length > 0
         ? cumulative[monthKey].by_sidecar : null;
@@ -633,9 +633,12 @@ function _fcCume(cumulative, _isPayg, providerId) {
         </div>`;
     }
 
-    const now = new Date();
-    const yearKey = `year_${now.getUTCFullYear()}`;
-    const monthKey = `month_${now.toISOString().slice(0, 7)}`;
+    // Period keys resolved server-side in the user's timezone (stamped onto
+    // the entry in dashboard.js) so "This period" rolls over on the local
+    // calendar, not at UTC midnight.
+    const monthKey = cumulative.current_month_key;
+    const yearKey = cumulative.current_year_key;
+    const yearLabel = (yearKey || '').replace('year_', '');
 
     const month = cumulative[monthKey] || {};
     const year = cumulative[yearKey] || {};
@@ -662,7 +665,7 @@ function _fcCume(cumulative, _isPayg, providerId) {
         </div>
         <hr/>
         <div class="row">
-            <span class="label">Yearly · ${now.getUTCFullYear()}</span>
+            <span class="label">Yearly · ${yearLabel}</span>
             <span class="v" style="font-size:16px">${yearTok ? _formatTokenShort(yearTok) : '—'}</span>
             <span class="sub">${_costSub(yearCost)}</span>
         </div>
