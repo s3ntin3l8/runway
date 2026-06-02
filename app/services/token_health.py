@@ -1,6 +1,5 @@
 """Token health inspection — expiry parsing, status classification."""
 
-import base64
 import json
 import logging
 import time
@@ -12,26 +11,13 @@ from sqlmodel import select as sqlselect
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.utils import IdentityExtractor
 from app.models.db import ProviderConfig
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
 EXPIRY_WARNING_SECS = 86400  # 24 hours — for tokens that require manual re-auth
-
-
-def _parse_jwt_exp(token: str) -> float | None:
-    """Extract the 'exp' claim from a JWT without verifying the signature."""
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-        padding = "=" * (4 - len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
-        exp = payload.get("exp")
-        return float(exp) if exp is not None else None
-    except Exception:
-        return None
 
 
 def _classify_status(
@@ -79,12 +65,7 @@ class TokenHealthService:
                 # Phase 1 schema reset: UsageSnapshot removed; label fallback is a no-op.
                 # Will be replaced with LatestUsage / UsageEvent lookup in a later phase.
 
-                exp: float | None = None
-                for key in ("oauth_token", "access_token", "id_token"):
-                    if key in tokens:
-                        exp = _parse_jwt_exp(tokens[key])
-                        if exp is not None:
-                            break
+                exp = IdentityExtractor.exp_from_tokens(tokens)
 
                 # If we have any tokens, track their hashes to deduplicate later
                 for val in tokens.values():

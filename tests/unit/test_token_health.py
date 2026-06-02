@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.token_health import TokenHealthService, _classify_status, _parse_jwt_exp
+from app.services.token_health import TokenHealthService, _classify_status
 
 
 def _mock_no_db_configs():
@@ -25,30 +25,6 @@ def _make_jwt(exp: float) -> str:
     payload_bytes = json.dumps({"exp": exp, "sub": "test"}).encode()
     payload = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
     return f"{header}.{payload}.fakesig"
-
-
-class TestParseJwtExp:
-    def test_extracts_exp_from_valid_jwt(self):
-        exp = time.time() + 3600
-        token = _make_jwt(exp)
-        result = _parse_jwt_exp(token)
-        assert result is not None
-        assert abs(result - exp) < 1
-
-    def test_returns_none_for_malformed_token(self):
-        assert _parse_jwt_exp("not.a.jwt.with.extra.parts") is None
-        assert _parse_jwt_exp("onlyone") is None
-        assert _parse_jwt_exp("") is None
-
-    def test_returns_none_for_non_jwt_string(self):
-        # A plain API key / opaque token
-        assert _parse_jwt_exp("sk-ant-api03-abcdefg") is None
-
-    def test_returns_none_when_exp_missing(self):
-        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
-        payload = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
-        token = f"{header}.{payload}.sig"
-        assert _parse_jwt_exp(token) is None
 
 
 class TestClassifyStatus:

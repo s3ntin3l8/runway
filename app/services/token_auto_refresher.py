@@ -94,7 +94,7 @@ class TokenAutoRefresher:
             if "refresh_token" not in tokens:
                 continue
 
-            exp = self._extract_exp(tokens)
+            exp = IdentityExtractor.exp_from_tokens(tokens)
             if exp is None:
                 continue  # Opaque token — can't tell when it expires.
             seconds_left = exp - now
@@ -121,23 +121,6 @@ class TokenAutoRefresher:
                 )
 
         return refreshed
-
-    @staticmethod
-    def _extract_exp(tokens: dict[str, str]) -> float | None:
-        """Find the JWT `exp` claim on any token field that carries one."""
-        for key in ("oauth_token", "access_token", "id_token"):
-            tok = tokens.get(key)
-            if not tok:
-                continue
-            payload = IdentityExtractor.extract_jwt_payload(tok)
-            exp = payload.get("exp")
-            if exp is None:
-                continue
-            try:
-                return float(exp)
-            except (TypeError, ValueError):
-                continue
-        return None
 
 
 def build_default() -> TokenAutoRefresher:

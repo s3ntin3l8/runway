@@ -212,23 +212,6 @@ class TokenCache:
             if not self._cache[provider]:
                 del self._cache[provider]
 
-    @staticmethod
-    def _token_exp(tokens: dict[str, str]) -> float | None:
-        """Find the JWT `exp` claim on any token field that carries one."""
-        for key in ("oauth_token", "access_token", "id_token"):
-            tok = tokens.get(key)
-            if not tok:
-                continue
-            payload = IdentityExtractor.extract_jwt_payload(tok)
-            exp = payload.get("exp")
-            if exp is None:
-                continue
-            try:
-                return float(exp)
-            except (TypeError, ValueError):
-                continue
-        return None
-
     async def purge_expired_unrefreshable(self) -> int:
         """Evict entries already past their JWT `exp` that carry no refresh_token.
 
@@ -248,7 +231,7 @@ class TokenCache:
                     tokens, _, _ = self._cache[provider][acc_id]
                     if "refresh_token" in tokens:
                         continue
-                    exp = self._token_exp(tokens)
+                    exp = IdentityExtractor.exp_from_tokens(tokens)
                     if exp is not None and exp < now:
                         del self._cache[provider][acc_id]
                         removed += 1
