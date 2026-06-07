@@ -53,6 +53,12 @@ window.switchView = async function(viewId) {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     document.getElementById(`nav-${viewId}`).classList.add('active');
 
+    // Mobile chrome: expose the active view on <body> (CSS keys per-view
+    // header buttons off it at ≤640px; inert on desktop) and sync the
+    // bottom tab bar's active state.
+    document.body.dataset.view = viewId;
+    syncMobileTabs();
+
     // Sync URL (no scroll jump)
     const target = `#${viewId}`;
     if (location.hash !== target) {
@@ -75,6 +81,43 @@ window.switchView = async function(viewId) {
 };
 
 // Re-exports for onclick handlers in index.html are now handled in views/history.js initHistoryView()
+
+/**
+ * Mobile bottom tab bar (≤640px).
+ *
+ * The bar has five tabs but the app has four views: "Dashboard" and "Quotas"
+ * both map to the dashboard view, split by `body[data-mobile-subview]`
+ * ("overview" = hero only, "quotas" = filter bar + provider cards). The
+ * attribute is inert on desktop — only the ≤640px CSS layer reads it.
+ */
+function syncMobileTabs() {
+    const bar = document.getElementById('mobile-tabbar');
+    if (!bar) return;
+    const view = document.body.dataset.view || 'dashboard';
+    const sub = document.body.dataset.mobileSubview || 'overview';
+    const active = view === 'dashboard' ? sub : view;
+    bar.querySelectorAll('.mtab').forEach(t =>
+        t.classList.toggle('active', t.dataset.tab === active));
+}
+
+function initMobileTabbar() {
+    const bar = document.getElementById('mobile-tabbar');
+    if (!bar) return;
+    if (!document.body.dataset.mobileSubview) {
+        document.body.dataset.mobileSubview = 'overview';
+    }
+    bar.addEventListener('click', (e) => {
+        const tab = e.target.closest('.mtab');
+        if (!tab) return;
+        const t = tab.dataset.tab;
+        if (t === 'overview' || t === 'quotas') {
+            document.body.dataset.mobileSubview = t;
+            switchView('dashboard');
+        } else {
+            switchView(t);
+        }
+    });
+}
 
 /**
  * Authentication Management
@@ -387,6 +430,9 @@ async function initUI() {
             switchView(viewId);
         }
     });
+
+    // Mobile bottom tab bar (no-op on desktop — the bar is display:none)
+    initMobileTabbar();
 
     // Theme toggle
     document.getElementById('toggle-theme')?.addEventListener('click', () => toggleTheme());

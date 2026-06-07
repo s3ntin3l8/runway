@@ -3588,3 +3588,145 @@ l-table td.num {
 }
 .accent-swatch:hover { outline-color: var(--swatch); }
 .accent-swatch.active { outline-color: var(--swatch); }
+
+/* ============================================================
+   MOBILE LAYER (≤640px) — Runway Mobile design
+   The app becomes a 5-tab mobile app: bottom tab bar, collapsed
+   header, Dashboard/Quotas subview split, condensed hero. All
+   rules in this layer are confined to the 640px query (plus a few
+   desktop-neutral base rules marked below) so desktop rendering
+   is byte-identical.
+   ============================================================ */
+
+/* Base (desktop-neutral): the tab bar exists in the DOM on every
+   viewport but only the mobile layer displays it. */
+.mobile-tabbar { display: none; }
+
+@media (max-width: 640px) {
+
+    /* ---- Page frame: tighter gutters + clearance for the tab bar ---- */
+    .max-w-7xl {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 16px;
+        padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* ---- Header: one tidy row — brand left, sync + actions right.
+            Nav tabs live in the bottom bar; theme toggle lives in
+            Settings › Display. ---- */
+    header.top {
+        padding: 10px 12px;
+        gap: 8px 10px;
+        flex-wrap: nowrap;
+    }
+    header.top nav.tabs { display: none !important; }
+    header.top .brand { font-size: 10px; letter-spacing: 0.16em; min-width: 0; }
+    header.top .brand .mark { width: 18px; height: 18px; }
+    header.top .brand small {
+        font-size: 8px;
+        letter-spacing: 0.04em;
+        opacity: 0.65;
+        margin-left: 2px;
+        white-space: nowrap;
+    }
+    header.top .top-actions { gap: 6px; }
+    header.top .last-sync { padding: 0 2px; font-size: 9px; }
+    #toggle-theme { display: none; }
+    /* Edit (and later, search) surface only on the Quotas tab */
+    #toggle-edit { display: none; }
+    body[data-view="dashboard"][data-mobile-subview="quotas"] #toggle-edit { display: inline-flex; }
+    header.top .icon-btn { width: 32px; height: 32px; }
+
+    /* ---- Bottom tab bar ---- */
+    .mobile-tabbar {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 40;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        background: color-mix(in srgb, var(--bg) 84%, transparent);
+        backdrop-filter: blur(16px) saturate(1.3);
+        -webkit-backdrop-filter: blur(16px) saturate(1.3);
+        border-top: 1px solid var(--hairline-strong);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .mobile-tabbar .mtab {
+        appearance: none;
+        background: none;
+        border: 0;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 11px 0 7px;
+        min-height: 48px;
+        color: var(--text-dim);
+        font: 700 8.5px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        transition: color var(--dur) var(--ease);
+    }
+    .mobile-tabbar .mtab svg { width: 20px; height: 20px; display: block; }
+    .mobile-tabbar .mtab.active { color: var(--accent); }
+    .mobile-tabbar .mtab:active { transform: translateY(0.5px); }
+
+    /* ---- Dashboard / Quotas subview split (mobile only) ----
+       "overview" shows the hero; "quotas" shows the filter bar +
+       provider cards. Both live inside #view-dashboard. */
+    body[data-mobile-subview="quotas"] #view-dashboard .hero { display: none; }
+    body[data-mobile-subview="overview"] #view-dashboard .filterbar,
+    body[data-mobile-subview="overview"] #view-dashboard #dashboard-sections { display: none; }
+
+    /* ---- Hero: fleet strip + condensed stat cards ---- */
+    .hero { grid-template-rows: auto; height: auto; gap: 12px; margin-bottom: 12px; }
+
+    /* Fleet strip → three stacked rows (title / lights / counts) */
+    .fleet-strip { grid-template-columns: 1fr; gap: 10px; padding: 12px 14px; }
+    .fleet-strip .ttl { flex-wrap: wrap; row-gap: 2px; }
+    .fleet-strip .lights { width: 100%; }
+    .fleet-strip .counts { flex-wrap: wrap; gap: 8px 18px; }
+
+    /* Most-constrained card keeps the full-width spotlight; the
+       2nd-constrained pool and the fleet aggregate drop into a compact
+       two-up row beneath it. */
+    .hero-body,
+    .hero-body.single,
+    .hero-body.empty { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .hero-body > #crit-1 { grid-column: 1 / -1; }
+    .hero-body > .crit-clear { grid-column: 1 / -1; }
+    .hero-body > .agg-card { grid-column: auto; }
+    #crit-2[hidden] ~ .agg-card { grid-column: 1 / -1; }
+
+    .crit-card { padding: 14px; }
+    .crit-card .pct { font-size: 64px; line-height: 0.85; }
+    .crit-card .pct em { font-size: 22px; }
+    .crit-card .body { gap: 12px; }
+    .crit-card .who .name { font-size: 15px; margin-bottom: 8px; }
+    .crit-card .head .lbl { letter-spacing: 0.1em; }
+
+    /* 2nd-constrained → compact: single-column body, smaller readout,
+       secondary "when / pace" lines and the 0–100 scale trimmed. */
+    #crit-2 { padding: 13px; }
+    #crit-2 .head .meta { display: none; }
+    #crit-2 .body { grid-template-columns: 1fr; gap: 4px; }
+    #crit-2 .pct { font-size: 40px; line-height: 0.9; }
+    #crit-2 .pct em { font-size: 16px; }
+    #crit-2 .who { padding-bottom: 0; }
+    #crit-2 .who .name { font-size: 13px; margin-bottom: 0; }
+    #crit-2 .who .when,
+    #crit-2 .who .pace { display: none; }
+    #crit-2 .scale { display: none; }
+    #crit-2 .bar { margin-top: 10px; }
+
+    /* Fleet aggregate → compact: smaller number, rows in one column. */
+    .hero-body > .agg-card { padding: 13px; gap: 9px; }
+    .hero-body > .agg-card .big { font-size: 44px; }
+    .hero-body > .agg-card .big em { font-size: 16px; }
+    .hero-body > .agg-card .rows { grid-template-columns: 1fr; gap: 5px; }
+
+    /* ---- Fleet view: align the bare header text with card content ---- */
+    #view-fleet > .mb-5 { padding: 0 6px; }
+}
