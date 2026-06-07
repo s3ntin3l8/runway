@@ -4234,3 +4234,60 @@ l-table td.num {
     .hw-card-meta .hw-msep { color: var(--hairline-strong); }
     .hw-card-meta .hw-mdim { opacity: 0.65; }
 }
+
+/* ============================================================
+   MOBILE LAYER — provider detail modal as a bottom sheet
+   ============================================================ */
+
+/* Base (desktop-neutral): the grip only renders on phone. */
+.modal .m-grip { display: none; }
+
+@media (max-width: 640px) {
+
+    /* The backdrop is always laid out while un-hidden (desktop ties
+       display to .open) so the slide-up transition has a painted
+       "from" state; .open only animates dim + transform. */
+    .modal-bg {
+        display: flex;
+        align-items: flex-end; justify-content: center;
+        padding: 0;
+        background: rgba(0, 0, 0, 0);
+        opacity: 0; pointer-events: none;
+        transition: opacity 280ms var(--ease), background 280ms var(--ease);
+    }
+    .modal-bg[hidden] { display: none; }
+    .modal-bg.open { opacity: 1; pointer-events: auto; background: rgba(0, 0, 0, 0.58); }
+    .modal-bg .modal {
+        width: 100%; max-width: 100%;
+        max-height: 90%; max-height: 90dvh;
+        border-radius: 22px 22px 0 0;
+        transform: translateY(100%);
+        transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
+        will-change: transform;
+    }
+    .modal-bg.open .modal { transform: translateY(0); }
+    .modal-bg .modal.dragging { transition: none; }
+    .modal .m-grip { display: flex; justify-content: center; padding: 9px 0 2px; cursor: grab; touch-action: none; }
+    .modal .m-grip span { width: 38px; height: 4px; border-radius: 100px; background: var(--hairline-strong); }
+    .modal .hd { cursor: grab; touch-action: none; padding-top: 8px; }
+
+    /* ---- Fit the panes to a phone column ---- */
+    .modal .body { overflow-x: hidden; }
+    .modal .tabs { overflow-x: auto; scrollbar-width: none; }
+    .modal .tabs::-webkit-scrollbar { height: 0; }
+    .modal .m-hero { grid-template-columns: 1fr; gap: 12px; }
+    .modal .m-hero .countdown {
+        padding-left: 0; border-left: 0;
+        padding-top: 12px; border-top: 1px solid var(--hairline-2);
+    }
+    .modal .m-kpis { grid-template-columns: 1fr 1fr; }
+    .modal .m-mix { grid-template-columns: 1fr; justify-items: center; }
+    /* Usage heatmap: let the 24 hour-columns shrink to the phone width */
+    .modal .m-heat i { min-height: 0; aspect-ratio: auto; height: 13px; min-width: 0; }
+    /* Debug sidecar rows carry an inline 6×80px grid — compact those only
+       (overview/cost rows use the base CSS and stay at their baseline). */
+    .modal .m-side-row[style*="grid-template-columns"] {
+        grid-template-columns: 12px minmax(40px, 1fr) auto auto auto auto !important;
+        gap: 6px; font-size: 9.5px;
+    }
+}

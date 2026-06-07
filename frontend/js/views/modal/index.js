@@ -19,6 +19,7 @@ import { buildForecastPane, wireForecastPane, disposeTrajectoryCharts } from './
 import { buildUsagePane, wireUsageSparkTabs, wireUsageHeatmapTooltip, wireUsageSparkHover } from './usage.js';
 import { buildCostPane, wireCostPane } from './cost.js';
 import { buildDebugPane } from './debug.js';
+import { attachSheetDrag } from '../../components/sheet.js';
 
 // Cached data per open modal session, cleared on each open
 let _modalCache = {};
@@ -211,9 +212,11 @@ export async function openProviderModal(entry) {
         b.classList.toggle('on', b.dataset.tab === 'overview');
     });
 
-    // Show modal
+    // Show modal. The .open class lands two frames after un-hiding so the
+    // mobile bottom-sheet transition has a painted "from" state to animate
+    // out of (desktop's display-flip open is unaffected by the delay).
     modal.removeAttribute('hidden');
-    modal.classList.add('open');
+    requestAnimationFrame(() => requestAnimationFrame(() => modal.classList.add('open')));
     document.body.style.overflow = 'hidden';
 
     // Render first pane
@@ -246,6 +249,17 @@ export function initProviderModal() {
 
     // Close button
     document.getElementById('pm-close')?.addEventListener('click', closeProviderModal);
+
+    // Mobile bottom-sheet drag-to-dismiss (grip / header only). Routed through
+    // closeProviderModal so chart disposal + body-scroll teardown still run.
+    const panel = document.getElementById('provider-modal')?.querySelector('.modal');
+    if (panel) {
+        attachSheetDrag(panel, {
+            onDismiss: closeProviderModal,
+            gripSelector: '.m-grip, .hd',
+            when: () => window.matchMedia('(max-width: 640px)').matches,
+        });
+    }
 
     // Click on backdrop
     document.getElementById('provider-modal')?.addEventListener('click', e => {
@@ -282,6 +296,7 @@ function _injectModalMarkup() {
     div.innerHTML = `
 <div class="modal-bg" id="provider-modal" hidden>
     <div class="modal glass raised">
+        <div class="m-grip" aria-hidden="true"><span></span></div>
         <div class="hd">
             <div class="plogo" id="pm-logo">A</div>
             <div>

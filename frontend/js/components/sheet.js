@@ -25,16 +25,19 @@ const _DISMISS_FRACTION = 0.3; // …or this fraction of the panel height
  * Attach drag-to-dismiss to a sheet panel.
  *
  * @param {HTMLElement} panel - the sliding panel (translated during drag)
- * @param {{ onDismiss: () => void, gripSelector?: string }} opts
+ * @param {{ onDismiss: () => void, gripSelector?: string, when?: () => boolean }} opts
+ *   `when` gates the drag (e.g. mobile-only for the provider modal, which is
+ *   a centered dialog on desktop).
  * @returns {() => void} detach function
  */
-export function attachSheetDrag(panel, { onDismiss, gripSelector = '.sheet-grip, .sheet-head' }) {
+export function attachSheetDrag(panel, { onDismiss, gripSelector = '.sheet-grip, .sheet-head', when = null }) {
     let startY = null;
     let delta = 0;
 
     const down = (e) => {
+        if (when && !when()) return;
         if (!e.target.closest(gripSelector)) return;
-        if (e.target.closest('button, a, input, select')) return;
+        if (e.target.closest('button, a, input, select, .x, .sheet-x')) return;
         startY = e.touches ? e.touches[0].clientY : e.clientY;
         delta = 0;
         panel.classList.add('dragging');
