@@ -4124,3 +4124,113 @@ l-table td.num {
     }
     .hsr-mini:active { color: var(--accent); }
 }
+
+/* ============================================================
+   MOBILE LAYER — history snapshot cards, chart + legend, tiles
+   ============================================================ */
+
+/* Base (desktop-neutral): legend current-value readout only shows on phone */
+.chart-legend-item .cl-val { display: none; }
+
+@media (max-width: 640px) {
+
+    /* ---- Chart: taller, fills the panel (slider zoom dropped in JS) ---- */
+    .chart-host { height: 340px; }
+
+    /* ---- Legend → one horizontally-swipeable row of touch pills with the
+            series' current value; edge fades hint there's more off-screen ---- */
+    .chart-legend {
+        display: flex; flex-wrap: nowrap; gap: 7px;
+        margin-top: 14px; padding: 2px 2px 2px;
+        overflow-x: auto; overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+        -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+                mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+    }
+    .chart-legend::-webkit-scrollbar { display: none; }
+    .chart-legend-item {
+        flex: 0 0 auto; scroll-snap-align: start;
+        display: inline-flex; align-items: center; gap: 8px;
+        min-height: 44px; padding: 8px 12px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline);
+        border-radius: 22px;
+        white-space: nowrap;
+    }
+    .chart-legend-item .cl-val {
+        display: inline;
+        font: 700 12px 'B612 Mono', ui-monospace, monospace;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        padding-left: 8px; margin-left: 1px;
+        border-left: 1px solid var(--hairline);
+    }
+
+    /* ---- Summary tiles: two per row ---- */
+    .history-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+
+    /* ---- Usage history → snapshot card stack ---- */
+    .ht-scroll { overflow-x: visible; }
+    .hw-list { display: flex; flex-direction: column; gap: 9px; }
+    .hw-card {
+        padding: 12px 13px 11px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline);
+        border-left: 3px solid var(--good);
+        border-radius: 12px;
+    }
+    .hw-card.warn { border-left-color: var(--warn); }
+    .hw-card.crit { border-left-color: var(--crit); }
+    .hw-card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .hw-card-prov {
+        font: 700 13px 'B612', sans-serif;
+        color: var(--text); line-height: 1.3;
+        display: flex; align-items: center; gap: 7px;
+        flex-wrap: wrap; min-width: 0;
+    }
+    .hw-card-prov .hw-live-badge {
+        position: static; transform: none;
+        font: 700 8px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.08em;
+        padding: 2px 5px;
+        background: var(--good); color: #07140c;
+        border-radius: 4px;
+    }
+    .hw-card-when { margin-left: auto; flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 7px; }
+    .hw-card-when .hw-window-badge {
+        font: 700 8px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.08em; text-transform: uppercase;
+        padding: 2px 6px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 4px;
+        color: var(--text-dim);
+    }
+    .hw-card-time { font: 500 10px 'B612 Mono', ui-monospace, monospace; color: var(--text-dim); white-space: nowrap; }
+    .hw-card-meter { display: flex; align-items: center; gap: 11px; margin-bottom: 11px; }
+    .hw-card-meter .hw-bar { flex: 1; height: 7px; border-radius: 4px; background: var(--hairline-strong); overflow: hidden; }
+    .hw-card-meter .hw-bar i { display: block; height: 100%; border-radius: 4px; background: var(--good); }
+    .hw-card.warn .hw-bar i { background: var(--warn); }
+    .hw-card.crit .hw-bar i { background: var(--crit); }
+    .hw-card-pct {
+        font: 700 17px 'B612 Mono', ui-monospace, monospace;
+        color: var(--text);
+        font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+        flex: 0 0 auto;
+    }
+    .hw-card.warn .hw-card-pct { color: var(--warn); }
+    .hw-card.crit .hw-card-pct { color: var(--crit); }
+    .hw-card-delta { font: 700 11px 'B612 Mono', ui-monospace, monospace; flex: 0 0 auto; min-width: 42px; text-align: right; }
+    .hw-card-delta.up { color: #ff6b5e; }
+    .hw-card-delta.down { color: var(--good); }
+    .hw-card-delta.flat { color: var(--text-dim); }
+    .hw-card-meta {
+        display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+        font: 500 10.5px 'B612 Mono', ui-monospace, monospace;
+        color: var(--text-dim); letter-spacing: 0.02em;
+    }
+    .hw-card-meta b { color: var(--text); font-weight: 700; }
+    .hw-card-meta .hw-msep { color: var(--hairline-strong); }
+    .hw-card-meta .hw-mdim { opacity: 0.65; }
+}

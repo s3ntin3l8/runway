@@ -473,12 +473,57 @@ function renderSnapshotTable() {
         if (n >= 1e3) return Math.round(n / 1e3) + 'k';
         return String(n);
     }
+    // The first row seen per series is the latest snapshot → LIVE badge.
     const seenSeries = new Set();
-    const rowsHtml = rows.map(r => {
+    const decorated = rows.map(r => {
         const seriesKey = `${r.provider_id}|${r.account_id}|${r.window_type}|${r.model_id}`;
         const isLatest = !seenSeries.has(seriesKey);
         seenSeries.add(seriesKey);
+        return { r, isLatest };
+    });
 
+    const metaEl = document.getElementById('history-table-meta');
+    if (metaEl) {
+        const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
+            ?? `${historyState.days}d`;
+        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
+    }
+
+    // Phone: each snapshot renders as a labeled card instead of a 9-column
+    // table that would force horizontal scrolling. A matchMedia listener in
+    // initHistoryView re-renders when the breakpoint is crossed.
+    const isPhone = window.matchMedia('(max-width: 640px)').matches;
+    if (isPhone) {
+        const cardsHtml = decorated.map(({ r, isLatest }) => {
+            const pct = r.pct_used;
+            const cls = pct != null && pct >= 90 ? 'crit' : pct != null && pct >= 70 ? 'warn' : 'good';
+            const pctStr = pct != null ? pct.toFixed(1) + '%' : '—';
+            const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
+            const deltaCls = r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : 'flat';
+            const deltaStr = r.delta != null ? `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}%` : '—';
+            const tsStr = formatLocalDateTime(r.ts, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const liveBadge = isLatest ? ' <span class="hw-live-badge">LIVE</span>' : '';
+            const model = r.model_label
+                ? `<span>${escHtml(r.model_label)}</span>`
+                : '<span class="hw-mdim">no model</span>';
+            return `<div class="hw-card ${cls}">
+              <div class="hw-card-top">
+                <div class="hw-card-prov">${escHtml(r.service_name || r.provider_id)}${liveBadge}</div>
+                <div class="hw-card-when"><span class="hw-window-badge">${escHtml(r.window_type)}</span><span class="hw-card-time">${tsStr}</span></div>
+              </div>
+              <div class="hw-card-meter">
+                <div class="hw-bar"><i style="width:${barW}%"></i></div>
+                <span class="hw-card-pct">${escHtml(pctStr)}</span>
+                <span class="hw-card-delta ${deltaCls}">${escHtml(deltaStr)}</span>
+              </div>
+              <div class="hw-card-meta">${model}<span class="hw-msep">·</span><span><b>${fmtTokens(r.tokens_total)}</b> tok</span><span class="hw-msep">·</span><span>${formatCost(r.cost_usd)}</span></div>
+            </div>`;
+        }).join('');
+        container.innerHTML = `<div class="hw-list">${cardsHtml}</div>${renderHWPager(cache.total, cache.page)}`;
+        return;
+    }
+
+    const rowsHtml = decorated.map(({ r, isLatest }) => {
         const fillBar = renderFillBar(r.pct_used);
         const pctStr = r.pct_used != null ? r.pct_used.toFixed(1) + '%' : '—';
         const deltaClass = r.delta > 0 ? 'hw-delta-up' : r.delta < 0 ? 'hw-delta-down' : '';
@@ -499,13 +544,6 @@ function renderSnapshotTable() {
           <td class="hw-cost-cell">${formatCost(r.cost_usd)}</td>
         </tr>`;
     }).join('');
-
-    const metaEl = document.getElementById('history-table-meta');
-    if (metaEl) {
-        const rangeLabel = { 0.042: '1h', 0.25: '6h', 1: '24h', 7: '7d', 30: '30d', 90: 'all' }[historyState.days]
-            ?? `${historyState.days}d`;
-        metaEl.textContent = `${cache.total} snapshots · ${rangeLabel} · page ${cache.page}`;
-    }
 
     container.innerHTML = `
       <table class="hw-table">
@@ -763,4 +801,8 @@ export function initHistoryView() {
     _updateChartControlsVisibility(historyState.metric);
     _updateChartSubtitle();
     _initHistorySheet();
+    // Re-render table ↔ card stack when the 640px breakpoint is crossed
+    // (registered once here, NOT inside renderSnapshotTable).
+    window.matchMedia('(max-width: 640px)')
+        .addEventListener('change', () => renderSnapshotTable());
 }

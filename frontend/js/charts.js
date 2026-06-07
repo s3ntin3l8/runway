@@ -606,6 +606,10 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         const cAccent   = css.getPropertyValue('--accent').trim()     || '#ffb000';
         const cAccentCl = css.getPropertyValue('--accent-cool').trim()|| '#00d4ff';
 
+        // Phone: tighter margins, no slider zoom (pinch/drag still works via
+        // the inside zoom), sparser x labels.
+        const isPhone = window.matchMedia('(max-width: 640px)').matches;
+
         const option = {
             backgroundColor: 'transparent',
             tooltip: {
@@ -652,18 +656,19 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                 data: series.map(s => s.name),
                 selected: { ..._legendState }
             },
-            grid: {
-                top: 40,
-                left: 60,
-                right: 30,
-                bottom: 50,
-                containLabel: true
-            },
+            grid: isPhone
+                ? { top: 20, left: 8, right: 8, bottom: 26, containLabel: true }
+                : { top: 40, left: 60, right: 30, bottom: 50, containLabel: true },
             xAxis: {
                 type: 'category',
                 boundaryGap: isBar,
                 data: xAxisData,
-                axisLabel: { color: cTextDim, fontSize: 9, margin: 15, fontFamily: 'B612 Mono, monospace' },
+                axisLabel: {
+                    color: cTextDim, fontSize: 9,
+                    margin: isPhone ? 10 : 15,
+                    hideOverlap: true,
+                    fontFamily: 'B612 Mono, monospace'
+                },
                 axisLine: { lineStyle: { color: cHairline } },
                 axisTick: { show: false }
             },
@@ -677,7 +682,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
             },
             dataZoom: [
                 { type: 'inside', start: 0, end: 100 },
-                {
+                ...(isPhone ? [] : [{
                     type: 'slider',
                     bottom: 10,
                     height: 20,
@@ -691,7 +696,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
                         lineStyle: { color: cAccentCl, opacity: 0.2 },
                         areaStyle: { color: cAccentCl, opacity: 0.1 }
                     }
-                }
+                }])
             ],
             series: series
         };
@@ -701,7 +706,7 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
         // Prune stale legend state entries, then render the HTML legend.
         const names = new Set(series.map(s => s.name));
         for (const k of Object.keys(_legendState)) if (!names.has(k)) delete _legendState[k];
-        _renderHtmlLegend(series);
+        _renderHtmlLegend(series, metric);
 
     } catch (err) {
         console.error('Failed to init ECharts:', err);
@@ -710,7 +715,25 @@ export async function updateCharts(snapshots, metric = 'percent', days = 7, wind
     }
 }
 
-function _renderHtmlLegend(series) {
+/** Latest non-null point of a series, formatted per metric — feeds the
+ *  legend's value readout (shown on mobile, hidden on desktop). */
+function _seriesCurrentValue(s, metric) {
+    if (!Array.isArray(s.data)) return null;
+    for (let i = s.data.length - 1; i >= 0; i--) {
+        const raw = s.data[i];
+        const v = (raw && typeof raw === 'object') ? raw.value : raw;
+        if (v == null || !isFinite(v)) continue;
+        if (metric === 'percent') return `${Number(v).toFixed(1)}%`;
+        if (metric === 'cost')    return `$${Number(v).toFixed(2)}`;
+        const n = Number(v);
+        if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+        if (n >= 1e3) return `${Math.round(n / 1e3)}k`;
+        return String(Math.round(n));
+    }
+    return null;
+}
+
+function _renderHtmlLegend(series, metric) {
     const host = document.getElementById('chart-legend');
     if (!host) return;
     host.innerHTML = series
@@ -719,8 +742,10 @@ function _renderHtmlLegend(series) {
             const on = _legendState[s.name] !== false;
             const color = s.itemStyle?.color || '#64748b';
             const safeName = s.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            const cur = _seriesCurrentValue(s, metric);
+            const valHtml = cur != null ? `<span class="cl-val">${cur}</span>` : '';
             return `<span class="chart-legend-item${on ? '' : ' muted'}" data-name="${safeName}">` +
-                `<span class="chart-legend-swatch" style="background:${color}"></span>${safeName}</span>`;
+                `<span class="chart-legend-swatch" style="background:${color}"></span>${safeName}${valHtml}</span>`;
         }).join('');
     host.onclick = (e) => {
         const item = e.target.closest('.chart-legend-item');
