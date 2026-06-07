@@ -4213,7 +4213,7 @@ l-table td.num {
     .hw-list { display: flex; flex-direction: column; gap: 9px; }
     .hw-card {
         padding: 12px 13px 11px;
-        background: var(--surface-2);
+        background: transparent;
         border: 1px solid var(--hairline);
         border-left: 3px solid var(--good);
         border-radius: 12px;
@@ -4232,7 +4232,7 @@ l-table td.num {
         font: 700 8px 'B612 Mono', ui-monospace, monospace;
         letter-spacing: 0.08em;
         padding: 2px 5px;
-        background: var(--good); color: #07140c;
+        background: var(--good); color: #fff;
         border-radius: 4px;
     }
     .hw-card-when { margin-left: auto; flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 7px; }
