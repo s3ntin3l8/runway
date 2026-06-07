@@ -98,6 +98,46 @@ function syncMobileTabs() {
     const active = view === 'dashboard' ? sub : view;
     bar.querySelectorAll('.mtab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === active));
+    // The header search drawer is Quotas-scoped — collapse it elsewhere.
+    if (active !== 'quotas') closeHeaderSearch();
+}
+
+/** Header search drawer (mobile Quotas) — mirrors into #card-search so the
+ *  dashboard's existing search filtering runs unchanged. */
+function openHeaderSearch() {
+    const drawer = document.getElementById('header-search');
+    const btn = document.getElementById('search-btn');
+    if (!drawer) return;
+    drawer.classList.add('open');
+    btn?.setAttribute('aria-pressed', 'true');
+    setTimeout(() => document.getElementById('header-search-input')?.focus(), 80);
+}
+
+function closeHeaderSearch() {
+    const drawer = document.getElementById('header-search');
+    const btn = document.getElementById('search-btn');
+    if (!drawer || !drawer.classList.contains('open')) return;
+    drawer.classList.remove('open');
+    btn?.setAttribute('aria-pressed', 'false');
+    document.getElementById('header-search-input')?.blur();
+}
+
+function initHeaderSearch() {
+    const btn = document.getElementById('search-btn');
+    const input = document.getElementById('header-search-input');
+    btn?.addEventListener('click', () => {
+        const drawer = document.getElementById('header-search');
+        if (drawer?.classList.contains('open')) closeHeaderSearch();
+        else openHeaderSearch();
+    });
+    document.getElementById('hs-close')?.addEventListener('click', closeHeaderSearch);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHeaderSearch(); });
+    input?.addEventListener('input', () => {
+        const cardSearch = document.getElementById('card-search');
+        if (!cardSearch) return;
+        cardSearch.value = input.value;
+        cardSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    });
 }
 
 function initMobileTabbar() {
@@ -431,8 +471,10 @@ async function initUI() {
         }
     });
 
-    // Mobile bottom tab bar (no-op on desktop — the bar is display:none)
+    // Mobile bottom tab bar + header search drawer (no-ops on desktop —
+    // both elements are display:none outside the ≤640px layer)
     initMobileTabbar();
+    initHeaderSearch();
 
     // Theme toggle
     document.getElementById('toggle-theme')?.addEventListener('click', () => toggleTheme());

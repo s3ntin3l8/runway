@@ -36,6 +36,12 @@
                 <span class="last-sync" id="last-sync"><span class="dot"></span><span id="last-tick">syncing…</span></span>
                 <span id="utc-clock" class="hidden"></span>
                 <div class="flex items-center gap-1" id="header-controls">
+                        <button id="search-btn" class="icon-btn" title="Search quota cards" aria-pressed="false">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"/>
+                                <path d="m21 21-4.35-4.35"/>
+                            </svg>
+                        </button>
                         <button id="toggle-edit" class="icon-btn" title="Edit layout" aria-pressed="false">
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
@@ -62,6 +68,20 @@
                     </div>
             </div>
         </header>
+
+        <!-- Header search drawer (mobile Quotas only) — drops below the header;
+             its input mirrors into #card-search so filtering logic is shared. -->
+        <div class="header-search" id="header-search">
+            <div class="hs-inner">
+                <label class="search">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <input type="text" id="header-search-input" placeholder="Search quota cards…" autocomplete="off" spellcheck="false">
+                </label>
+                <button class="hs-close" id="hs-close" type="button" aria-label="Close search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
 
         <!-- View Containers -->
         <main id="view-container">
@@ -119,6 +139,17 @@
                     </div>
                 </div>
 
+                <!-- Mobile Filters pill (≤640px) — opens the bottom sheet that
+                     hosts the dimension + provider chips -->
+                <div class="m-filter-bar" id="dash-filter-bar">
+                    <button class="m-filter-btn" id="dash-filter-btn" type="button" aria-haspopup="dialog">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8.5V20l-4-2.2v-4.3z"/></svg>
+                        <span class="mfb-label">Filters</span>
+                        <span class="mfb-summary" id="dash-filter-summary">All providers · by Provider</span>
+                        <svg class="mfb-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                </div>
+
                 <!-- Filter bar: provider chips + search -->
                 <div class="glass filterbar" id="filter-bar-v2">
                     <div id="dimension-chips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
@@ -137,6 +168,16 @@
 
             <!-- History View -->
             <section id="view-history" class="view hidden">
+
+                <!-- Mobile Filters pill (≤640px) — opens the history filter sheet -->
+                <div class="m-filter-bar" id="hist-filter-bar">
+                    <button class="m-filter-btn" id="hist-filter-btn" type="button" aria-haspopup="dialog">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8.5V20l-4-2.2v-4.3z"/></svg>
+                        <span class="mfb-label">Filters</span>
+                        <span class="mfb-summary" id="hist-filter-summary">24H · All · % used</span>
+                        <svg class="mfb-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                </div>
 
                 <!-- Controls bar -->
                 <div class="hud-panel history-controls mb-4">
@@ -295,6 +336,77 @@
                style="transition:color var(--dur) var(--ease);"
                onmouseover="this.style.color='var(--text-muted)'" onmouseout="this.style.color='var(--text-dim)'">GitHub</a>
         </footer>
+    </div>
+
+    <!-- Dashboard filter sheet (mobile) — the live #dimension-chips /
+         #provider-chips containers are MOVED in here at ≤640px so their
+         delegated listeners keep working; moved back on desktop. -->
+    <div class="sheet-bg" id="dash-filter-sheet" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-label="Filter dashboard">
+            <div class="sheet-grip"><span></span></div>
+            <div class="sheet-head"><h3>Filter dashboard</h3><button class="sheet-x" id="dash-filter-close" type="button" aria-label="Close">×</button></div>
+            <div class="sheet-body">
+                <div><div class="sheet-label">Providers</div><div id="dash-sheet-providers"></div></div>
+                <div><div class="sheet-label">Group by</div><div id="dash-sheet-groupby"></div></div>
+            </div>
+            <button class="sheet-apply" id="dash-filter-apply" type="button">Show results</button>
+        </div>
+    </div>
+
+    <!-- History filter sheet (mobile) — buttons call the same global
+         setHistory* handlers as the desktop controls; state self-syncs from
+         historyState on open. -->
+    <div class="sheet-bg" id="hist-filter-sheet" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-label="Filter history">
+            <div class="sheet-grip"><span></span></div>
+            <div class="sheet-head"><h3>Filter history</h3><button class="sheet-x" id="hist-filter-close" type="button" aria-label="Close">×</button></div>
+            <div class="sheet-body">
+                <div><div class="sheet-label">Time range</div>
+                    <div class="sheet-seg" id="hs-range">
+                        <button class="toggle-btn" type="button" data-range="0.042">1H</button>
+                        <button class="toggle-btn" type="button" data-range="0.25">6H</button>
+                        <button class="toggle-btn" type="button" data-range="1">24H</button>
+                        <button class="toggle-btn" type="button" data-range="7">7D</button>
+                        <button class="toggle-btn" type="button" data-range="30">30D</button>
+                        <button class="toggle-btn" type="button" data-range="90">ALL</button>
+                    </div>
+                </div>
+                <div id="hs-window-group"><div class="sheet-label">Window type</div>
+                    <div class="sheet-seg" id="hs-window">
+                        <button class="toggle-btn" type="button" data-window="all">All</button>
+                        <button class="toggle-btn" type="button" data-window="session">Session</button>
+                        <button class="toggle-btn" type="button" data-window="daily">Daily</button>
+                        <button class="toggle-btn" type="button" data-window="weekly">Weekly</button>
+                        <button class="toggle-btn" type="button" data-window="monthly">Monthly</button>
+                    </div>
+                </div>
+                <div><div class="sheet-label">Metric</div>
+                    <div class="sheet-seg" id="hs-metric">
+                        <button class="toggle-btn" type="button" data-metric="percent">% used</button>
+                        <button class="toggle-btn" type="button" data-metric="tokens">Tokens</button>
+                        <button class="toggle-btn" type="button" data-metric="cost">Cost</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="sheet-grouphead">
+                        <div class="sheet-label" style="margin-bottom:0;">Services</div>
+                        <div class="hsr-actions-row">
+                            <button class="hsr-mini" type="button" data-services="all">All</button>
+                            <button class="hsr-mini" type="button" data-services="none">None</button>
+                        </div>
+                    </div>
+                    <div class="hs-services" id="hs-services"></div>
+                </div>
+                <div class="sheet-group-row" id="hs-cache-group">
+                    <div>
+                        <div class="sheet-label" style="margin-bottom:3px;">Cache reads</div>
+                        <div class="sheet-hint">Count cached tokens in totals</div>
+                    </div>
+                    <button class="sheet-switch" id="hs-cache-switch" type="button" role="switch" aria-checked="false"><span class="knob"></span></button>
+                </div>
+            </div>
+            <button class="sheet-apply" id="hist-filter-apply" type="button">Show results</button>
+        </div>
     </div>
 
     <!-- Mobile bottom tab bar (≤640px only; hidden on desktop via CSS).

@@ -5,8 +5,9 @@ import { buildHorizonCard, buildCardModalContent, providerDisplayLabel, buildFle
 import { cardKey, applyOrder } from '../layout.js';
 import { escapeHTML } from '../utils/html.js';
 import { clusterPools, clusterModelLabel } from '../utils/quota.js';
-import { formatHumanDelta } from '../components/_shared.js';
+import { formatHumanDelta, providerIconUrl } from '../components/_shared.js';
 import { openProviderModal, initProviderModal } from './modal/index.js';
+import { openSheet, closeSheet } from '../components/sheet.js';
 
 let loadDataGeneration = 0;
 let _searchQuery = '';
@@ -715,10 +716,49 @@ function renderFilterBar(cards) {
         const cls = activeVal === val ? ' on' : '';
         let label = val;
         if (dim === 'provider_id') label = providerDisplayLabel(val);
-        html += `<button class="chip${cls}" data-prov="${escapeHTML(val)}">${escapeHTML(label)}<span class="n">${cnt}</span></button>`;
+        // Brand icon — hidden on desktop (text chips unchanged); the mobile
+        // filter sheet shows icon + count with the label tucked behind :has().
+        const iconUrl = dim === 'provider_id' ? providerIconUrl(val) : null;
+        const iconHtml = iconUrl ? `<img class="chip-ic" src="${escapeHTML(iconUrl)}" alt="" loading="lazy">` : '';
+        html += `<button class="chip${cls}" data-prov="${escapeHTML(val)}" title="${escapeHTML(label)}">${iconHtml}<span class="chip-lbl">${escapeHTML(label)}</span><span class="n">${cnt}</span></button>`;
     }
 
     valChipsEl.innerHTML = html;
+    refreshDashFilterSummary();
+}
+
+/** Live summary on the mobile Filters pill, e.g. "All providers · by Provider". */
+function refreshDashFilterSummary() {
+    const el = document.getElementById('dash-filter-summary');
+    if (!el) return;
+    const f = STATE.activeFilter;
+    const value = f?.value
+        ? (f.dimension === 'provider_id' ? providerDisplayLabel(f.value) : f.value)
+        : 'All providers';
+    el.textContent = `${value} · by ${dimensionDisplayLabel(STATE.filterDimension || 'provider_id')}`;
+}
+
+/**
+ * At ≤640px the live #dimension-chips / #provider-chips containers move into
+ * the filter sheet (their delegated listeners travel with them); on desktop
+ * they return to their slots in the filter bar.
+ */
+const _mobileMq = window.matchMedia('(max-width: 640px)');
+
+function placeFilterChips() {
+    const dim = document.getElementById('dimension-chips');
+    const prov = document.getElementById('provider-chips');
+    if (!dim || !prov) return;
+    if (_mobileMq.matches) {
+        document.getElementById('dash-sheet-providers')?.appendChild(prov);
+        document.getElementById('dash-sheet-groupby')?.appendChild(dim);
+    } else {
+        const bar = document.getElementById('filter-bar-v2');
+        if (!bar || bar.contains(dim)) return;
+        const seps = bar.querySelectorAll('.sep');
+        bar.insertBefore(dim, seps[0] || bar.firstChild);
+        bar.insertBefore(prov, seps[1] || null);
+    }
 }
 
 /** Build and inject the Fleet Commander grid (one card per provider+account).
@@ -975,6 +1015,17 @@ export function initDashboardView() {
 
     // Initialize the provider detail modal once
     initProviderModal();
+
+    // Mobile filter sheet: pill opens it; ✕ / Show results / backdrop close it.
+    const dashSheet = document.getElementById('dash-filter-sheet');
+    document.getElementById('dash-filter-btn')?.addEventListener('click', () => openSheet(dashSheet));
+    ['dash-filter-close', 'dash-filter-apply'].forEach(id =>
+        document.getElementById(id)?.addEventListener('click', () => closeSheet(dashSheet)));
+
+    // Chip containers live in the filter bar on desktop, in the sheet on mobile.
+    placeFilterChips();
+    _mobileMq.addEventListener('change', placeFilterChips);
+    refreshDashFilterSummary();
 
     // Dimension chip click delegation
     const dimContainer = document.getElementById('dimension-chips');

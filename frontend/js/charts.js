@@ -23,9 +23,10 @@ const PROVIDER_COLORS = {
 };
 
 /**
- * Get base color for a provider.
+ * Get base color for a provider. Exported so the mobile history filter
+ * sheet's service chips match the chart's series colors.
  */
-function colorFor(providerId) {
+export function colorFor(providerId) {
     return PROVIDER_COLORS[providerId] || "#64748b";
 }
 

@@ -1,6 +1,8 @@
 import { fetchHistoryDeltas, fetchForecast } from '../api.js';
 import { buildProviderSparklineStrip } from '../components.js';
-import { updateCharts, destroyCharts } from '../charts.js';
+import { updateCharts, destroyCharts, colorFor } from '../charts.js';
+import { providerDisplayLabel } from '../components/_shared.js';
+import { openSheet, closeSheet } from '../components/sheet.js';
 import { STATE } from '../state.js';
 import { formatLocalDate, formatLocalDateTime } from '../utils/tz.js';
 import { escapeHTML } from '../utils/html.js';
@@ -574,6 +576,94 @@ export function clearHistoryFilter() {
 }
 
 // ---------------------------------------------------------------------------
+// Mobile filter sheet (≤640px) — replaces the desktop controls bar.
+// Buttons call the SAME global setters; the sheet self-syncs from
+// historyState on every open / state change, so the (hidden) desktop
+// controls and the sheet can't drift apart.
+// ---------------------------------------------------------------------------
+
+const _RANGE_LABELS = { 0.042: '1H', 0.25: '6H', 1: '24H', 7: '7D', 30: '30D', 90: 'ALL' };
+const _METRIC_LABELS = { percent: '% used', tokens: 'Tokens', cost: 'Cost' };
+
+function _refreshHistFilterSummary() {
+    const el = document.getElementById('hist-filter-summary');
+    if (!el) return;
+    const range = _RANGE_LABELS[historyState.days] ?? `${historyState.days}D`;
+    const win = historyState.windowFilter === 'all'
+        ? 'All'
+        : historyState.windowFilter.charAt(0).toUpperCase() + historyState.windowFilter.slice(1);
+    const metric = _METRIC_LABELS[historyState.metric] ?? historyState.metric;
+    el.textContent = `${range} · ${win} · ${metric}`;
+}
+
+function _renderSheetServices() {
+    const host = document.getElementById('hs-services');
+    if (!host) return;
+    const ids = _knownProviderIds().sort();
+    if (!ids.length) {
+        host.innerHTML = '<span class="sheet-hint">No series in range yet</span>';
+        return;
+    }
+    const active = historyState.activeProviders;
+    host.innerHTML = ids.map(pid => {
+        const on = !active || active.has(pid);
+        return `<button type="button" class="hseries${on ? ' on' : ''}" data-prov="${escHtml(pid)}" style="--c:${colorFor(pid)}">` +
+            `<i></i><span class="hs-name">${escHtml(providerDisplayLabel(pid))}</span></button>`;
+    }).join('');
+}
+
+function _syncHistorySheet() {
+    const sheet = document.getElementById('hist-filter-sheet');
+    if (!sheet) return;
+    sheet.querySelectorAll('#hs-range .toggle-btn').forEach(b =>
+        b.classList.toggle('active', parseFloat(b.dataset.range) === historyState.days));
+    sheet.querySelectorAll('#hs-window .toggle-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.window === historyState.windowFilter));
+    sheet.querySelectorAll('#hs-metric .toggle-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.metric === historyState.metric));
+    // Same visibility rules as the desktop controls: window-type filters only
+    // the percent chart; the cache switch only matters for tokens.
+    const winGroup = document.getElementById('hs-window-group');
+    if (winGroup) winGroup.style.display = historyState.metric === 'percent' ? '' : 'none';
+    const cacheGroup = document.getElementById('hs-cache-group');
+    if (cacheGroup) cacheGroup.style.display = historyState.metric === 'tokens' ? '' : 'none';
+    const sw = document.getElementById('hs-cache-switch');
+    if (sw) {
+        sw.classList.toggle('on', historyState.showCache);
+        sw.setAttribute('aria-checked', String(historyState.showCache));
+    }
+    _renderSheetServices();
+    _refreshHistFilterSummary();
+}
+
+function _initHistorySheet() {
+    const sheet = document.getElementById('hist-filter-sheet');
+    const openBtn = document.getElementById('hist-filter-btn');
+    if (!sheet || !openBtn) return;
+    openBtn.addEventListener('click', () => { _syncHistorySheet(); openSheet(sheet); });
+    ['hist-filter-close', 'hist-filter-apply'].forEach(id =>
+        document.getElementById(id)?.addEventListener('click', () => closeSheet(sheet)));
+    sheet.addEventListener('click', (e) => {
+        const range = e.target.closest('#hs-range .toggle-btn');
+        if (range) { setHistoryRange(parseFloat(range.dataset.range)); _syncHistorySheet(); return; }
+        const win = e.target.closest('#hs-window .toggle-btn');
+        if (win) { setHistoryWindow(win.dataset.window); _syncHistorySheet(); return; }
+        const metric = e.target.closest('#hs-metric .toggle-btn');
+        if (metric) { setHistoryMetric(metric.dataset.metric); _syncHistorySheet(); return; }
+        const svc = e.target.closest('.hseries[data-prov]');
+        if (svc) { toggleHistoryProvider(svc.dataset.prov); _syncHistorySheet(); return; }
+        const bulk = e.target.closest('.hsr-mini[data-services]');
+        if (bulk) {
+            (bulk.dataset.services === 'all' ? setHistoryProvidersAll : setHistoryProvidersNone)();
+            _syncHistorySheet();
+            return;
+        }
+        if (e.target.closest('#hs-cache-switch')) { toggleHistoryCache(); _syncHistorySheet(); }
+    });
+    _syncHistorySheet();
+}
+
+// ---------------------------------------------------------------------------
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
@@ -582,6 +672,7 @@ export function renderHistoryFromCache() {
     renderHistoryFilterPill();
     renderHistoryChart();
     renderSnapshotTable();
+    _refreshHistFilterSummary();
 }
 
 export async function loadHistoryView({ forceFetch = false } = {}) {
@@ -671,4 +762,5 @@ export function initHistoryView() {
     if (cacheBtn) cacheBtn.classList.toggle('active', historyState.showCache);
     _updateChartControlsVisibility(historyState.metric);
     _updateChartSubtitle();
+    _initHistorySheet();
 }
