@@ -72,7 +72,10 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
 
     // Mobile-only (display:none on desktop): "Models & spend" collapses the
     // per-model strip + fuel-dump + cumulative tray behind a tap target.
-    const expandBtnHtml = (modelStripHtml || fuelDumpHtml || cumeHtml)
+    // Only show it when there's real data — fuelDumpHtml/cumeHtml are always
+    // non-empty (they render empty-state cards), so gate on the data, not HTML.
+    const hasSpendSection = modelStripHtml !== '' || _fcHasSpendData(cumulative, contributions);
+    const expandBtnHtml = hasSpendSection
         ? `<button type="button" class="fc-expand" aria-expanded="false"><span class="lbl">Models &amp; spend</span><span class="cv">▾</span></button>`
         : '';
 
@@ -542,6 +545,25 @@ function _formatCost(usd) {
     if (usd >= 1000) return `$${(usd / 1000).toFixed(1)}K`;
     if (usd >= 100)  return `$${usd.toFixed(0)}`;
     return `$${usd.toFixed(2)}`;
+}
+
+// True when there's genuine cumulative spend/usage behind the "Models & spend"
+// tray (real tokens or cost in any period, or real sidecar attribution).
+// _fcCume/_fcFuelDump always render empty-state cards, so the toggle can't be
+// gated on their HTML — it needs this data-level check.
+function _fcHasSpendData(cumulative, contributions) {
+    if (cumulative) {
+        const periods = [
+            cumulative[cumulative.current_month_key],
+            cumulative[cumulative.current_year_key],
+            cumulative.lifetime,
+        ];
+        if (periods.some(p => _bucketTokens(p) > 0 || _bucketCost(p) > 0)) return true;
+        const bySidecar = cumulative[cumulative.current_month_key]?.by_sidecar;
+        if (bySidecar && Object.values(bySidecar).some(d => _bucketTokens(d) > 0)) return true;
+    }
+    if (contributions && Object.values(contributions).some(d => _bucketTokens(d) > 0)) return true;
+    return false;
 }
 
 function _fcCume(cumulative, _isPayg, providerId) {
