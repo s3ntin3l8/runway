@@ -3874,3 +3874,127 @@ l-table td.num {
     .sheet-switch.on { background: var(--accent-soft); border-color: var(--accent); }
     .sheet-switch.on .knob { transform: translateX(20px); background: var(--accent); }
 }
+
+/* ============================================================
+   MOBILE LAYER — provider card pool-row reflow + models collapse
+   ============================================================ */
+
+/* Base (desktop-neutral): mobile-only elements emitted by the
+   fleet-commander builder stay hidden outside the mobile layer. */
+.fc-pool-row .pfoot-m { display: none; }
+.fc-expand { display: none; }
+.fc-rail .who-cue { display: none; }
+
+@media (max-width: 640px) {
+
+    /* ---- Pool rows: big % spans the label+meter lines in a fixed right
+            column; the foot line (pace + forecast + reset) spans the full
+            row beneath. .pmid flattens via display:contents so its children
+            become grid items without DOM moves. ---- */
+    .fc-pool-row {
+        grid-template-columns: minmax(0, 1fr) 50px;
+        grid-template-areas:
+            "head  pct"
+            "meter pct"
+            "foot  foot";
+        gap: 4px 6px;
+        align-items: start;
+    }
+    .fc-pool-row .pidx { display: none; }
+    .fc-pool-row .pmid { display: contents; }
+    .fc-pool-row .phead {
+        grid-area: head;
+        flex-wrap: nowrap;
+        gap: 6px;
+        min-width: 0;
+    }
+    .fc-pool-row .plab { font-size: 10.5px; flex: 0 1 auto; }
+    .fc-pool-row .pmeter { grid-area: meter; }
+    /* Desktop foot (conditional, verbose) hides; the unconditional mobile
+       foot below takes over. */
+    .fc-pool-row .pmid .pfoot { display: none; }
+    .fc-pool-row .pright {
+        grid-area: pct;
+        align-items: flex-end;
+        text-align: right;
+        justify-content: flex-start;
+        align-self: start;
+        gap: 3px;
+    }
+    .fc-pool-row .ppct { font-size: 28px; line-height: 1; letter-spacing: -0.03em; }
+    .fc-pool-row .ppct em { font-size: 12px; }
+    .fc-pool-row .pright .preset { display: none; }
+    .fc-pool-row .pfoot-m {
+        grid-area: foot;
+        display: flex; align-items: baseline; flex-wrap: nowrap;
+        gap: 8px;
+        font-size: 12px; line-height: 1.3;
+        color: var(--text-dim); letter-spacing: 0.04em;
+        margin-top: 2px;
+        min-width: 0; overflow: hidden;
+    }
+    .fc-pool-row .pfoot-m b { color: var(--text); font-weight: 700; }
+    .fc-pool-row .pfoot-m .ahead { color: var(--warn); font-weight: 700; white-space: nowrap; }
+    .fc-pool-row .pfoot-m .ontrack { color: var(--good); font-weight: 700; white-space: nowrap; }
+    .fc-pool-row .pfoot-m .preset {
+        margin-left: auto;
+        white-space: nowrap;
+        font-size: 12px; letter-spacing: 0; text-transform: none;
+        color: var(--text-dim);
+    }
+    /* The "hits 100% <date>" forecast suffix doesn't fit a one-line foot. */
+    .fc-pool-row .pfoot-m .pfoot-hit { display: none; }
+
+    /* ---- Collapse per-model strip + fuel-dump + cumulative behind the
+            "Models & spend" toggle (pools stay visible) ---- */
+    .fc-expand {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        width: 100%;
+        appearance: none; cursor: pointer;
+        min-height: 44px;
+        margin-top: 2px; padding: 11px;
+        background: transparent;
+        border: 1px solid var(--hairline-strong);
+        color: var(--text-dim);
+        font: 700 9.5px 'B612 Mono', ui-monospace, monospace;
+        letter-spacing: 0.14em; text-transform: uppercase;
+        transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+    }
+    .fc-expand:active { color: var(--text); border-color: var(--text-dim); }
+    .fc-expand .cv { color: var(--accent); transition: transform var(--dur) var(--ease); font-size: 11px; }
+    .fc.mobile-expanded .fc-expand .cv { transform: rotate(180deg); }
+    .fc:not(.mobile-expanded) .fc-models-strip,
+    .fc:not(.mobile-expanded) .fc-dump,
+    .fc:not(.mobile-expanded) .fc-cume { display: none; }
+
+    /* ---- Tap affordance: chevron cue in the identity row ---- */
+    .fc-rail .who { align-items: center; }
+    .fc-rail .who-cue {
+        display: flex; align-items: center;
+        margin-left: auto; flex: 0 0 auto;
+        padding-left: 10px;
+        color: var(--text-dim);
+    }
+    .fc:active { background: var(--surface-2); }
+}
+
+@media (max-width: 640px) {
+    /* ---- Provider card frame at phone width (builds on the ≤960px
+            single-column collapse): identity rail as a wrapping row,
+            cumulative tray as a two-up row. ---- */
+    .fc-rail {
+        padding: 14px;
+        flex-direction: row; flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+    }
+    .fc-rail .who { flex: 1 1 100%; }
+    .fc-main { padding: 14px; gap: 12px; }
+    .fc-cume {
+        padding: 14px;
+        flex-direction: row; flex-wrap: wrap;
+        gap: 10px 18px;
+    }
+    .fc-cume hr { display: none; }
+    .fc-cume .row { flex: 1 1 40%; }
+}

@@ -70,6 +70,12 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
     const cumeHtml = _fcCume(cumulative, isPayg, providerId);
     const podsHtml = _fcPods(secondary, contributions);
 
+    // Mobile-only (display:none on desktop): "Models & spend" collapses the
+    // per-model strip + fuel-dump + cumulative tray behind a tap target.
+    const expandBtnHtml = (modelStripHtml || fuelDumpHtml || cumeHtml)
+        ? `<button type="button" class="fc-expand" aria-expanded="false"><span class="lbl">Models &amp; spend</span><span class="cv">▾</span></button>`
+        : '';
+
     const cKey = `${providerId}|${accountId}`;
 
     return `<article class="glass card fc"
@@ -80,6 +86,7 @@ export function buildFleetCommanderCard(entry, forecastMap, cumulativeMap) {
         ${railHtml}
         <div class="fc-main">
             ${mainHtml}
+            ${expandBtnHtml}
             ${modelStripHtml}
             ${fuelDumpHtml}
         </div>
@@ -128,6 +135,7 @@ function _fcRail(providerId, provLabel, accountLabel, authorityLabel, planText, 
                 <div class="pname">${escapeHTML(provLabel)}</div>
                 <div class="pacc">${escapeHTML(accountLabel)}</div>
             </div>
+            <span class="who-cue" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span>
         </div>
         <span class="auth"><span class="d"></span>${escapeHTML(authorityLabel)}</span>
         <div class="meta-row">${planPill}${sidecarPill}</div>
@@ -252,14 +260,20 @@ function _fcPoolStack(quotaCards, forecastMap) {
                 const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 hit = ` · hits 100% ${dateStr} ${timeStr}`;
             }
-            return ` <span style="color:${color};font-weight:600;">→ ${proj}%</span> <span style="color:${color};font-size:9px;letter-spacing:0.08em;">${(fc.status || '').toUpperCase()}</span>${hit ? `<span style="color:var(--text-dim);font-size:9px;">${escapeHTML(hit)}</span>` : ''}`;
+            return ` <span style="color:${color};font-weight:600;">→ ${proj}%</span> <span style="color:${color};font-size:9px;letter-spacing:0.08em;">${(fc.status || '').toUpperCase()}</span>${hit ? `<span class="pfoot-hit" style="color:var(--text-dim);font-size:9px;">${escapeHTML(hit)}</span>` : ''}`;
         })();
+        const paceChip = p.glide == null ? ''
+            : glideAhead ? `<span class="ahead">↑ ${Math.round(p.used - p.glide)}% ahead of pace</span>`
+            : glideBehind ? `<span class="ontrack">✓ ${Math.round(p.glide - p.used)}% under pace</span>`
+            : `<span class="ontrack">✓ on glide path</span>`;
+        // The "glide-path target NN%" lead is wrapped so the mobile layer can
+        // hide just the prose while keeping the pace chip + forecast badge.
         const glideFootHtml = p.glide == null ? (fcBadge ? `<div class="pfoot">${fcBadge}</div>` : '')
-            : `<div class="pfoot">glide-path target <b>${Math.round(p.glide)}%</b>${
-                glideAhead ? ` <span class="ahead">↑ ${Math.round(p.used - p.glide)}% ahead of pace</span>`
-                : glideBehind ? ` <span class="ontrack">✓ ${Math.round(p.glide - p.used)}% under pace</span>`
-                : ` <span class="ontrack">✓ on glide path</span>`
-            }${fcBadge}</div>`;
+            : `<div class="pfoot"><span class="pfoot-glide">glide-path target <b>${Math.round(p.glide)}%</b></span> ${paceChip}${fcBadge}</div>`;
+        // Mobile-only foot line (display:none on desktop): unconditional, so the
+        // reset countdown keeps a full-width row even when the pool has no
+        // glide target or forecast (the desktop .pfoot is conditional).
+        const mobileFootHtml = `<div class="pfoot-m">${paceChip}${fcBadge}<span class="preset">resets <b>${escapeHTML(_resetText(p.card))}</b></span></div>`;
         return `<div class="fc-pool-row h-${status} ${status === 'crit' ? 'crit-row' : ''}">
             <span class="pidx">${String(i + 1).padStart(2, '0')}</span>
             <div class="pmid">
@@ -279,6 +293,7 @@ function _fcPoolStack(quotaCards, forecastMap) {
                 <span class="ppct">${p.used}<em>%</em></span>
                 <span class="preset">resets <b>${escapeHTML(_resetText(p.card))}</b></span>
             </div>
+            ${mobileFootHtml}
         </div>`;
     }).join('');
 

@@ -1014,6 +1014,16 @@ export function initDashboardView() {
             // Check if we clicked a Fleet Commander card (.fc)
             const fcCard = e.target.closest('article.fc');
             if (fcCard) {
+                // Mobile "Models & spend" expand toggle — flips the collapse
+                // class instead of opening the modal.
+                const expandBtn = e.target.closest('.fc-expand');
+                if (expandBtn) {
+                    const open = fcCard.classList.toggle('mobile-expanded');
+                    expandBtn.setAttribute('aria-expanded', String(open));
+                    const lbl = expandBtn.querySelector('.lbl');
+                    if (lbl) lbl.textContent = open ? 'Hide models & spend' : 'Models & spend';
+                    return;
+                }
                 // Ignore clicks on the pods toggle
                 if (e.target.closest('[data-toggle="pods"]')) return;
                 const prov = fcCard.dataset.prov;
