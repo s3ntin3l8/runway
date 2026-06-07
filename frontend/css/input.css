@@ -4002,16 +4002,20 @@ l-table td.num {
         min-width: 0; max-width: 100%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* Stack the identity rail so the provider name gets a full line and the
+       source badge + tier/sidecar pills drop to their own lines below it
+       (a wrapping row squeezed the name). */
     .fc-rail {
         padding: 14px;
-        flex-direction: row; flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 12px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
     }
-    .fc-rail .who { flex: 1 1 100%; min-width: 0; }
+    .fc-rail .who { width: 100%; min-width: 0; }
     .fc-rail .who .stack { min-width: 0; overflow: hidden; }
     .fc-rail .pname,
     .fc-rail .pacc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fc-rail .auth { align-self: flex-start; }
     .fc-main { padding: 14px; gap: 12px; }
     .fc-cume {
         padding: 14px;
@@ -4409,6 +4413,9 @@ l-table td.num {
     .ios-detail-meta { font: 400 10px var(--mono); color: var(--ink-3); margin-top: 4px; letter-spacing: 0.06em; text-transform: uppercase; }
     .ios-card { background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline-2); padding: 2px 14px; }
     .ios-card .pd-row:last-child { border-bottom: 0; }
+    /* The Configuration card's Save/Discard bar is the last child — give it
+       clear space below so the buttons don't sit flush against the border. */
+    .ios-card .pd-footer { padding-bottom: 14px; }
     .sm-live-btn {
         width: 100%; margin-top: 4px; padding: 13px;
         background: var(--accent-soft); color: var(--accent);
@@ -4423,9 +4430,15 @@ l-table td.num {
     }
 
     /* ---- Phone-fit for the reused desktop section panes ---- */
-    /* The drill-in subhead already names the section — flatten the panel
-       chrome and drop its duplicate title (keep description + actions). */
-    .sm-pane-body .settings-panel { background: transparent; box-shadow: none; border-radius: 0; }
+    /* The drill-in subhead already names the section — drop the duplicate
+       title and the HUD corner brackets, but keep a framed white-bg card so
+       these sections match the Providers list (.ios-card). */
+    .sm-pane-body .settings-panel {
+        background: var(--surface);
+        box-shadow: inset 0 0 0 1px var(--hairline-2);
+        border-radius: 0;
+        padding: 14px;
+    }
     .sm-pane-body .settings-panel::before,
     .sm-pane-body .settings-panel::after { display: none; }
     .sm-pane-body .sp-head { padding: 0 2px 12px; }
