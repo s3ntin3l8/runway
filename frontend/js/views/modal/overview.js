@@ -378,7 +378,6 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
 
     // Sidecar rows
     const sidecarRows = _buildSidecarRows(entry, sidecarLastSeen);
-    const totalDelta = sidecarRows.reduce((a, r) => a + r.deltaRaw, 0) || 1;
     const sidecarCount  = sidecarRows.length;
     const healthyCount  = sidecarRows.filter(r => r.status === 'good').length;
     let maxLastSeen = null;
@@ -389,25 +388,19 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
     }
     const lastPush = maxLastSeen ? _fmtAgo(maxLastSeen) : '—';
 
-    const stackBar = sidecarRows.map((r, i) => {
-        const share = (r.deltaRaw / totalDelta) * 100;
-        const hue = _scHue(r.id, i);
-        const cols = Math.max(1, Math.round(share / 5));
-        return `<span style="grid-column: span ${cols}; background: oklch(0.62 0.15 ${hue})"></span>`;
-    }).join('');
-
-    const sideRowsHtml = sidecarRows.map((r, i) => {
-        const share = (r.deltaRaw / totalDelta) * 100;
-        const hue = _scHue(r.id, i);
-        return `<div class="m-side-row">
-            <span class="swatch" style="background: oklch(0.62 0.15 ${hue})"></span>
-            <span class="nm"><span class="os">${_osGlyph(r.os)}</span>${_esc(r.name)}<span class="ago">· ${_esc(r.ago)}</span></span>
-            <span class="delta">${_esc(r.delta)}</span>
-            <span class="cost">${_esc(r.cost)}</span>
-            <span class="pct">${share.toFixed(0)}%</span>
-            <span class="bar"><i style="width:${share.toFixed(0)}%; background: oklch(0.62 0.15 ${hue})"></i></span>
-        </div>`;
-    }).join('') || '<div class="m-event"><span class="t">—</span><span class="dot"></span><span class="msg">No sidecars yet</span><span class="v"></span></div>';
+    const wingmenHtml = sidecarRows.map(r => `
+        <div class="pod">
+            <div class="h">
+                <span class="hdot ${_esc(r.status)}"></span>
+                <span class="os">${_osGlyph(r.os)}</span>
+                <span class="name">${_esc(r.name)}</span>
+                <span class="ago">${_esc(r.ago)}</span>
+            </div>
+            <div class="stats">
+                <span class="delta">${_esc(r.delta)}</span>
+                <span>cost <b>${_esc(r.cost)}</b></span>
+            </div>
+        </div>`).join('') || '<div style="color:var(--ink-3);font-size:10px;padding:4px 0">No sidecars yet</div>';
 
     // Model mix
     const mix = _buildModelMix(cumData);
@@ -493,18 +486,14 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
         </div>
     </div>
 
-    <!-- SIDECAR ATTRIBUTION -->
+    <!-- WINGMEN -->
     <div class="m-block">
         <div class="head">
-            <h4>Sidecar attribution · this window</h4>
+            <h4>Sidecar attribution · this month</h4>
             <span class="meta">${sidecarCount} machines</span>
         </div>
-        <div class="m-side-stack">
-            <span style="background:var(--surface-3)"></span>
-            ${stackBar}
-        </div>
-        <div class="m-side">
-            ${sideRowsHtml}
+        <div class="m-wingmen">
+            ${wingmenHtml}
         </div>
     </div>
 
