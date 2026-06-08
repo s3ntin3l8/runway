@@ -4351,6 +4351,7 @@ l-table td.num {
     .modal .m-hero .countdown .stat:last-of-type { grid-row: 3; }
     .modal .m-kpis { grid-template-columns: 1fr 1fr; }
     .modal .m-mix { grid-template-columns: 1fr; justify-items: center; }
+    .modal .m-mix-legend { grid-template-columns: 1fr; }
     /* Usage heatmap: let the 24 hour-columns shrink to the phone width */
     .modal .m-heat i { min-height: 0; aspect-ratio: auto; height: 13px; min-width: 0; }
     /* Debug sidecar rows carry an inline 6×80px grid — compact those only
