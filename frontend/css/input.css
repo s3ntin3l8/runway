@@ -2809,7 +2809,7 @@ l-table td.num {
     flex-shrink: 0;
 }
 .pod .name { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pod .ago { font-size: 9.5px; font-weight: 500; color: var(--text-dim); letter-spacing: 0.04em; }
+.pod .ago { font-size: 9.5px; font-weight: 500; color: var(--text-dim); letter-spacing: 0.04em; flex-shrink: 0; white-space: nowrap; }
 .pod .hdot {
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--good); box-shadow: 0 0 4px var(--good);
@@ -2981,7 +2981,7 @@ l-table td.num {
 /* modal wingmen grid */
 .m-wingmen {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 8px;
     margin-top: 8px;
 }

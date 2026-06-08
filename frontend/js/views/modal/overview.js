@@ -140,14 +140,6 @@ function _buildSidecarRows(entry, sidecarLastSeen = null) {
     return rows;
 }
 
-/** Assign stable hues to sidecar IDs. */
-function _scHue(id, idx) {
-    // Hash the ID for a stable hue across renders
-    let hash = 0;
-    for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-    return Math.abs(hash) % 360 || (idx * 47 + 60) % 360;
-}
-
 // Module-level state for the overview sparkline hover — updated on each tab switch.
 let _overviewPoints = [];
 let _overviewRange  = '24h';
