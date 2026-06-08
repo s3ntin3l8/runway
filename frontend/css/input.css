@@ -4315,7 +4315,7 @@ l-table td.num {
        the reset time instead of stacking everything down one line. */
     .modal .m-hero .countdown {
         display: grid;
-        grid-template-columns: auto 1fr;
+        grid-template-columns: 1fr 1fr;
         column-gap: 16px; row-gap: 3px;
         align-content: start;
         padding: 12px;
