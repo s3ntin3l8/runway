@@ -3920,7 +3920,7 @@ l-table td.num {
             row beneath. .pmid flattens via display:contents so its children
             become grid items without DOM moves. ---- */
     .fc-pool-row {
-        grid-template-columns: minmax(0, 1fr) 50px;
+        grid-template-columns: minmax(0, 1fr) 60px;
         grid-template-areas:
             "head  pct"
             "meter pct"
