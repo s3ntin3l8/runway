@@ -3049,6 +3049,9 @@ l-table td.num {
 .m-kv-row:last-child { border-bottom: 0; }
 .m-kv-key { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); white-space: nowrap; }
 .m-kv-val { font-size: 11px; color: var(--ink); word-break: break-all; }
+.m-kv-row.good .m-kv-val  { color: var(--good); }
+.m-kv-row.warn .m-kv-val  { color: var(--warn); }
+.m-kv-row.crit .m-kv-val  { color: var(--crit); }
 
 /* sparkline tabs */
 .m-spark { padding: 14px; box-shadow: inset 0 0 0 1px var(--hairline-2); }
