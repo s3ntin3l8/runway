@@ -2982,7 +2982,7 @@ l-table td.num {
 /* modal wingmen grid */
 .m-wingmen {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 8px;
     margin-top: 8px;
 }
