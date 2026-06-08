@@ -90,6 +90,7 @@ function _buildModelMix(cumData) {
     return entries.map(([name, v], i) => ({
         name,
         tok: _fmtTokens(v.tok),
+        cost: _fmtCost(v.cost),
         share: Math.round((v.tok / total) * 100),
         color: (HUE_START + i * 80) % 360,
     }));
@@ -403,6 +404,7 @@ export function buildOverviewPane(entry, cumData, recentSessions, quotaChartData
             <span class="name">${_esc(modelDisplayName(s.name))}</span>
             <span class="pct">${s.share}%</span>
             <span class="tok">${_esc(s.tok)}</span>
+            <span class="cost">${_esc(s.cost)}</span>
         </div>`).join('') || '<div style="color:var(--ink-3);font-size:10px;">No model data yet</div>';
 
     // Quota sparkline — extract aggregate points for default range (24h)
