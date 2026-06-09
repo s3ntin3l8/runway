@@ -58,7 +58,7 @@ class TokenCache:
             or tokens.get("api_key")
             or next(iter(tokens.values()))
         )
-        # codeql[py/weak-sensitive-data-hashing] - non-security cache key derivation, not password storage
+        # codeql[py/weak-sensitive-data-hashing]
         return hashlib.sha256(ident.encode(), usedforsecurity=False).hexdigest()[:12]
 
     async def store(
@@ -98,10 +98,10 @@ class TokenCache:
             metadata = {"account_label": account_label, "source": source}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
-            # codeql[py/clear-text-logging-sensitive-data] - logs key names only, not values
+            # codeql[py/clear-text-logging-sensitive-data]
             logger.info(
                 f"Stored tokens for {scrub_log(provider)} account {scrub_log(account_id)} "
-                f"({scrub_log(account_label or 'unnamed')}): {list(tokens.keys())}"
+                f"({scrub_log(account_label or 'unnamed')}): {scrub_log(str(list(tokens.keys())))}"
             )
             return account_id
 
@@ -115,7 +115,7 @@ class TokenCache:
                 if name:
                     metadata["account_label"] = name
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
-                # codeql[py/clear-text-logging-sensitive-data] - logs account id/label, not token values
+                # codeql[py/clear-text-logging-sensitive-data]
                 logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
 
     async def get_accounts(self, provider: str) -> list[dict[str, Any]]:

@@ -1020,18 +1020,17 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
     # Windows decryption
     if system == "Windows":
         try:
-            from ctypes import wintypes
 
             class DATA_BLOB(ctypes.Structure):
                 _fields_ = [
-                    ("cbData", wintypes.DWORD),
-                    ("pbData", ctypes.POINTER(wintypes.BYTE)),
+                    ("cbData", ctypes.wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.wintypes.BYTE)),
                 ]
 
             crypt32 = ctypes.windll.crypt32
             blob_in = DATA_BLOB()
             blob_in.cbData = len(encrypted_value)
-            blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(wintypes.BYTE))
+            blob_in.pbData = ctypes.cast(encrypted_value, ctypes.POINTER(ctypes.wintypes.BYTE))
             blob_out = DATA_BLOB()
             if crypt32.CryptUnprotectData(
                 ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
