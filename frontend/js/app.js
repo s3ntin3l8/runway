@@ -670,18 +670,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const configRefreshP = fetchAppConfig()
         .then(cfg => import('./utils/tz.js').then(m => m.setRunwayConfig(cfg)))
         .catch(() => {});
-    const authP = checkAuth().catch(() => false);
 
-    // initUI internally awaits getDashboardLayout + loadDashboard — runs
-    // concurrently with the config refresh and the auth probe above.
+    const authenticated = await checkAuth().catch(() => false);
+    if (!authenticated) {
+        void configRefreshP;
+        return;
+    }
+
     await initUI();
 
-    if (await authP) {
-        // Auto-refresh every 5 minutes — skip silently when the tab is hidden.
-        refreshTimer = setInterval(() => {
-            if (!document.hidden) loadDashboard();
-        }, 5 * 60 * 1000);
-    }
+    refreshTimer = setInterval(() => {
+        if (!document.hidden) loadDashboard();
+    }, 5 * 60 * 1000);
     void configRefreshP;
 });
 
