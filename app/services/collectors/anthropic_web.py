@@ -279,8 +279,6 @@ class AnthropicWebMixin:
         )
 
         # Extract activitySessionId from cookies if present for x-activity-session-id header
-        import re
-
         activity_sid_match = re.search(r"activitySessionId=([^;]+)", cookie_header)
         activity_sid = activity_sid_match.group(1) if activity_sid_match else None
 

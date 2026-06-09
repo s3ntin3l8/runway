@@ -45,7 +45,7 @@ def test_github_token_gh_cli():
         patch("builtins.open", mock_open(read_data=mock_yaml)),
         patch(
             "app.services.credential_provider.yaml",
-            MagicMock(safe_load=lambda f: yaml.safe_load(f)),
+            MagicMock(safe_load=yaml.safe_load),
         ),
     ):
         token = CredentialProvider.get_github_token()

@@ -14,6 +14,7 @@ All API calls are done by the server using tokens we provide.
 
 import argparse
 import atexit
+import ctypes
 import datetime
 import hashlib
 import hmac
@@ -573,8 +574,6 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
 def _pid_is_alive(pid: int) -> bool:
     """Return True if a process with `pid` is currently running."""
     if sys.platform == "win32":
-        import ctypes
-
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(1, False, pid)
         if handle:
@@ -959,16 +958,12 @@ def resolve_path(path_str: str) -> Path:
         path_str = os.path.expanduser(path_str)
 
     if "{{CONFIG_DIR:" in path_str:
-        import re
-
         match = re.search(r"{{CONFIG_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
             path_str = path_str.replace(match.group(0), str(get_platform_config_dir(app_name)))
 
     if "{{DATA_DIR:" in path_str:
-        import re
-
         match = re.search(r"{{DATA_DIR:([^}]+)}}", path_str)
         if match:
             app_name = match.group(1)
@@ -1025,7 +1020,6 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
     # Windows decryption
     if system == "Windows":
         try:
-            import ctypes
             from ctypes import wintypes
 
             class DATA_BLOB(ctypes.Structure):
@@ -1864,9 +1858,9 @@ def _ag_detect_process_windows() -> dict[int, list[str]]:
                 "-NoProfile",
                 "-Command",
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-                "Get-WmiObject Win32_Process | "
-                "Where-Object {$_.CommandLine -like '*language_server*'} | "
-                'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
+                + "Get-WmiObject Win32_Process | "
+                + "Where-Object {$_.CommandLine -like '*language_server*'} | "
+                + 'ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }',
             ],
             capture_output=True,
             text=True,
