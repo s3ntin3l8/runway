@@ -59,6 +59,7 @@ class TokenCache:
             or tokens.get("api_key")
             or next(iter(tokens.values()))
         )
+        # codeql[py/weak-sensitive-data-hashing] non-reversible 12-char cache key from a token; not password verification
         return hmac.new(b"runway-cache-id-v1", ident.encode(), hashlib.sha256).hexdigest()[:12]
 
     async def store(
@@ -99,11 +100,9 @@ class TokenCache:
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
             logger.info(
-                "Stored %d token(s) for %s account %s (%s)",
+                "Stored %d token(s) for provider %s",
                 len(tokens),
                 scrub_log(provider),
-                scrub_log(account_id),
-                scrub_log(account_label or "unnamed"),
             )
             return account_id
 
