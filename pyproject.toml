@@ -170,7 +170,7 @@ warn_no_return = true
 warn_unreachable = false
 strict_equality = false
 ignore_missing_imports = true
-exclude = ["tests", "scripts", "sidecar_app"]
+exclude = ["tests", "scripts", "sidecar_app", "scratch"]
 
 [[tool.mypy.overrides]]
 module = "app.services.collectors.*"

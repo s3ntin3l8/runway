@@ -11,7 +11,7 @@ from sqlmodel import select as sqlselect
 
 from app.core.config import settings
 from app.core.db import engine
-from app.core.utils import IdentityExtractor
+from app.core.utils import IdentityExtractor, scrub_log
 from app.models.db import ProviderConfig
 from app.services.token_cache import token_cache
 
@@ -237,7 +237,7 @@ class TokenHealthService:
                         # If both are now empty, we could delete the row, but let's just clear the fields
                         session.add(cfg)
                         session.commit()
-                        logger.info(f"Cleared DB credential for {provider}")
+                        logger.info(f"Cleared DB credential for {scrub_log(provider)}")
                         return True
             except Exception as e:
                 logger.error(f"Failed to delete DB credential: {e}")
