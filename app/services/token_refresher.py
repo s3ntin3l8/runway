@@ -6,7 +6,7 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.core.utils import IdentityExtractor, safe_write_json
+from app.core.utils import IdentityExtractor, safe_write_json, scrub_log
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     if "id_token" in data:
         updated["id_token"] = data["id_token"]
 
-    logger.info(f"Refreshed OAuth token for provider={provider}")
+    logger.info(f"Refreshed OAuth token for provider={scrub_log(provider)}")
     return updated
 
 

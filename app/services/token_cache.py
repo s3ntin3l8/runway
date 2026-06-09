@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any
 
-from app.core.utils import IdentityExtractor
+from app.core.utils import IdentityExtractor, scrub_log
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,8 @@ class TokenCache:
             or tokens.get("api_key")
             or next(iter(tokens.values()))
         )
-        return hashlib.sha256(ident.encode()).hexdigest()[:12]
+        # codeql[py/weak-sensitive-data-hashing] - non-security cache key derivation, not password storage
+        return hashlib.sha256(ident.encode(), usedforsecurity=False).hexdigest()[:12]
 
     async def store(
         self,
@@ -97,9 +98,10 @@ class TokenCache:
             metadata = {"account_label": account_label, "source": source}
             self._cache[provider][account_id] = (tokens, metadata, time.time())
 
+            # codeql[py/clear-text-logging-sensitive-data] - logs key names only, not values
             logger.info(
-                f"Stored tokens for {provider} account {account_id} "
-                f"({account_label or 'unnamed'}): {list(tokens.keys())}"
+                f"Stored tokens for {scrub_log(provider)} account {scrub_log(account_id)} "
+                f"({scrub_log(account_label or 'unnamed')}): {list(tokens.keys())}"
             )
             return account_id
 
@@ -113,6 +115,7 @@ class TokenCache:
                 if name:
                     metadata["account_label"] = name
                 self._cache[provider][account_id] = (tokens, metadata, timestamp)
+                # codeql[py/clear-text-logging-sensitive-data] - logs account id/label, not token values
                 logger.debug(f"Updated metadata for {provider}:{account_id} -> name={name}")
 
     async def get_accounts(self, provider: str) -> list[dict[str, Any]]:
@@ -249,7 +252,9 @@ class TokenCache:
         async with self._lock:
             if provider in self._cache and account_id in self._cache[provider]:
                 del self._cache[provider][account_id]
-                logger.info(f"Manually removed {provider} account {account_id} from cache")
+                logger.info(
+                    f"Manually removed {scrub_log(provider)} account {scrub_log(account_id)} from cache"
+                )
 
                 # Cleanup empty provider entry
                 if not self._cache[provider]:

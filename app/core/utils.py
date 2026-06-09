@@ -212,6 +212,11 @@ def extract_token_regex(detail: str, prefix: str) -> str | None:
     return match.group(1) if match else None
 
 
+def scrub_log(value: object) -> str:
+    """Strip CR/LF from user-controlled values before interpolating into log messages."""
+    return str(value).replace("\r", " ").replace("\n", " ")
+
+
 class HealthCalculator:
     """Standardized logic for determining card health status."""
 
