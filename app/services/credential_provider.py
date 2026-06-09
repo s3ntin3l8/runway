@@ -14,6 +14,7 @@ except ImportError:
     yaml = None  # type: ignore
 
 
+# codeql[py/missing-equals] - dict content equality is intentional; sources metadata is not compared
 class CredentialMap(dict):
     """A dictionary that tracks the source (config or server) for each key."""
 

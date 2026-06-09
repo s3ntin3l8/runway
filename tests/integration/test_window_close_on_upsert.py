@@ -15,8 +15,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
-from app.services.poller import _maybe_close_previous_window
 from app.services.pricing_seed import seed_pricing_table
+from app.services.window_closer import _maybe_close_previous_window
 
 # ---------------------------------------------------------------------------
 # Helpers
