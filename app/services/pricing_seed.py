@@ -11,7 +11,17 @@ from sqlmodel import Session, select
 from app.models.db import ProviderPricing
 
 PRICING_SEED: list[dict] = [
-    # Anthropic Claude (Sonnet 4.5, Opus 4.5, Haiku 4.5)
+    # Anthropic Claude (Fable 5, Sonnet 4.5, Opus 4.5, Haiku 4.5)
+    {
+        "provider_id": "anthropic",
+        "model_id": "fable",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 10.00,
+        "output_per_mtok": 50.00,
+        "cache_read_per_mtok": 1.00,
+        "cache_create_per_mtok": 12.50,
+        "notes": "Fable 5",
+    },
     {
         "provider_id": "anthropic",
         "model_id": "sonnet",
