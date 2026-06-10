@@ -24,6 +24,10 @@ SIDECHAIN_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sidec
         ("claude-3-5-haiku-20241022", "haiku-3.5"),
         ("claude-3-opus-20240229", "opus-3"),
         ("claude-opus-4-20250514", "opus-4"),
+        # New families must keep their version, not truncate to the bare family.
+        ("claude-fable-5", "fable-5"),
+        ("claude-fable-5-20260601", "fable-5"),
+        ("fable", "fable"),
         ("opus", "opus"),
         ("", "unknown"),
     ],

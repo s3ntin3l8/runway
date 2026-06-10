@@ -30,6 +30,7 @@ def _normalize_anthropic_model(model: str) -> str:
         "claude-3-5-sonnet-20241022" -> "sonnet-3.5"
         "claude-3-opus-20240229"     -> "opus-3"
         "claude-opus-4-20250514"     -> "opus-4"
+        "claude-fable-5"             -> "fable-5"
         "opus"                       -> "opus"
         ""                           -> "unknown"
 
@@ -47,8 +48,13 @@ def _normalize_anthropic_model(model: str) -> str:
     elif "design" in m or "omelette" in m:
         family = "design"
     else:
+        # Unknown family (e.g. "claude-fable-5"): take the first segment as the
+        # family and fall through to the version logic so the version is kept
+        # ("fable-5"), the same way the hard-coded families above are handled.
         base = m.replace("claude-", "")
-        return base.split("-")[0] if base else "unknown"
+        if not base:
+            return "unknown"
+        family = base.split("-")[0]
 
     # Collect numeric version tokens, dropping the 8-digit date snapshot.
     version_parts = [t for t in m.split("-") if t.isdigit() and len(t) != 8]

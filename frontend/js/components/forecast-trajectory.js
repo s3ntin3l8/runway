@@ -22,8 +22,11 @@ function _shortModelName(modelId) {
     if (m.includes('sonnet')) return 'Sonnet';
     if (m.includes('opus'))   return 'Opus';
     if (m.includes('haiku'))  return 'Haiku';
-    // strip "claude-" prefix as a generic fallback
-    return modelId.replace(/^claude-/i, '');
+    // Generic fallback for newer families (e.g. "fable-5"): drop any "claude-"
+    // prefix and title-case the version slug → "Fable 5".
+    return modelId.replace(/^claude-/i, '')
+        .replace(/-/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 /** Format the header subtitle for a forecast entry's trajectory chart. */

@@ -62,6 +62,23 @@ def test_seed_preserves_anthropic_sonnet_rates():
     assert sonnet.cache_create_per_mtok == 3.75
 
 
+def test_seed_anthropic_fable_rates():
+    """Per https://platform.claude.com/docs/en/about-claude/pricing (Fable 5)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    fable = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == "fable",
+        )
+    ).first()
+    assert fable is not None
+    assert fable.input_per_mtok == 10.00
+    assert fable.output_per_mtok == 50.00
+    assert fable.cache_read_per_mtok == 1.00
+    assert fable.cache_create_per_mtok == 12.50
+
+
 def test_seed_gemini_2_5_pro_rates_match_official():
     """Per https://ai.google.dev/gemini-api/docs/pricing (paid tier, ≤200K)."""
     s = _make_session()
