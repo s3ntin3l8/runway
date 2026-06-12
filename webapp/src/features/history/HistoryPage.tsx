@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
@@ -246,18 +247,5 @@ export function HistoryPage() {
 
       <WindowDetailSheet row={detailRow} onClose={() => setDetailRow(null)} />
     </>
-  );
-}
-
-function StatTile({ label, value, loading }: { label: string; value: string; loading: boolean }) {
-  return (
-    <Card className="px-4 py-3">
-      <p className="text-[11px] font-medium text-fg-subtle">{label}</p>
-      {loading ? (
-        <Skeleton className="mt-1.5 h-6 w-16" />
-      ) : (
-        <span className="mt-0.5 block font-mono text-lg font-semibold tabular">{value}</span>
-      )}
-    </Card>
   );
 }

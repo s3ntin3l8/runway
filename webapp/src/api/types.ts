@@ -182,6 +182,13 @@ export interface SessionModelSplit extends CumulativeModelBucket {
   tokens_total?: number;
 }
 
+export interface SubagentSplit {
+  subagent_type: string; // "Explore" | "Plan" | …
+  turns?: number;
+  tokens_total?: number;
+  cost_usd?: number;
+}
+
 export interface SessionEntry {
   session_id: string;
   ts_start?: string;
@@ -190,6 +197,11 @@ export interface SessionEntry {
   msgs?: number;
   models?: string[];
   by_model?: SessionModelSplit[];
+  subagents?: SubagentSplit[];
+  tokens_total?: number;
+  cost_usd?: number;
+  cache_hit_pct?: number;
+  sidecar_id?: string | null;
   [key: string]: unknown;
 }
 

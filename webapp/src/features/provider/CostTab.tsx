@@ -2,21 +2,17 @@
 // per-sidecar splits from the cumulative month bucket.
 
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { fetchCostForecast } from '@/api/endpoints';
 import type { CumulativeBucket } from '@/api/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { formatCost, formatTokens } from '@/lib/format';
-import { useProviderCumulative } from './queries';
+import { ProviderTrendCard } from './ProviderTrendCard';
+import { useProviderCostForecast, useProviderCumulative } from './queries';
 
 export function CostTab({ providerId, accountId }: { providerId: string; accountId: string }) {
-  const cost = useQuery({
-    queryKey: ['usage', 'cost-forecast', providerId, accountId],
-    queryFn: () => fetchCostForecast({ provider_id: providerId, account_id: accountId }),
-    refetchInterval: 120_000,
-  });
+  const cost = useProviderCostForecast(providerId, accountId);
   const cumulative = useProviderCumulative(providerId, accountId);
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
@@ -47,19 +43,22 @@ export function CostTab({ providerId, accountId }: { providerId: string; account
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
-          <Card key={stat.label} className="px-4 py-3">
-            <p className="text-[11px] font-medium text-fg-subtle">{stat.label}</p>
-            {cost.isPending || cumulative.isPending ? (
-              <Skeleton className="mt-1.5 h-6 w-20" />
-            ) : (
-              <div className="mt-0.5 flex items-baseline gap-2">
-                <span className="font-mono text-lg font-semibold tabular">{stat.value}</span>
-                {stat.hint ? <span className="text-[11px] text-fg-subtle">{stat.hint}</span> : null}
-              </div>
-            )}
-          </Card>
+          <StatTile
+            key={stat.label}
+            label={stat.label}
+            value={stat.value}
+            hint={stat.hint}
+            loading={cost.isPending || cumulative.isPending}
+          />
         ))}
       </div>
+
+      <ProviderTrendCard
+        providerId={providerId}
+        accountId={accountId}
+        metric="cost"
+        title="Cost per day"
+      />
 
       <SplitTable
         title="Cost by model (this month)"

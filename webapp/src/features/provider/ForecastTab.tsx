@@ -4,13 +4,20 @@ import { useMemo, useState } from 'react';
 import type { FleetEntry, ForecastEntry } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Gauge } from '@/components/ui/Gauge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
 import { formatCost, formatPct, formatTokens, timeUntil } from '@/lib/format';
+import { statusForPct } from '@/lib/quota';
 import { formatLocalDate, formatLocalDateTime } from '@/lib/tz';
-import { useProviderForecast, useWindowHistory } from './queries';
+import {
+  useProviderAnomalies,
+  useProviderCostForecast,
+  useProviderForecast,
+  useWindowHistory,
+} from './queries';
 
 const STATUS_VARIANT: Record<string, 'critical' | 'warning' | 'ok' | 'neutral'> = {
   exhausted: 'critical',
@@ -51,6 +58,10 @@ export function ForecastTab({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected =
     forecasts.find((f) => forecastKey(f) === selectedKey) ?? forecasts[0] ?? null;
+
+  const anomalies = useProviderAnomalies(providerId, accountId);
+  const cost = useProviderCostForecast(providerId, accountId);
+  const spikes = anomalies.data?.anomalies ?? [];
 
   const windowType = entry.critical_gauge.window_type ?? 'unknown';
   const history = useWindowHistory(providerId, accountId, windowType);
@@ -131,6 +142,105 @@ export function ForecastTab({
           )}
         </CardContent>
       </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Cost outlook</CardTitle>
+            {cost.data ? (
+              <span className="text-[11px] text-fg-subtle">{cost.data.days_remaining}d left</span>
+            ) : null}
+          </CardHeader>
+          <CardContent>
+            {cost.isPending ? (
+              <Skeleton className="h-20 w-full" />
+            ) : cost.data ? (
+              <>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[13px] text-fg-muted">
+                    <strong className="font-mono tabular text-fg">
+                      {formatCost(cost.data.current_month_to_date)}
+                    </strong>{' '}
+                    spent
+                  </span>
+                  <span className="text-[13px] text-fg-muted">
+                    →{' '}
+                    <strong className="font-mono tabular text-fg">
+                      {formatCost(cost.data.projected_eom)}
+                    </strong>{' '}
+                    projected
+                  </span>
+                </div>
+                <Gauge
+                  pct={
+                    cost.data.projected_eom > 0
+                      ? (cost.data.current_month_to_date / cost.data.projected_eom) * 100
+                      : 0
+                  }
+                  status={statusForPct(
+                    cost.data.projected_eom > 0
+                      ? (cost.data.current_month_to_date / cost.data.projected_eom) * 100
+                      : 0,
+                  )}
+                  className="mt-2"
+                />
+                <p className="mt-2 text-[11px] text-fg-subtle">
+                  {formatCost(cost.data.daily_burn_avg_7d)}/day average over the last 7 days.
+                </p>
+              </>
+            ) : (
+              <p className="py-6 text-center text-xs text-fg-subtle">No cost data yet.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Usage anomalies</CardTitle>
+            {anomalies.data ? (
+              <span className="text-[11px] text-fg-subtle">
+                today vs {anomalies.data.lookback_days}d mean
+              </span>
+            ) : null}
+          </CardHeader>
+          {anomalies.isPending ? (
+            <CardContent>
+              <Skeleton className="h-20 w-full" />
+            </CardContent>
+          ) : spikes.length === 0 ? (
+            <CardContent>
+              <p className="py-6 text-center text-xs text-fg-subtle">
+                No usage anomalies detected.
+              </p>
+            </CardContent>
+          ) : (
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Model</TH>
+                  <TH className="text-right">Today</TH>
+                  <TH className="text-right">Mean</TH>
+                  <TH className="text-right">z-score</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {spikes.map((a, i) => (
+                  <TR key={`${a.model_id}-${i}`}>
+                    <TD className="text-xs">{a.model_id}</TD>
+                    <TD className="text-right font-mono tabular">{formatTokens(a.today_tokens)}</TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatTokens(a.historical_mean_tokens)}
+                    </TD>
+                    <TD className="text-right font-mono tabular text-warning">
+                      {a.z_score_tokens.toFixed(1)}σ
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>
