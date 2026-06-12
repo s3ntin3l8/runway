@@ -10,9 +10,10 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
-import { formatCost, formatDuration, formatTokens } from '@/lib/format';
+import { formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDateTime, getUserTz } from '@/lib/tz';
 import { ProviderTrendCard } from './ProviderTrendCard';
+import { SessionsTable } from './SessionsTable';
 import {
   useProviderCumulative,
   useProviderEvents,
@@ -97,56 +98,7 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
             </p>
           </CardContent>
         ) : (
-          <Table>
-            <THead>
-              <TR>
-                <TH>Session</TH>
-                <TH>Models</TH>
-                <TH className="hidden lg:table-cell">Agents</TH>
-                <TH className="text-right">Duration</TH>
-                <TH className="text-right">Messages</TH>
-                <TH className="text-right">Tokens</TH>
-                <TH className="text-right">Cost</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {sessions.data!.sessions.map((s) => {
-                const tokens =
-                  s.tokens_total ??
-                  (s.by_model ?? []).reduce((sum, m) => sum + (m.tokens_total ?? 0), 0);
-                const cost =
-                  s.cost_usd ?? (s.by_model ?? []).reduce((sum, m) => sum + (m.cost_usd ?? 0), 0);
-                const agents = (s.subagents ?? [])
-                  .map((a) => `${a.subagent_type}·${a.turns ?? 0}`)
-                  .join(' ');
-                return (
-                  <TR key={s.session_id}>
-                    <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
-                      {s.session_id.slice(0, 8)}
-                    </TD>
-                    <TD>
-                      <span className="flex flex-wrap gap-1">
-                        {(s.models ?? []).map((m) => (
-                          <Badge key={m} variant="neutral">
-                            {m}
-                          </Badge>
-                        ))}
-                      </span>
-                    </TD>
-                    <TD className="hidden font-mono text-xs text-fg-muted lg:table-cell">
-                      {agents || '—'}
-                    </TD>
-                    <TD className="text-right font-mono tabular">
-                      {s.duration_seconds != null ? formatDuration(s.duration_seconds * 1000) : '—'}
-                    </TD>
-                    <TD className="text-right font-mono tabular">{s.msgs ?? 0}</TD>
-                    <TD className="text-right font-mono tabular">{formatTokens(tokens)}</TD>
-                    <TD className="text-right font-mono tabular">{formatCost(cost)}</TD>
-                  </TR>
-                );
-              })}
-            </TBody>
-          </Table>
+          <SessionsTable sessions={sessions.data!.sessions} />
         )}
       </Card>
 

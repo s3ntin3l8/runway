@@ -180,12 +180,19 @@ export interface HeatmapResponse {
 export interface SessionModelSplit extends CumulativeModelBucket {
   model_id: string;
   tokens_total?: number;
+  tool_calls?: number;
 }
 
 export interface SubagentSplit {
   subagent_type: string; // "Explore" | "Plan" | …
   turns?: number;
   tokens_total?: number;
+  tokens_input?: number;
+  tokens_output?: number;
+  tokens_cache_read?: number;
+  tokens_cache_create?: number;
+  tokens_reasoning?: number;
+  tool_calls?: number;
   cost_usd?: number;
 }
 
@@ -199,6 +206,15 @@ export interface SessionEntry {
   by_model?: SessionModelSplit[];
   subagents?: SubagentSplit[];
   tokens_total?: number;
+  tokens_input?: number;
+  tokens_output?: number;
+  tokens_cache_read?: number;
+  tokens_cache_create?: number;
+  tokens_cache?: number;
+  tokens_reasoning?: number;
+  tool_calls?: number;
+  subagent_msgs?: number;
+  cache_pct?: number;
   cost_usd?: number;
   cache_hit_pct?: number;
   sidecar_id?: string | null;

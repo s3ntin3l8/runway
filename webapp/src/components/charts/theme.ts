@@ -14,6 +14,7 @@ export interface ChartTokens {
   surface: string;
   edge: string;
   accent: string;
+  accentMuted: string;
   critical: string;
   warning: string;
   ok: string;
@@ -38,6 +39,7 @@ export function readChartTokens(): ChartTokens {
     surface: cssVar(styles, '--surface-1'),
     edge: cssVar(styles, '--edge'),
     accent: cssVar(styles, '--accent'),
+    accentMuted: cssVar(styles, '--accent-muted'),
     critical: cssVar(styles, '--critical'),
     warning: cssVar(styles, '--warning'),
     ok: cssVar(styles, '--ok'),

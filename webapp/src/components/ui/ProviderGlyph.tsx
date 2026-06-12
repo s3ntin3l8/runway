@@ -1,8 +1,9 @@
-// Brand-neutral provider mark: deterministic colored tile + monogram.
-// Replaces the v1 emoji icons (emojis render inconsistently across
-// platforms and can't follow theme tokens).
+// Provider mark: the real brand logo on a white "app-icon" chip when we vendor
+// one (see providerIcons.ts), else a deterministic colored monogram tile so
+// unknown providers still get a stable, distinct glyph.
 
 import { cn } from '@/lib/cn';
+import { providerIconUrl } from './providerIcons';
 
 const TILE_COLORS = [
   'bg-chart-1',
@@ -26,6 +27,22 @@ interface ProviderGlyphProps {
 }
 
 export function ProviderGlyph({ providerId, name, className }: ProviderGlyphProps) {
+  const iconUrl = providerIconUrl(providerId);
+
+  if (iconUrl) {
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          'inline-flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white ring-1 ring-black/10',
+          className,
+        )}
+      >
+        <img src={iconUrl} alt="" className="size-5 object-contain" loading="lazy" />
+      </span>
+    );
+  }
+
   const label = (name || providerId).trim();
   const monogram = label.slice(0, 2).toUpperCase();
   const color = TILE_COLORS[hash(providerId) % TILE_COLORS.length];

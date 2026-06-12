@@ -51,7 +51,10 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
         itemHeight: 80,
         textStyle: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily },
         formatter: (v: number) => formatTokens(v),
-        inRange: { color: [t.grid, t.accent] },
+        // Faint-accent → accent ramp. Using --accent-muted (a low-alpha tint
+        // of the accent) keeps low cells readable in BOTH themes; the old
+        // --chart-grid floor rendered near-black on the light surface.
+        inRange: { color: [t.accentMuted, t.accent] },
       },
       series: [
         {
