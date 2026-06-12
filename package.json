@@ -11,7 +11,11 @@
   "scripts": {
     "build:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --minify",
     "watch:css": "tailwindcss -i frontend/css/input.css -o frontend/css/styles.css --watch",
-    "test": "node --test tests/frontend/test_*.mjs && node tests/frontend/test_spark_helpers.js"
+    "test": "node --test tests/frontend/test_*.mjs && node tests/frontend/test_spark_helpers.js",
+    "web:install": "npm --prefix webapp ci",
+    "web:dev": "npm --prefix webapp run dev",
+    "web:build": "npm --prefix webapp run build",
+    "web:test": "npm --prefix webapp test"
   },
   "keywords": [],
   "author": "",
