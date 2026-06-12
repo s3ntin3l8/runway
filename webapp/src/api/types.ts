@@ -67,16 +67,21 @@ export interface FleetResponse {
   generated_at: string;
 }
 
-export interface CumulativeBucket {
+// Flat token/cost bucket used by cumulative rollups (also the per-model and
+// per-sidecar split values inside a bucket).
+export interface CumulativeModelBucket {
   tokens_input?: number;
   tokens_output?: number;
   tokens_cache_read?: number;
   tokens_cache_create?: number;
   tokens_reasoning?: number;
-  cost_usd?: number;
   msgs?: number;
-  by_model?: Record<string, ByModelEntry>;
-  by_sidecar?: Record<string, TokenUsage>;
+  cost_usd?: number;
+}
+
+export interface CumulativeBucket extends CumulativeModelBucket {
+  by_model?: Record<string, CumulativeModelBucket>;
+  by_sidecar?: Record<string, CumulativeModelBucket>;
 }
 
 export interface CumulativeEntry {
@@ -113,9 +118,13 @@ export interface ForecastSeriesPoint {
 export interface ForecastEntry {
   provider_id: string;
   account_id: string;
+  account_label?: string | null;
   model_id?: string | null;
   service_name?: string;
   window_type?: string;
+  window_start?: string | null;
+  projected_limit_hit_at?: string | null;
+  variant?: string | null;
   unit_type?: string;
   now_used?: number | null;
   now_pct?: number | null;
@@ -160,6 +169,7 @@ export interface HeatmapCell {
   dow: number; // SQLite convention: 0=Sunday … 6=Saturday
   hour: number;
   tokens: number;
+  cost_usd?: number;
 }
 
 export interface HeatmapResponse {
@@ -167,17 +177,40 @@ export interface HeatmapResponse {
   tz: string;
 }
 
+export interface SessionModelSplit extends CumulativeModelBucket {
+  model_id: string;
+  tokens_total?: number;
+}
+
 export interface SessionEntry {
   session_id: string;
+  ts_start?: string;
+  ts_end?: string;
+  duration_seconds?: number;
+  msgs?: number;
+  models?: string[];
+  by_model?: SessionModelSplit[];
   [key: string]: unknown;
 }
 
 export interface UsageEvent {
+  id?: number;
   event_id?: string;
   ts?: string;
+  ingested_at?: string;
   model_id?: string | null;
   sidecar_id?: string | null;
+  session_id?: string | null;
   kind?: string;
+  stop_reason?: string | null;
+  tool_calls?: number | null;
+  latency_ms?: number | null;
+  cost_usd?: number | null;
+  tokens_input?: number;
+  tokens_output?: number;
+  tokens_cache_read?: number;
+  tokens_cache_create?: number;
+  tokens_reasoning?: number;
   [key: string]: unknown;
 }
 
@@ -206,6 +239,9 @@ export interface HistoryWindow {
   window_type?: string;
   window_start?: string;
   window_end?: string;
+  totals?: CumulativeModelBucket;
+  by_model?: SessionModelSplit[];
+  by_sidecar?: Record<string, CumulativeModelBucket>;
   [key: string]: unknown;
 }
 
