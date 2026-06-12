@@ -18,15 +18,19 @@ export function CostTab({ providerId, accountId }: { providerId: string; account
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
     if (!data) return null;
-    const row = data.cumulative.find((c) => c.account_id === accountId);
+    const row = data.cumulative.find(
+      (c) => c.provider_id === providerId && c.account_id === accountId,
+    );
     const bucket = row?.[data.current_month_key];
     return bucket && typeof bucket !== 'string' ? bucket : null;
-  }, [cumulative.data, accountId]);
+  }, [cumulative.data, providerId, accountId]);
 
   const lifetime = useMemo<CumulativeBucket | null>(() => {
-    const row = cumulative.data?.cumulative.find((c) => c.account_id === accountId);
+    const row = cumulative.data?.cumulative.find(
+      (c) => c.provider_id === providerId && c.account_id === accountId,
+    );
     return row?.lifetime ?? null;
-  }, [cumulative.data, accountId]);
+  }, [cumulative.data, providerId, accountId]);
 
   const stats = [
     { label: 'Spend (MTD)', value: formatCost(cost.data?.current_month_to_date ?? null) },

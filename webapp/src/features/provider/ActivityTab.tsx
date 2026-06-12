@@ -31,10 +31,12 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
     if (!data) return null;
-    const row = data.cumulative.find((c) => c.account_id === accountId);
+    const row = data.cumulative.find(
+      (c) => c.provider_id === providerId && c.account_id === accountId,
+    );
     const bucket = row?.[data.current_month_key];
     return bucket && typeof bucket !== 'string' ? bucket : null;
-  }, [cumulative.data, accountId]);
+  }, [cumulative.data, providerId, accountId]);
 
   return (
     <div className="flex flex-col gap-4">
