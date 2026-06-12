@@ -10,8 +10,10 @@ export function TabsList({
   return (
     <TabsPrimitive.List
       className={cn(
-        // Horizontal scroll on narrow screens instead of wrapping/cramping
-        'flex w-full items-center gap-1 overflow-x-auto border-b border-edge',
+        // Horizontal scroll on narrow screens instead of wrapping/cramping.
+        // Pin overflow-y: setting overflow-x alone computes overflow-y to auto,
+        // which the triggers' -mb-px/border-b-2 turns into a stray scrollbar.
+        'flex w-full items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-edge',
         className,
       )}
       {...props}
