@@ -350,6 +350,8 @@ export interface AppConfig {
   default_poll_interval_seconds?: number;
   user_timezone?: string | null;
   env_timezone?: string | null;
+  // Update channel sidecars track for the "update available" check.
+  sidecar_update_channel?: 'stable' | 'edge' | null;
 }
 
 export interface CollectionStrategy {

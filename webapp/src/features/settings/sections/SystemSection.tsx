@@ -9,6 +9,13 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { HelperText, Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { useQuery } from '@tanstack/react-query';
@@ -22,6 +29,7 @@ export function SystemSection() {
   const [timezone, setTimezone] = useState('');
   const [pollInterval, setPollInterval] = useState('');
   const [browserPref, setBrowserPref] = useState('');
+  const [channel, setChannel] = useState<'stable' | 'edge'>('stable');
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
   useEffect(() => {
@@ -33,6 +41,7 @@ export function SystemSection() {
         : '',
     );
     setBrowserPref(appConfig.data.browser_preference ?? '');
+    setChannel(appConfig.data.sidecar_update_channel === 'edge' ? 'edge' : 'stable');
   }, [appConfig.data]);
 
   const save = useMutation({
@@ -42,6 +51,7 @@ export function SystemSection() {
         default_poll_interval_seconds:
           pollInterval.trim() === '' ? undefined : Number(pollInterval),
         browser_preference: browserPref.trim() || null,
+        sidecar_update_channel: channel,
       }),
     onSuccess: () => {
       toast.success('System settings saved');
@@ -113,6 +123,22 @@ export function SystemSection() {
                 onChange={(e) => setBrowserPref(e.target.value)}
                 placeholder="e.g. firefox, chrome (cookie extraction)"
               />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sys-channel">Sidecar update channel</Label>
+              <Select value={channel} onValueChange={(v) => setChannel(v as 'stable' | 'edge')}>
+                <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stable">Stable</SelectItem>
+                  <SelectItem value="edge">Edge (rolling prerelease)</SelectItem>
+                </SelectContent>
+              </Select>
+              <HelperText>
+                Which release sidecars compare against for the "update available" check. Edge tracks
+                the rolling prerelease build.
+              </HelperText>
             </div>
             <Button type="submit" variant="primary" className="self-start" loading={save.isPending}>
               Save
