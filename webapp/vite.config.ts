@@ -38,9 +38,11 @@ export default defineConfig({
     },
   },
   test: {
-    // Node by default (pure-logic tests). Component tests opt into jsdom with a
-    // `// @vitest-environment jsdom` docblock at the top of the file.
-    environment: 'node',
+    // jsdom by default so component tests render; pure-logic tests run fine in
+    // it too. `globals: true` enables RTL auto-cleanup + jest-dom matchers.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['src/test/setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
@@ -49,7 +51,13 @@ export default defineConfig({
       reporter: ['text', 'json-summary', 'lcov'],
       reportsDirectory: './coverage',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/**/*.d.ts', 'src/api/types.ts'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/test/**',
+        'src/main.tsx',
+        'src/**/*.d.ts',
+        'src/api/types.ts',
+      ],
     },
   },
 });

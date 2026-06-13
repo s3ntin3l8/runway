@@ -28,6 +28,8 @@ jobs:
       # 'test:coverage' emits coverage/coverage-summary.json (vitest v8), which
       # turns on the reusable workflow's Codecov upload for the frontend.
       test-script: 'test:coverage'
+      # Gate on total line coverage (currently ~93%); buffer for variance.
+      coverage-fail-under: '85'
     secrets: inherit
 
   build-docker:
