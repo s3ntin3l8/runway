@@ -12,12 +12,14 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
 import { ActivityTab } from './ActivityTab';
 import { CostTab } from './CostTab';
 import { DebugTab } from './DebugTab';
+import { EventsTab } from './EventsTab';
 import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
 
@@ -75,6 +77,7 @@ export function ProviderPage() {
       <PageHeader
         title={name}
         description={entry?.critical_gauge.account_label || accountId}
+        leading={<ProviderGlyph providerId={providerId} name={name} className="size-9 text-sm" />}
         actions={
           <>
             {entries.length > 1 ? (
@@ -125,7 +128,7 @@ export function ProviderPage() {
           </>
         }
       />
-      <div className="p-4 lg:p-8">
+      <div className="px-4 pt-3 pb-4 lg:px-8 lg:pt-4 lg:pb-8">
         <Button
           variant="ghost"
           size="sm"
@@ -156,6 +159,7 @@ export function ProviderPage() {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
+              <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="forecast">Forecast</TabsTrigger>
               <TabsTrigger value="cost">Cost</TabsTrigger>
               <TabsTrigger value="debug">Debug</TabsTrigger>
@@ -165,6 +169,9 @@ export function ProviderPage() {
             </TabsContent>
             <TabsContent value="activity">
               <ActivityTab providerId={providerId} accountId={accountId} />
+            </TabsContent>
+            <TabsContent value="events">
+              <EventsTab providerId={providerId} accountId={accountId} active={tab === 'events'} />
             </TabsContent>
             <TabsContent value="forecast">
               <ForecastTab providerId={providerId} accountId={accountId} entry={entry} />

@@ -53,13 +53,24 @@ export interface LimitCard {
   pct_used?: number | null;
 }
 
+// Live aggregation of usage_events over a quota window, split by model and
+// sidecar. Computed on demand by /usage/fleet for the longest active window.
+export interface WindowAggregation {
+  window_type: string;
+  window_start: string;
+  window_end: string;
+  token_usage: TokenUsage;
+  by_model: Record<string, CumulativeModelBucket>;
+  by_sidecar: Record<string, CumulativeModelBucket>;
+}
+
 export interface FleetEntry {
   provider_id: string;
   account_id: string;
   critical_gauge: LimitCard;
   secondary_limits: LimitCard[];
   sidecar_contributions?: Record<string, TokenUsage>;
-  window_aggregations?: Record<string, unknown>;
+  window_aggregations?: { longest?: WindowAggregation };
 }
 
 export interface FleetResponse {
@@ -240,6 +251,15 @@ export interface UsageEvent {
   tokens_cache_create?: number;
   tokens_reasoning?: number;
   [key: string]: unknown;
+}
+
+// Paginated event-tail response. `total` is the full count of matching rows
+// (not the page size), so offset/limit paging math is well-defined.
+export interface EventsResponse {
+  events: UsageEvent[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface AnomalyEntry {

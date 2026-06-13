@@ -1,6 +1,6 @@
 // Provider-detail data hooks, parametrized by (provider_id, account_id).
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   fetchAnomalies,
   fetchCostForecast,
@@ -45,10 +45,40 @@ export const useProviderSessions = (providerId: string, accountId: string) =>
     refetchInterval: 120_000,
   });
 
-export const useProviderEvents = (providerId: string, accountId: string) =>
+// The 3 most recent sessions (by ts_end) — drives the Overview activity pulse.
+export const useProviderRecentSessions = (providerId: string, accountId: string) =>
   useQuery({
-    queryKey: ['usage', 'events', providerId, accountId],
-    queryFn: () => fetchEvents({ provider_id: providerId, account_id: accountId, limit: 50 }),
+    queryKey: ['usage', 'sessions', 'recent', providerId, accountId],
+    queryFn: () =>
+      fetchSessions({ provider_id: providerId, account_id: accountId, limit: 3, sort_by: 'recent' }),
+    refetchInterval: 120_000,
+  });
+
+// Paginated event tail for the Events tab. `since` scopes the window (e.g. the
+// start of the current month); offset/limit page through it. keepPreviousData
+// holds the prior page on screen while the next loads, so paging doesn't flicker.
+export const useProviderEventsPage = (
+  providerId: string,
+  accountId: string,
+  {
+    page,
+    pageSize,
+    since,
+    enabled,
+  }: { page: number; pageSize: number; since: string; enabled: boolean },
+) =>
+  useQuery({
+    queryKey: ['usage', 'events', providerId, accountId, since, page, pageSize],
+    queryFn: () =>
+      fetchEvents({
+        provider_id: providerId,
+        account_id: accountId,
+        since,
+        limit: pageSize,
+        offset: page * pageSize,
+      }),
+    enabled,
+    placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
 

@@ -10,6 +10,7 @@ import type {
   CostForecastResponse,
   CumulativeResponse,
   DashboardLayout,
+  EventsResponse,
   FleetResponse,
   ForecastResponse,
   HeatmapResponse,
@@ -23,7 +24,6 @@ import type {
   Sidecar,
   SystemSettings,
   TokenHealthEntry,
-  UsageEvent,
   Webhook,
   WindowDetailResponse,
 } from './types';
@@ -52,9 +52,7 @@ export const fetchSessions = (params: Params) =>
   api<{ sessions: SessionEntry[] }>(`/api/v1/usage/sessions${qs(params)}`);
 
 export const fetchEvents = (params: Params) =>
-  api<{ events: UsageEvent[]; total: number; limit: number }>(
-    `/api/v1/usage/events${qs(params)}`,
-  );
+  api<EventsResponse>(`/api/v1/usage/events${qs(params)}`);
 
 export const fetchAnomalies = (params: Params = {}) =>
   api<AnomaliesResponse>(`/api/v1/usage/anomalies${qs(params)}`);

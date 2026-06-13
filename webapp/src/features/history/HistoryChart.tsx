@@ -9,7 +9,15 @@ import { formatTokens } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 import type { Metric } from './queries';
 
-export function HistoryChart({ data, metric }: { data: HistoryChartResponse; metric: Metric }) {
+export function HistoryChart({
+  data,
+  metric,
+  className = 'h-72',
+}: {
+  data: HistoryChartResponse;
+  metric: Metric;
+  className?: string;
+}) {
   const t = useChartTokens();
 
   const option = useMemo(() => {
@@ -107,5 +115,5 @@ export function HistoryChart({ data, metric }: { data: HistoryChartResponse; met
     };
   }, [data, metric, t]);
 
-  return <EChart option={option} className="h-72" />;
+  return <EChart option={option} className={className} />;
 }

@@ -17,13 +17,17 @@ export function ProviderTrendCard({
   accountId,
   metric,
   title,
+  defaultDays = 30,
+  compact = false,
 }: {
   providerId: string;
   accountId: string;
   metric: Exclude<Metric, 'percent'>;
   title: string;
+  defaultDays?: number;
+  compact?: boolean;
 }) {
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(defaultDays);
   const chart = useProviderHistoryChart(providerId, accountId, days, metric);
   const hasData = (chart.data?.bars?.length ?? 0) > 0;
 
@@ -43,11 +47,13 @@ export function ProviderTrendCard({
       </CardHeader>
       <CardContent>
         {chart.isPending ? (
-          <Skeleton className="h-72 w-full" />
+          <Skeleton className={compact ? 'h-44 w-full' : 'h-72 w-full'} />
         ) : !hasData ? (
-          <p className="py-16 text-center text-xs text-fg-subtle">No data in this range.</p>
+          <p className={`${compact ? 'py-10' : 'py-16'} text-center text-xs text-fg-subtle`}>
+            No data in this range.
+          </p>
         ) : (
-          <HistoryChart data={chart.data!} metric={metric} />
+          <HistoryChart data={chart.data!} metric={metric} className={compact ? 'h-44' : 'h-72'} />
         )}
       </CardContent>
     </Card>

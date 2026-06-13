@@ -1,30 +1,21 @@
 // Activity: "what have I been doing?" — per-day token volume, the token
-// composition this month, the hour×weekday heatmap, top sessions (with
-// subagent splits) and the recent event tail.
+// composition this month, the hour×weekday heatmap and top sessions (with
+// subagent splits). The raw per-message event tail lives in the Events tab.
 
 import { useMemo } from 'react';
 import type { CumulativeBucket } from '@/api/types';
-import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
-import { formatCost, formatTokens } from '@/lib/format';
-import { formatLocalDateTime, getUserTz } from '@/lib/tz';
+import { getUserTz } from '@/lib/tz';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { SessionsTable } from './SessionsTable';
-import {
-  useProviderCumulative,
-  useProviderEvents,
-  useProviderHeatmap,
-  useProviderSessions,
-} from './queries';
+import { useProviderCumulative, useProviderHeatmap, useProviderSessions } from './queries';
 
 export function ActivityTab({ providerId, accountId }: { providerId: string; accountId: string }) {
   const heatmap = useProviderHeatmap(providerId, accountId, getUserTz());
-  const events = useProviderEvents(providerId, accountId);
   const sessions = useProviderSessions(providerId, accountId);
   const cumulative = useProviderCumulative(providerId, accountId);
 
@@ -119,76 +110,6 @@ export function ActivityTab({ providerId, accountId }: { providerId: string; acc
           </CardContent>
         ) : (
           <SessionsTable sessions={sessions.data!.sessions} />
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent events</CardTitle>
-          {events.data ? (
-            <span className="text-[11px] text-fg-subtle">
-              {events.data.events.length} of {events.data.total}
-            </span>
-          ) : null}
-        </CardHeader>
-        {events.isPending ? (
-          <CardContent>
-            <Skeleton className="h-32 w-full" />
-          </CardContent>
-        ) : (events.data?.events.length ?? 0) === 0 ? (
-          <CardContent>
-            <p className="py-4 text-center text-xs text-fg-subtle">
-              No events — per-message events arrive via sidecar ingest.
-            </p>
-          </CardContent>
-        ) : (
-          <Table>
-            <THead>
-              <TR>
-                <TH>Time</TH>
-                <TH>Model</TH>
-                <TH className="hidden md:table-cell">Sidecar</TH>
-                <TH className="text-right">In</TH>
-                <TH className="text-right">Out</TH>
-                <TH className="hidden text-right sm:table-cell">Cache</TH>
-                <TH className="text-right">Cost</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {events.data!.events.map((e) => (
-                <TR key={e.event_id ?? e.id}>
-                  <TD className="font-mono text-xs whitespace-nowrap tabular">
-                    {formatLocalDateTime(e.ts, {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </TD>
-                  <TD>
-                    {e.kind === 'error' ? (
-                      <Badge variant="critical">error</Badge>
-                    ) : (
-                      <span className="text-xs">{e.model_id ?? '—'}</span>
-                    )}
-                  </TD>
-                  <TD className="hidden text-xs text-fg-muted md:table-cell">
-                    {e.sidecar_id ?? '—'}
-                  </TD>
-                  <TD className="text-right font-mono text-xs tabular">
-                    {formatTokens(e.tokens_input ?? 0)}
-                  </TD>
-                  <TD className="text-right font-mono text-xs tabular">
-                    {formatTokens(e.tokens_output ?? 0)}
-                  </TD>
-                  <TD className="hidden text-right font-mono text-xs tabular sm:table-cell">
-                    {formatTokens((e.tokens_cache_read ?? 0) + (e.tokens_cache_create ?? 0))}
-                  </TD>
-                  <TD className="text-right font-mono text-xs tabular">{formatCost(e.cost_usd)}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
         )}
       </Card>
     </div>

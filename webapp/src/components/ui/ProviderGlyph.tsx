@@ -38,7 +38,7 @@ export function ProviderGlyph({ providerId, name, className }: ProviderGlyphProp
           className,
         )}
       >
-        <img src={iconUrl} alt="" className="size-5 object-contain" loading="lazy" />
+        <img src={iconUrl} alt="" className="size-[72%] object-contain" loading="lazy" />
       </span>
     );
   }

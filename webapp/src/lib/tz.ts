@@ -59,6 +59,27 @@ export function formatLocalDate(
   return new Date(iso).toLocaleDateString([], { ...opts, timeZone: getUserTz() });
 }
 
+// UTC ISO instant for the 1st of the current month at 00:00 *in the resolved
+// user tz* — the lower bound for "current month" scoped queries. Computed via
+// the toLocaleString offset round-trip so it stays correct across DST and tz
+// changes (the backend is sensitive to month-boundary tz skew).
+export function startOfCurrentMonthISO(): string {
+  const tz = getUserTz();
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+  }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value); // 1-based
+  const utcGuess = Date.UTC(year, month - 1, 1, 0, 0, 0);
+  const offset =
+    new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: 'UTC' })).getTime() -
+    new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: tz })).getTime();
+  return new Date(utcGuess + offset).toISOString();
+}
+
 // Format a Unix epoch (seconds) the same way — used by chart bucket labels
 // where the source isn't an ISO string.
 export function formatLocalFromEpoch(
