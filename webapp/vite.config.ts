@@ -38,7 +38,18 @@ export default defineConfig({
     },
   },
   test: {
+    // Node by default (pure-logic tests). Component tests opt into jsdom with a
+    // `// @vitest-environment jsdom` docblock at the top of the file.
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    coverage: {
+      provider: 'v8',
+      // json-summary feeds the CI coverage gate (coverage/coverage-summary.json);
+      // lcov is what Codecov ingests; text prints a local summary.
+      reporter: ['text', 'json-summary', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/**/*.d.ts', 'src/api/types.ts'],
+    },
   },
 });
