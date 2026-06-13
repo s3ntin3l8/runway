@@ -1,9 +1,18 @@
 name: Cleanup GHCR
 
+# Thin caller — the manifest-aware pruning logic lives in the shared reusable
+# workflow so every repo benefits. `dry-run` is passed through for manual
+# previews via the Actions "Run workflow" button.
+
 on:
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Simulate — log what would be deleted without deleting'
+        type: boolean
+        default: false
 
 jobs:
   cleanup:
@@ -12,3 +21,4 @@ jobs:
     uses: s3ntin3l8/.github/.github/workflows/ghcr-cleanup.yml@main
     with:
       package-name: 'runway'
+      dry-run: ${{ inputs.dry-run || false }}
