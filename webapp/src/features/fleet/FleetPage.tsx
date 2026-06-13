@@ -3,9 +3,15 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pause, Pencil, Play, Server, Trash2 } from 'lucide-react';
+import { ArrowUpCircle, Pause, Pencil, Play, Server, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteSidecar, fetchSidecars, patchSidecar, setSidecarEnabled } from '@/api/endpoints';
+import {
+  deleteSidecar,
+  fetchSidecars,
+  patchSidecar,
+  setSidecarEnabled,
+  triggerSidecarUpdate,
+} from '@/api/endpoints';
 import type { Sidecar } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
@@ -91,6 +97,13 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
+  const update = useMutation({
+    mutationFn: () => triggerSidecarUpdate(sidecar.sidecar_id),
+    onSuccess: () =>
+      toast.success('Update pushed — the sidecar installs it on its next check-in'),
+    onError: (err) => toast.error(err.message),
+  });
+
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
 
   return (
@@ -114,6 +127,11 @@ function SidecarCard({
                   {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
                   {sidecar.os_platform ?? '—'} · v{sidecar.sidecar_version ?? '?'}
                 </span>
+                {sidecar.update_available ? (
+                  <Badge variant="warning" className="shrink-0">
+                    update{sidecar.latest_version ? ` → v${sidecar.latest_version}` : ''}
+                  </Badge>
+                ) : null}
                 {sidecar.channel === 'edge' ? (
                   <Badge
                     variant="accent"
@@ -185,6 +203,17 @@ function SidecarCard({
             {logs.length > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => setShowLogs(true)}>
                 Logs
+              </Button>
+            ) : null}
+            {sidecar.update_available ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => update.mutate()}
+                loading={update.isPending}
+              >
+                <ArrowUpCircle className="size-3.5" />
+                Update now
               </Button>
             ) : null}
           </div>

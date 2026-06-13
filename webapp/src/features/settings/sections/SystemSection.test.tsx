@@ -51,6 +51,7 @@ describe('SystemSection', () => {
       default_poll_interval_seconds: 120,
       browser_preference: 'firefox',
       sidecar_update_channel: 'stable',
+      sidecar_auto_update: false,
     });
   });
 
