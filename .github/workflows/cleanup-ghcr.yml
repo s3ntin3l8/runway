@@ -1,14 +1,37 @@
 name: Cleanup GHCR
 
+# Manifest-aware GHCR pruning. The image is multi-arch (linux/amd64,arm64), so
+# every tag (edge / latest / v*) is a manifest list whose per-arch and
+# attestation child manifests show up as *untagged* versions. A naive
+# untagged-delete (the old reusable workflow) would clip those live children and
+# break tags; this action parses the manifest lists and only removes genuinely
+# dangling digests, then `validate`s that every surviving tag still resolves.
+
 on:
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Simulate — log what would be deleted without deleting'
+        type: boolean
+        default: false
 
 jobs:
   cleanup:
+    runs-on: ubuntu-latest
     permissions:
       packages: write
-    uses: s3ntin3l8/.github/.github/workflows/ghcr-cleanup.yml@main
-    with:
-      package-name: 'runway'
+    steps:
+      # dataaxiom/ghcr-cleanup-action v1.2.2 (pinned — the action can delete
+      # registry images; Dependabot bumps the comment + SHA together).
+      - name: Prune dangling GHCR images
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f
+        with:
+          package: runway
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-untagged: true
+          delete-partial-images: true
+          delete-ghost-images: true
+          validate: true
+          dry-run: ${{ inputs.dry-run || false }}
