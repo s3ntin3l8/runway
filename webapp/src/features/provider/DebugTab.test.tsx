@@ -25,7 +25,11 @@ const renderTab = () =>
   );
 
 describe('DebugTab', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: token-health query resolves empty so it never returns undefined.
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [] });
+  });
 
   it('renders the authoritative-source pane from the critical gauge', () => {
     renderTab();
@@ -69,6 +73,18 @@ describe('DebugTab', () => {
   it('shows the capture prompt and does not auto-fetch', () => {
     renderTab();
     expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
+    expect(api.fetchDebugRaw).not.toHaveBeenCalled();
+  });
+
+  it('hides capture for a sidecar-only (local) provider', () => {
+    const localEntry = fleetEntry({
+      critical_gauge: limitCard({ data_source: 'local', input_source: 'sidecar' }),
+    });
+    renderWithProviders(
+      <DebugTab providerId="antigravity" accountId="me@example.com" entry={localEntry} active />,
+    );
+    expect(screen.getByText(/raw capture unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /run capture/i })).not.toBeInTheDocument();
     expect(api.fetchDebugRaw).not.toHaveBeenCalled();
   });
 

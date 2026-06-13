@@ -27,11 +27,21 @@ export function DebugTab({
   entry: FleetEntry;
   active: boolean;
 }) {
+  const g = entry.critical_gauge;
+  // Raw capture replays a server-side api/web collector. Locally-collected
+  // providers (e.g. antigravity: sidecar LSP probe / local quota file) have no
+  // server collector, so capture would 404 — don't offer it.
+  const captureSupported = !(g.data_source === 'local' || g.input_source === 'sidecar');
+
   return (
     <div className="flex flex-col gap-4">
       <SourcePane entry={entry} />
       <TokenHealthPane providerId={providerId} accountId={accountId} />
-      <RawCapturePane providerId={providerId} active={active} />
+      <RawCapturePane
+        providerId={providerId}
+        active={active}
+        captureSupported={captureSupported}
+      />
     </div>
   );
 }
@@ -142,9 +152,27 @@ function tokenStatus(status: TokenHealthStatus): QuotaStatus {
   return 'unknown';
 }
 
-function RawCapturePane({ providerId, active }: { providerId: string; active: boolean }) {
+function RawCapturePane({
+  providerId,
+  active,
+  captureSupported,
+}: {
+  providerId: string;
+  active: boolean;
+  captureSupported: boolean;
+}) {
   const [requested, setRequested] = useState(false);
-  const debug = useDebugRaw(providerId, active && requested);
+  const debug = useDebugRaw(providerId, captureSupported && active && requested);
+
+  if (!captureSupported) {
+    return (
+      <EmptyState
+        icon={Bug}
+        title="Raw capture unavailable"
+        description={`${providerId} is collected locally by the sidecar (LSP probe / local quota file), so there's no server-side HTTP exchange to capture. The sidecar is the source of truth — see Authoritative source above.`}
+      />
+    );
+  }
 
   if (!requested) {
     return (
