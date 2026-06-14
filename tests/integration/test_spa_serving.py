@@ -17,7 +17,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
-from app.main import app
 
 
 @pytest.fixture()
@@ -36,7 +35,7 @@ def dist(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Pat
 @pytest.fixture()
 def client() -> TestClient:
     # No `with` → the app lifespan (poller / startup collection) is not run.
-    return TestClient(app)
+    return TestClient(main.app)
 
 
 # --- index / SPA fallback --------------------------------------------------
