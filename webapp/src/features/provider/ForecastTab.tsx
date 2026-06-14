@@ -36,7 +36,15 @@ function forecastKey(f: ForecastEntry): string {
 }
 
 function forecastTitle(f: ForecastEntry): string {
-  const parts = [f.service_name || f.model_id || 'quota'];
+  const parts: string[] = [];
+  if (f.service_name) {
+    parts.push(f.service_name);
+    // Disambiguate forecasts that share a service + window but differ by model
+    // (e.g. Claude tracked per-model: "Claude · sonnet · weekly").
+    if (f.model_id && f.model_id !== f.service_name) parts.push(f.model_id);
+  } else {
+    parts.push(f.model_id || 'quota');
+  }
   if (f.window_type && f.window_type !== 'unknown') parts.push(f.window_type);
   return parts.join(' · ');
 }

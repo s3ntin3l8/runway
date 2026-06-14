@@ -5,6 +5,7 @@
 
 import { useMemo } from 'react';
 import type { CumulativeBucket } from '@/api/types';
+import { CostDonut } from '@/components/charts/CostDonut';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
@@ -136,6 +137,8 @@ function SplitTable({
   const rows = Object.entries(split ?? {}).sort(
     ([, a], [, b]) => (b.cost_usd ?? 0) - (a.cost_usd ?? 0),
   );
+  // Reasoning is rarely populated — only show its column when some row has it.
+  const hasReasoning = rows.some(([, b]) => (b.tokens_reasoning ?? 0) > 0);
   return (
     <Card>
       <CardHeader>
@@ -150,34 +153,53 @@ function SplitTable({
           <p className="py-4 text-center text-xs text-fg-subtle">No cost data in {monthLabel}.</p>
         </CardContent>
       ) : (
-        <Table>
-          <THead>
-            <TR>
-              <TH>{nameHeader}</TH>
-              <TH className="text-right">Messages</TH>
-              <TH className="text-right">Tokens</TH>
-              <TH className="text-right">Cost</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {rows.map(([name, b]) => (
-              <TR key={name}>
-                <TD className="font-medium">{name}</TD>
-                <TD className="text-right font-mono tabular">{b.msgs ?? 0}</TD>
-                <TD className="text-right font-mono tabular">
-                  {formatTokens(
-                    (b.tokens_input ?? 0) +
-                      (b.tokens_output ?? 0) +
-                      (b.tokens_cache_read ?? 0) +
-                      (b.tokens_cache_create ?? 0) +
-                      (b.tokens_reasoning ?? 0),
-                  )}
-                </TD>
-                <TD className="text-right font-mono tabular">{formatCost(b.cost_usd)}</TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        <>
+          <CardContent>
+            <CostDonut data={split ?? {}} className="h-44" />
+          </CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{nameHeader}</TH>
+                  <TH className="text-right">Messages</TH>
+                  <TH className="text-right">Input</TH>
+                  <TH className="text-right">Output</TH>
+                  <TH className="text-right">Cache read</TH>
+                  <TH className="text-right">Cache write</TH>
+                  {hasReasoning ? <TH className="text-right">Reasoning</TH> : null}
+                  <TH className="text-right">Cost</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {rows.map(([name, b]) => (
+                  <TR key={name}>
+                    <TD className="font-medium">{name}</TD>
+                    <TD className="text-right font-mono tabular">{b.msgs ?? 0}</TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatTokens(b.tokens_input ?? 0)}
+                    </TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatTokens(b.tokens_output ?? 0)}
+                    </TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatTokens(b.tokens_cache_read ?? 0)}
+                    </TD>
+                    <TD className="text-right font-mono tabular">
+                      {formatTokens(b.tokens_cache_create ?? 0)}
+                    </TD>
+                    {hasReasoning ? (
+                      <TD className="text-right font-mono tabular">
+                        {formatTokens(b.tokens_reasoning ?? 0)}
+                      </TD>
+                    ) : null}
+                    <TD className="text-right font-mono tabular">{formatCost(b.cost_usd)}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </div>
+        </>
       )}
     </Card>
   );

@@ -1,8 +1,8 @@
 // Top-sessions table with click-to-expand detail. The collapsed row stays
 // scannable (session, models, duration, messages, tokens, cost); expanding a
-// row reveals the token breakdown (input/output/cache/reasoning), the
-// per-model split, the per-agent (subagent) split with their own tokens/tool
-// calls, and total tool calls.
+// row reveals framed sections — the token breakdown (input/output/cache/
+// reasoning) chips, the per-model split, and the per-agent (subagent) split,
+// the latter two rendered as compact metric cards rather than dense tables.
 
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
@@ -36,7 +36,32 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   return (
     <div className="flex flex-col gap-2">
       <span className="text-[11px] font-medium text-fg-muted">{title}</span>
-      {children}
+      <div className="rounded-md border border-edge bg-surface-1 p-3">{children}</div>
+    </div>
+  );
+}
+
+/** Compact card for one model/agent row — a titled header plus a metric grid. */
+function MetricCard({
+  title,
+  cost,
+  metrics,
+}: {
+  title: React.ReactNode;
+  cost?: number | null;
+  metrics: { label: string; value: string }[];
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-edge bg-surface-2/40 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate">{title}</span>
+        <span className="font-mono text-xs tabular text-fg">{formatCost(cost)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-3">
+        {metrics.map((m) => (
+          <Stat key={m.label} label={m.label} value={m.value} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -52,7 +77,7 @@ function SessionDetail({ s }: { s: SessionEntry }) {
   return (
     <div className="flex flex-col gap-5 bg-surface-2/40 px-4 py-4">
       <DetailSection title="Token breakdown">
-        <div className="flex flex-wrap gap-x-8 gap-y-3">
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
           <Stat label="Input" value={formatTokens(s.tokens_input ?? 0)} />
           <Stat label="Output" value={formatTokens(s.tokens_output ?? 0)} />
           <Stat label="Cache read" value={formatTokens(cacheRead)} />
@@ -64,68 +89,44 @@ function SessionDetail({ s }: { s: SessionEntry }) {
 
       {byModel.length > 0 ? (
         <DetailSection title="By model">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-fg-subtle">
-                <tr className="text-left">
-                  <th className="py-1 pr-4 font-medium">Model</th>
-                  <th className="py-1 pr-4 text-right font-medium">Msgs</th>
-                  <th className="py-1 pr-4 text-right font-medium">In</th>
-                  <th className="py-1 pr-4 text-right font-medium">Out</th>
-                  <th className="py-1 pr-4 text-right font-medium">Cache</th>
-                  <th className="py-1 pr-4 text-right font-medium">Tools</th>
-                  <th className="py-1 pr-4 text-right font-medium">Tokens</th>
-                  <th className="py-1 text-right font-medium">Cost</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono tabular text-fg">
-                {byModel.map((m) => (
-                  <tr key={m.model_id}>
-                    <td className="py-1 pr-4 font-sans">
-                      <Badge variant="neutral">{m.model_id}</Badge>
-                    </td>
-                    <td className="py-1 pr-4 text-right">{m.msgs ?? 0}</td>
-                    <td className="py-1 pr-4 text-right">{formatTokens(m.tokens_input ?? 0)}</td>
-                    <td className="py-1 pr-4 text-right">{formatTokens(m.tokens_output ?? 0)}</td>
-                    <td className="py-1 pr-4 text-right">
-                      {formatTokens((m.tokens_cache_read ?? 0) + (m.tokens_cache_create ?? 0))}
-                    </td>
-                    <td className="py-1 pr-4 text-right">{(m.tool_calls ?? 0).toLocaleString()}</td>
-                    <td className="py-1 pr-4 text-right">{formatTokens(m.tokens_total ?? 0)}</td>
-                    <td className="py-1 text-right">{formatCost(m.cost_usd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {byModel.map((m) => (
+              <MetricCard
+                key={m.model_id}
+                title={<Badge variant="neutral">{m.model_id}</Badge>}
+                cost={m.cost_usd}
+                metrics={[
+                  { label: 'Msgs', value: (m.msgs ?? 0).toLocaleString() },
+                  { label: 'Tools', value: (m.tool_calls ?? 0).toLocaleString() },
+                  { label: 'Tokens', value: formatTokens(m.tokens_total ?? 0) },
+                  { label: 'In', value: formatTokens(m.tokens_input ?? 0) },
+                  { label: 'Out', value: formatTokens(m.tokens_output ?? 0) },
+                  {
+                    label: 'Cache',
+                    value: formatTokens((m.tokens_cache_read ?? 0) + (m.tokens_cache_create ?? 0)),
+                  },
+                ]}
+              />
+            ))}
           </div>
         </DetailSection>
       ) : null}
 
       <DetailSection title="Agents">
         {subagents.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-fg-subtle">
-                <tr className="text-left">
-                  <th className="py-1 pr-4 font-medium">Agent</th>
-                  <th className="py-1 pr-4 text-right font-medium">Turns</th>
-                  <th className="py-1 pr-4 text-right font-medium">Tools</th>
-                  <th className="py-1 pr-4 text-right font-medium">Tokens</th>
-                  <th className="py-1 text-right font-medium">Cost</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono tabular text-fg">
-                {subagents.map((a) => (
-                  <tr key={a.subagent_type}>
-                    <td className="py-1 pr-4 font-sans">{a.subagent_type}</td>
-                    <td className="py-1 pr-4 text-right">{a.turns ?? 0}</td>
-                    <td className="py-1 pr-4 text-right">{(a.tool_calls ?? 0).toLocaleString()}</td>
-                    <td className="py-1 pr-4 text-right">{formatTokens(a.tokens_total ?? 0)}</td>
-                    <td className="py-1 text-right">{formatCost(a.cost_usd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {subagents.map((a) => (
+              <MetricCard
+                key={a.subagent_type}
+                title={<span className="text-xs font-medium text-fg">{a.subagent_type}</span>}
+                cost={a.cost_usd}
+                metrics={[
+                  { label: 'Turns', value: (a.turns ?? 0).toLocaleString() },
+                  { label: 'Tools', value: (a.tool_calls ?? 0).toLocaleString() },
+                  { label: 'Tokens', value: formatTokens(a.tokens_total ?? 0) },
+                ]}
+              />
+            ))}
           </div>
         ) : (
           <span className="text-xs text-fg-subtle">No subagents — main session only.</span>
