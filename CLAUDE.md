@@ -10,14 +10,23 @@ Runway is a local-first monitoring tool for AI provider quotas with SQLite-backe
 ## Commands
 A `Makefile` wraps all common tasks — run `make help` for the full list. Key targets:
 - **Setup**: `make install` (also wires up the pre-push hook that runs lint + tests)
-- **Dev server**: `make dev` (port 8765, hot reload). `make dev-all` runs the server and sidecar together.
-- **Production**: `make run` (no reload).
+- **Dev server**: `make dev` (hot reload). `make dev-all` runs server + Vite + sidecar together. Dev defaults `RUNWAY_CONFIG_DIR` to the gitignored `./data` (override with an explicit env value) so the dev loop never touches a prod DB — see *Environments*.
+- **Production**: `make run` (no reload), or Docker (see *Environments*).
 - **Tests**: `make test` (ignores `test_browser_cookies.py` — macOS-only crypto, fails on Linux/WSL). `make test-cov` for coverage.
 - **Single test**: `pytest tests/path/to/test_file.py`
 - **Lint**: `make lint` (ruff + mypy + pip-audit). `make format` to auto-fix.
 - **Frontend**: `make web` (build the SPA into `webapp/dist` — what the server serves), `make web-dev` (Vite dev server on :5173, proxies `/api` to :8765; override target via `RUNWAY_API_URL`), `make web-test` (vitest).
-- **Sidecar**: `make sidecar` (sources `.env` so `RUNWAY_CONFIG_DIR` + `INGEST_API_KEY` align with the dev server).
+- **Sidecar**: `make sidecar` (sources `.env`; defaults `RUNWAY_CONFIG_DIR` to `./data` to match `make dev`, so its config/queue sit beside the dev DB).
 - **Secrets**: `make secrets` (gates — fails on any unbaselined credential in a tracked file; same check as CI). `make secrets-baseline` regenerates the baseline after vetting new detections.
+
+## Environments (dev vs prod)
+
+Dev and prod are meant to run side by side with **separate data dirs** — SQLite is single-writer, so never let two processes write one `runway.db`.
+
+- **Dev**: `make dev-all` (hot reload). DB + sidecar config live in the gitignored **`./data`** (Makefile defaults `RUNWAY_CONFIG_DIR` there). Disposable sandbox.
+- **Prod**: Docker. DB lives in the container's config dir (`/home/runway/.config/runway`), persisted via a host bind-mount — point it at the platform config dir (`~/.config/runway`) to keep prod data out of the repo. Attach to an existing reverse proxy with a **gitignored `docker-compose.override.yml`** (template: `docker-compose.override.example.yml`); the tracked `docker-compose.yml` stays a generic blueprint, and `docker-compose.traefik.yml` is the bundled-Traefik option. Non-localhost binds trip the multi-host gates (see *Data Model → Multi-host startup gates*).
+
+**Updates / channels**: the SPA is **baked into the server image** (`Dockerfile` copies `webapp/dist/`), so UI/server changes ship by pulling a new **server image** — `:edge` (rebuilt on every push to `main`) or `:latest`/`:vX.Y.Z` (release). The **sidecar edge channel updates only the collector binary, never the UI**. Schema upgrades are **forward-safe** (no Alembic; `init_db` runs `create_all` + idempotent `ALTER TABLE ADD COLUMN`), so bumping the image won't break an existing DB.
 
 ## Schema Fields
 When adding new card fields, update `LimitCard` in `app/models/schemas.py`, the mirror in `webapp/src/api/types.ts`, and the README.md TypeScript interface. Token breakdown fields:
@@ -58,16 +67,17 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 **Multi-host startup gates:** when `APP_HOST != 127.0.0.1`, the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, and an explicit `CORS_ORIGINS` allow-list — sidecar payloads carry tokens, and HMAC isn't confidentiality. See `docs/SECURITY.md`.
 
 ## CI/CD
-Three workflows live in `.github/workflows/`:
+The core build/release workflows in `.github/workflows/` (alongside CodeQL, dependency-review, and a GHCR image-cleanup job):
 
 - **`ci-cd.yml`** — runs on push/PR to `main` and version tags (`v*`):
   - **lint-python**: ruff, mypy, detect-secrets, pip-audit
   - **lint-docker**: hadolint
   - **frontend-check**: webapp typecheck + Vite build + vitest (reusable ci-node workflow, working-directory `webapp/`)
   - **test**: pytest with coverage uploaded to Codecov
-  - **build-and-push**: Docker image to GHCR (tags only)
+  - **build-and-push**: Docker image to GHCR — `:edge` on every push to `main`, `:latest` + version tag on a release (via the shared `docker-publish.yml`)
 - **`release-please.yml`** — opens / merges release PRs from Conventional Commits (see *Releases* below).
-- **`sidecar-release.yml`** — on version tags, builds the standalone sidecar binary with PyInstaller and attaches `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip` to the GitHub release.
+- **`sidecar-release.yml`** — manual (`workflow_dispatch`); builds the standalone sidecar with PyInstaller and attaches macOS/Windows `.zip` + Linux/Linux-CLI `.tar.gz` artifacts to a GitHub release (stable channel).
+- **`sidecar-edge.yml`** — on push to `main` touching sidecar code; rolling per-commit Linux + Linux-CLI builds stamped `<base>+edge.<sha>`, published to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag.
 
 Dependabot updates actions, pip, and npm weekly. Secrets baseline (`.secrets.baseline`) is tracked in git — required by CI.
 
