@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1](https://github.com/s3ntin3l8/runway/compare/v2.0.0...v2.0.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* expose server version in /system/settings so About shows it ([#49](https://github.com/s3ntin3l8/runway/issues/49)) ([fef5689](https://github.com/s3ntin3l8/runway/commit/fef568926953349d4e2326f9eb50500da8c3cd42))
+
 ## [2.0.0](https://github.com/s3ntin3l8/runway/compare/v1.1.0...v2.0.0) (2026-06-14)
 
 
