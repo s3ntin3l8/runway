@@ -38,6 +38,20 @@ def _naive(dt: datetime) -> datetime:
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 
+def _bucket_interior(bucket_seconds: int = 300) -> datetime:
+    """A UTC instant safely inside a single downsampling bucket.
+
+    Buckets key on ``floor(epoch / bucket_seconds)``, so samples anchored to
+    ``now`` and a few seconds apart land in *adjacent* buckets whenever the test
+    runs within those few seconds of a boundary — a real flake we hit in CI
+    (``assert 2 == 1``). Anchoring to the midpoint of the previous full bucket
+    keeps a small cluster of samples in one bucket and always in the past.
+    """
+    epoch = int(datetime.now(UTC).timestamp())
+    bucket_start = epoch - (epoch % bucket_seconds)
+    return datetime.fromtimestamp(bucket_start - bucket_seconds // 2, UTC)
+
+
 # ---------------------------------------------------------------------------
 # Bucket resolution
 # ---------------------------------------------------------------------------
@@ -88,15 +102,15 @@ def test_query_snapshots_buckets_collapse_polls(session):
 
 def test_query_snapshots_picks_latest_in_bucket(session):
     """Two snapshots in the same 5-min bucket ⇒ latest ts wins."""
-    now = datetime.now(UTC)
-    # Both within the same 5-minute boundary (5 sec apart)
+    base = _bucket_interior()
+    # Both within the same 5-minute bucket (5 sec apart), clear of either edge.
     session.add(
         QuotaSnapshot(
             provider_id="anthropic",
             account_id="user@example.com",
             window_type="weekly",
             model_id="",
-            ts=now - timedelta(seconds=10),
+            ts=base,
             pct_used=40.0,
         )
     )
@@ -106,7 +120,7 @@ def test_query_snapshots_picks_latest_in_bucket(session):
             account_id="user@example.com",
             window_type="weekly",
             model_id="",
-            ts=now - timedelta(seconds=5),
+            ts=base + timedelta(seconds=5),
             pct_used=55.0,
         )
     )
@@ -408,15 +422,15 @@ def test_query_snapshots_open_window_event_sum_correct_across_pages(session):
 
 def test_query_chart_percent_filters_null_pct_used(session):
     """A null-pct snapshot must never be the bucket representative."""
-    now = datetime.now(UTC)
-    # Both within the same 5-min bucket at days=1.
+    base = _bucket_interior()
+    # Both within the same 5-min bucket at days=1; the null sample is the later one.
     session.add(
         QuotaSnapshot(
             provider_id="anthropic",
             account_id="user@example.com",
             window_type="weekly",
             model_id="",
-            ts=now - timedelta(seconds=20),
+            ts=base,
             pct_used=42.0,
         )
     )
@@ -426,7 +440,7 @@ def test_query_chart_percent_filters_null_pct_used(session):
             account_id="user@example.com",
             window_type="weekly",
             model_id="",
-            ts=now - timedelta(seconds=5),
+            ts=base + timedelta(seconds=5),
             pct_used=None,
         )
     )
