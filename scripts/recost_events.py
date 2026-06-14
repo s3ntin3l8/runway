@@ -55,6 +55,14 @@ from app.services.window_closer import close_window  # noqa: E402
 
 _SKIP_PROVIDERS = ("opencode", "opencode-free")
 
+# Phase D commits and expunges every _WINDOW_BATCH window rebuilds. close_window()
+# loads events and writes window rows into the session, so without periodic
+# expunge_all() the identity map accumulates the whole event + window set and
+# every select()'s autoflush degrades to O(n) — quadratic over the run, which
+# hangs on large providers (anthropic: ~90k events / ~11k windows) while
+# finishing fine on small ones. Recycling the map keeps each batch flat.
+_WINDOW_BATCH = 200
+
 
 def _event_scope(stmt, providers: list[str] | None, since: date | None):
     stmt = stmt.where(UsageEvent.kind == "message")
@@ -140,7 +148,12 @@ def phase_c_rollups(
         for i, ev in enumerate(events, 1):
             update_rollups_for_event(session, ev)
             if i % 1000 == 0:
+                session.commit()
                 print(f"  …{i:,}", flush=True)
+        # Own the commit: update_rollups_for_event leaves the last partial batch
+        # pending, and a prior version relied on Phase D's commit to flush it —
+        # so --skip-windows silently dropped the rebuild.
+        session.commit()
     return len(events)
 
 
@@ -176,8 +189,10 @@ def phase_d_windows(
         else:
             session.exec(delete(UsageWindow))
         session.commit()
+        # Drop any rows the earlier phases loaded so the rebuild map starts empty.
+        session.expunge_all()
 
-        for (pid, aid, wtype, start, end), (lv, pu) in window_index.items():
+        for i, ((pid, aid, wtype, start, end), (lv, pu)) in enumerate(window_index.items(), 1):
             close_window(
                 session,
                 provider_id=pid,
@@ -188,7 +203,12 @@ def phase_d_windows(
                 limit_value=lv,
                 pct_used=pu,
             )
+            if i % _WINDOW_BATCH == 0:
+                session.commit()
+                session.expunge_all()  # bound the identity map — see _WINDOW_BATCH
+                print(f"  …{i:,}/{len(window_index):,}", flush=True)
         session.commit()
+        session.expunge_all()
 
     return len(window_index)
 
