@@ -95,6 +95,23 @@ describe('ForecastTab', () => {
     expect(await screen.findAllByText(/daily/i)).not.toHaveLength(0);
   });
 
+  it('distinguishes forecasts by model_id in the picker labels', async () => {
+    vi.mocked(api.fetchForecast).mockResolvedValue(
+      forecastResponse([
+        forecastEntry({ window_type: 'weekly', service_name: 'Claude', model_id: 'sonnet' }),
+        forecastEntry({ window_type: 'weekly', service_name: 'Claude', model_id: 'opus' }),
+      ]),
+    );
+    renderWithProviders(
+      <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
+    );
+    const combo = await screen.findByRole('combobox');
+    await userEvent.click(combo);
+    // The selected label also shows in the trigger, so both can appear twice.
+    expect((await screen.findAllByText('Claude · sonnet · weekly')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Claude · opus · weekly')).length).toBeGreaterThan(0);
+  });
+
   it('shows the no-forecast empty state', async () => {
     vi.mocked(api.fetchForecast).mockResolvedValue(forecastResponse([]));
     renderWithProviders(

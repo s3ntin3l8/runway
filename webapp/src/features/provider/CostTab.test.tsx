@@ -15,6 +15,10 @@ vi.mock('@/api/endpoints');
 vi.mock('@/features/history/HistoryChart', () => ({
   HistoryChart: () => <div data-testid="history-chart" />,
 }));
+// CostDonut renders ECharts (no canvas in jsdom): stub to a marker.
+vi.mock('@/components/charts/CostDonut', () => ({
+  CostDonut: () => <div data-testid="cost-donut" />,
+}));
 
 describe('CostTab', () => {
   beforeEach(() => {
@@ -46,6 +50,13 @@ describe('CostTab', () => {
     expect(await screen.findByText('claude-opus')).toBeInTheDocument();
     expect(screen.getByText(/^Cost by sidecar ·/)).toBeInTheDocument();
     expect(await screen.findByText('laptop')).toBeInTheDocument();
+    // Split token columns replace the old single "Tokens" column.
+    expect(screen.getAllByText('Input').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Output').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Cache read').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Cache write').length).toBeGreaterThan(0);
+    // Each split card pairs a cost donut with its table.
+    expect(screen.getAllByTestId('cost-donut').length).toBe(2);
   });
 
   it('shows the empty split message with no month bucket', async () => {
