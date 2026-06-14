@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0](https://github.com/s3ntin3l8/runway/compare/v2.2.0...v2.3.0) (2026-06-14)
+
+
+### Features
+
+* **provider:** polish forecast picker, cost tab, and session detail ([#68](https://github.com/s3ntin3l8/runway/issues/68)) ([008dfc2](https://github.com/s3ntin3l8/runway/commit/008dfc2a075a5f2e733bdcf7d7d98336c15c3a7f))
+* **provider:** selection-aware donut totals + exclude-cache toggle ([306bba7](https://github.com/s3ntin3l8/runway/commit/306bba7aabb78bd50524f8f804b68e57b9dd52ae))
+* **ui:** show server version at bottom of desktop rail ([f095bff](https://github.com/s3ntin3l8/runway/commit/f095bff41fb0266c36d6b68aa7140acf3a8f020f))
+
+
+### Bug Fixes
+
+* **charts:** polish activity-by-hour heatmap layout ([fa5731b](https://github.com/s3ntin3l8/runway/commit/fa5731b4dd40700dbebfe6901a67b40b22a859a3))
+* **sidecar:** retry transient GitHub errors during self-update ([#61](https://github.com/s3ntin3l8/runway/issues/61)) ([82cb9c1](https://github.com/s3ntin3l8/runway/commit/82cb9c1e4f292de7368c2c6af92dda1310ee2cbe))
+
 ## [2.2.0](https://github.com/s3ntin3l8/runway/compare/v2.1.0...v2.2.0) (2026-06-14)
 
 
