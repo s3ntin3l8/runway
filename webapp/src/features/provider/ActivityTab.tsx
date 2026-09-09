@@ -90,7 +90,7 @@ export function ActivityTab({
           <CardContent>
             {cumulative.isPending ? (
               <Skeleton className="h-56 w-full" />
-            ) : hasTokenData(monthBucket) ? (
+            ) : hasTokenData(monthBucket, excludeCache) ? (
               <TokenDonut bucket={monthBucket} excludeCache={excludeCache} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">

@@ -183,7 +183,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
           <CardContent>
             {cumulative.isPending ? (
               <Skeleton className="h-44 w-full" />
-            ) : hasTokenData(monthBucket) ? (
+            ) : hasTokenData(monthBucket, excludeCache) ? (
               <TokenDonut bucket={monthBucket} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">No usage this month.</p>

@@ -24,12 +24,14 @@ export function sumTokens(
 
 // True when the bucket has any token data worth rendering — used to gate
 // donut/bar charts so an all-zero rollup doesn't render an empty pie ring.
-// Always evaluates against the full token total (cache included), since the
-// cache-hit metric depends on it and a "no tokens at all" bucket is the
-// empty-state condition regardless of the toggle. Type predicate so callers
-// can pass a nullable bucket and use it non-null after the check.
+// Honours `excludeCache` so the gate matches what the chart will actually
+// draw: with the toggle on, a bucket carrying only cache components would
+// otherwise pass this check but render empty after `TokenDonut` filters
+// the cache slices out. Type predicate so callers can pass a nullable
+// bucket and use it non-null after the check.
 export function hasTokenData(
   b: CumulativeModelBucket | null | undefined,
+  excludeCache = false,
 ): b is CumulativeModelBucket {
-  return sumTokens(b) > 0;
+  return sumTokens(b, excludeCache) > 0;
 }

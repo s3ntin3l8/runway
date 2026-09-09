@@ -59,4 +59,13 @@ describe('hasTokenData', () => {
     expect(hasTokenData(bucket({ tokens_reasoning: 1 }))).toBe(true);
     expect(hasTokenData(bucket({ tokens_cache_read: 1 }))).toBe(true);
   });
+
+  it('gates cache-only buckets out when excludeCache is true', () => {
+    // Bucket with only cache tokens passes by default (would render the
+    // donut), but with excludeCache it must NOT pass — TokenDonut filters
+    // cache slices out and would otherwise render an empty ring.
+    const cacheOnly = bucket({ tokens_cache_read: 700, tokens_cache_create: 140 });
+    expect(hasTokenData(cacheOnly)).toBe(true);
+    expect(hasTokenData(cacheOnly, true)).toBe(false);
+  });
 });
