@@ -135,11 +135,13 @@ export function modelLabel(modelId: string): string {
     .join(' ');
 }
 
-// Label for a secondary-limit chip. Falls back to the window when the
-// service name would just repeat its siblings (Claude weekly vs Claude
-// session both render "Claude" otherwise). When a window is model-scoped
-// (e.g. Claude's Sonnet-specific weekly alongside the generic weekly) the
-// base would still collapse to "Weekly" for both, so append the model.
+// Label for a secondary-limit chip. Always prefers the window as the base
+// ("Session" / "Weekly" / "Monthly") so the badge doesn't repeat the provider
+// name that's already in the card header. When a window is model-scoped (e.g.
+// Claude's Sonnet-specific weekly alongside the generic weekly) the base
+// would still collapse to "Weekly" for both, so append the model. When
+// multiple siblings share the same window_type (e.g. Antigravity's gemini
+// session vs frontier session) append the variant to disambiguate.
 // Match a quota card to its forecast entry from a flat forecasts array.
 // Prefer an exact (window_type, variant, model_id) match; fall back to
 // window_type alone. Returns null when no matching forecast exists.
@@ -160,19 +162,29 @@ export function findForecast(card: LimitCard, forecasts: ForecastEntry[]): Forec
 
 export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
   const name = card.service_name || card.model_id || '';
-  const duplicated = siblings.filter((s) => (s.service_name || s.model_id) === name).length > 1;
   const win = windowLabel(card);
-  let base = duplicated && win ? win : name || win || '?';
+  let base = win || name || '?';
+  // Count siblings sharing the same window_type — model/variant suffixes are
+  // only worth appending when siblings would otherwise render identically.
+  const sameWinSiblings = siblings.filter((s) => s.window_type === card.window_type);
   if (
     card.model_id &&
     name !== card.model_id &&
-    base.toLowerCase() !== card.model_id.toLowerCase()
+    base.toLowerCase() !== card.model_id.toLowerCase() &&
+    sameWinSiblings.length > 1
   ) {
     base = `${base} · ${modelLabel(card.model_id)}`;
   }
-  if (!card.variant) return base;
-  // Capitalize the first letter so pool variants like "gemini"/"frontier" render
-  // as "Gemini"/"Frontier" rather than bare lowercase.
-  const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
-  return `${base} ${variantLabel}`;
+  if (card.variant && sameWinSiblings.length > 1) {
+    // Capitalize the first letter so pool variants like "gemini"/"frontier" render
+    // as "Gemini"/"Frontier" rather than bare lowercase. Only appended when a
+    // sibling shares the same window_type but carries a different (or absent)
+    // variant — otherwise the window alone is unambiguous.
+    const hasDifferentVariant = sameWinSiblings.some((s) => s.variant !== card.variant);
+    if (hasDifferentVariant) {
+      const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
+      base = `${base} · ${variantLabel}`;
+    }
+  }
+  return base;
 }
