@@ -107,6 +107,34 @@ describe('OverviewTab', () => {
     expect(await screen.findByText(/no usage this month/i)).toBeInTheDocument();
   });
 
+  it('falls back to an empty token-mix message when the month bucket has no tokens', async () => {
+    // Bucket exists (the provider has quota data and is being scraped) but no
+    // sidecar has fed any token events yet — a present-but-zero rollup would
+    // otherwise render an empty donut ring.
+    vi.mocked(api.fetchCumulative).mockResolvedValue(
+      cumulativeResponse({
+        cumulative: [
+          {
+            provider_id: 'anthropic',
+            account_id: 'me@example.com',
+            '2026-06': {
+              tokens_input: 0,
+              tokens_output: 0,
+              tokens_cache_read: 0,
+              tokens_cache_create: 0,
+              tokens_reasoning: 0,
+              msgs: 0,
+            },
+            lifetime: {},
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
+    expect(await screen.findByText(/no usage this month/i)).toBeInTheDocument();
+    expect(screen.queryAllByTestId('token-donut')).toHaveLength(0);
+  });
+
   it('respects the exclude-cache toggle in the tokens-kind "Token usage" total', async () => {
     // Same excludeCache-respecting total as the ProviderKpis "Tokens (total)" tile
     // rendered above it — scope queries to this card so the two "1K"s don't collide.

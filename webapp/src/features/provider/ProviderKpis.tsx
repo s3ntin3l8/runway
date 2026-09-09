@@ -3,21 +3,12 @@
 // token total + message count; spend providers show MTD + projected EOM.
 
 import { useMemo } from 'react';
-import type { CumulativeBucket, CumulativeModelBucket, FleetEntry } from '@/api/types';
+import type { CumulativeBucket, FleetEntry } from '@/api/types';
 import { StatTile } from '@/components/ui/StatTile';
+import { sumTokens } from '@/lib/cumulative';
 import { formatCost, formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, cardPct, cardStatus, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import { useProviderCostForecast, useProviderCumulative, useProviderForecast } from './queries';
-
-function sumTokens(b: CumulativeModelBucket | null | undefined, excludeCache = false): number {
-  if (!b) return 0;
-  return (
-    (b.tokens_input ?? 0) +
-    (b.tokens_output ?? 0) +
-    (excludeCache ? 0 : (b.tokens_cache_read ?? 0) + (b.tokens_cache_create ?? 0)) +
-    (b.tokens_reasoning ?? 0)
-  );
-}
 
 export function ProviderKpis({
   entry,

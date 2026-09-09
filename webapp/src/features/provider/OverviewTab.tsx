@@ -13,6 +13,7 @@ import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
+import { hasTokenData } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import { CostOutlookCard } from './CostOutlookCard';
@@ -182,7 +183,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
           <CardContent>
             {cumulative.isPending ? (
               <Skeleton className="h-44 w-full" />
-            ) : monthBucket ? (
+            ) : hasTokenData(monthBucket, excludeCache) ? (
               <TokenDonut bucket={monthBucket} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">No usage this month.</p>

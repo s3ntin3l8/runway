@@ -11,6 +11,7 @@ import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { hasTokenData } from '@/lib/cumulative';
 import { getUserTz } from '@/lib/tz';
 import { TopProjectsCard } from '@/features/insights/TopProjectsCard';
 import type { TabScope } from './period';
@@ -89,7 +90,7 @@ export function ActivityTab({
           <CardContent>
             {cumulative.isPending ? (
               <Skeleton className="h-56 w-full" />
-            ) : monthBucket ? (
+            ) : hasTokenData(monthBucket, excludeCache) ? (
               <TokenDonut bucket={monthBucket} excludeCache={excludeCache} />
             ) : (
               <p className="py-8 text-center text-xs text-fg-subtle">
