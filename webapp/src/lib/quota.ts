@@ -135,13 +135,6 @@ export function modelLabel(modelId: string): string {
     .join(' ');
 }
 
-// Label for a secondary-limit chip. Always prefers the window as the base
-// ("Session" / "Weekly" / "Monthly") so the badge doesn't repeat the provider
-// name that's already in the card header. When a window is model-scoped (e.g.
-// Claude's Sonnet-specific weekly alongside the generic weekly) the base
-// would still collapse to "Weekly" for both, so append the model. When
-// multiple siblings share the same window_type (e.g. Antigravity's gemini
-// session vs frontier session) append the variant to disambiguate.
 // Match a quota card to its forecast entry from a flat forecasts array.
 // Prefer an exact (window_type, variant, model_id) match; fall back to
 // window_type alone. Returns null when no matching forecast exists.
@@ -160,31 +153,55 @@ export function findForecast(card: LimitCard, forecasts: ForecastEntry[]): Forec
   );
 }
 
-export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
+// Build the chip label for a card *as if* it had no last-resort name
+// safeguard. Used internally to compare what siblings would render, so the
+// safeguard only fires when a sibling truly collapses to the same string.
+function chipBaseLabel(card: LimitCard, sameWinSiblings: LimitCard[]): string {
   const name = card.service_name || card.model_id || '';
   const win = windowLabel(card);
-  let base = win || name || '?';
-  // Count siblings sharing the same window_type — model/variant suffixes are
-  // only worth appending when siblings would otherwise render identically.
-  const sameWinSiblings = siblings.filter((s) => s.window_type === card.window_type);
+  const base = win || name || '?';
   if (
     card.model_id &&
     name !== card.model_id &&
     base.toLowerCase() !== card.model_id.toLowerCase() &&
-    sameWinSiblings.length > 1
+    sameWinSiblings.some((s) => !s.model_id || s.model_id !== card.model_id)
   ) {
-    base = `${base} · ${modelLabel(card.model_id)}`;
+    return `${base} · ${modelLabel(card.model_id)}`;
   }
-  if (card.variant && sameWinSiblings.length > 1) {
-    // Capitalize the first letter so pool variants like "gemini"/"frontier" render
-    // as "Gemini"/"Frontier" rather than bare lowercase. Only appended when a
-    // sibling shares the same window_type but carries a different (or absent)
-    // variant — otherwise the window alone is unambiguous.
-    const hasDifferentVariant = sameWinSiblings.some((s) => s.variant !== card.variant);
-    if (hasDifferentVariant) {
-      const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
-      base = `${base} · ${variantLabel}`;
-    }
+  if (card.variant && sameWinSiblings.some((s) => s.variant !== card.variant)) {
+    const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
+    return `${base} · ${variantLabel}`;
+  }
+  return base;
+}
+
+// Label for a secondary-limit chip. Always prefers the window as the base
+// ("Session" / "Weekly" / "Monthly") so the badge doesn't repeat the provider
+// name that's already in the card header. When a window is model-scoped (e.g.
+// Claude's Sonnet-specific weekly alongside the generic weekly) the base
+// would still collapse to "Weekly" for both, so append the model. When
+// multiple siblings share the same window_type (e.g. Antigravity's gemini
+// session vs frontier session) append the variant to disambiguate. As a
+// last-resort safeguard, if after model/variant suffixing a sibling would
+// still render the same bare label, append the service_name so the two
+// badges don't silently collapse.
+export function chipLabel(card: LimitCard, siblings: LimitCard[]): string {
+  const name = card.service_name || card.model_id || '';
+  const sameWinSiblings = siblings.filter((s) => s.window_type === card.window_type);
+  const base = chipBaseLabel(card, sameWinSiblings);
+  // Last-resort safeguard: a sibling shares the window_type AND has a
+  // different service_name AND would, after all model/variant suffixing,
+  // still render identically to this card. No current collector hits this
+  // path — the collapse would be silent and confusing.
+  if (
+    name &&
+    base !== name &&
+    base !== '?' &&
+    sameWinSiblings.some(
+      (s) => s.service_name !== name && chipBaseLabel(s, sameWinSiblings) === base,
+    )
+  ) {
+    return `${base} · ${name}`;
   }
   return base;
 }

@@ -137,6 +137,12 @@ describe('chipLabel', () => {
     const c = card({ service_name: 'Tokens', window_type: 'unknown' });
     expect(chipLabel(c, [c])).toBe('Tokens');
   });
+  it('appends service_name when same-window siblings differ only in name (footgun guard)', () => {
+    const a = card({ service_name: 'Pool A', window_type: 'daily' });
+    const b = card({ service_name: 'Pool B', window_type: 'daily' });
+    expect(chipLabel(a, [a, b])).toBe('Daily · Pool A');
+    expect(chipLabel(b, [a, b])).toBe('Daily · Pool B');
+  });
 });
 
 describe('modelLabel', () => {
