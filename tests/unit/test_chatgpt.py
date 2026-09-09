@@ -383,6 +383,103 @@ class TestChatGPTCollectorDetailed:
             assert codex_card["tier"] == "plus"
 
     @pytest.mark.asyncio
+    async def test_codex_plus_emits_session_and_weekly_windows(self, mock_http_client):
+        """Regression for the real Codex Plus payload: primary_window (5h session)
+        and secondary_window (7d weekly) must both surface as cards, distinguished
+        by window_type, instead of only the primary window under a hardcoded
+        "monthly" label."""
+        collector = ChatGPTCollector()
+
+        usage_data = {
+            "plan_type": "plus",
+            "email": "s3ntin3l8@gmail.com",
+            "rate_limit": {
+                "allowed": True,
+                "limit_reached": False,
+                "primary_window": {
+                    "used_percent": 3,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": 13911,
+                    "reset_at": 1788963175,
+                },
+                "secondary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 600711,
+                    "reset_at": 1789549975,
+                },
+            },
+        }
+
+        usage_resp = MagicMock(spec=httpx.Response)
+        usage_resp.status_code = 200
+        usage_resp.headers = {}
+        usage_resp.json.return_value = usage_data
+        mock_http_client.request.side_effect = [usage_resp]
+
+        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
+            results = await collector.collect(mock_http_client)
+
+        assert len(results) == 2
+        by_window = {r["window_type"]: r for r in results}
+        assert set(by_window) == {"session", "weekly"}
+
+        session_card = by_window["session"]
+        assert session_card["variant"] == "Codex"
+        assert session_card["tier"] == "plus"
+        assert session_card["used_value"] == 3.0
+        assert session_card["pct_used"] == 3.0
+        assert session_card["reset_at"] == datetime.fromtimestamp(
+            1788963175, tz=UTC
+        ).isoformat()
+
+        weekly_card = by_window["weekly"]
+        assert weekly_card["variant"] == "Codex"
+        assert weekly_card["tier"] == "plus"
+        # A fresh weekly allowance (0% used) must still render, not be hidden.
+        assert weekly_card["used_value"] == 0.0
+        assert weekly_card["pct_used"] == 0.0
+        assert weekly_card["reset_at"] == datetime.fromtimestamp(
+            1789549975, tz=UTC
+        ).isoformat()
+
+    @pytest.mark.asyncio
+    async def test_codex_free_emits_single_monthly_window(
+        self, mock_http_client, chatgpt_usage_response
+    ):
+        """Free/Go-shaped payloads (no secondary_window, no limit_window_seconds)
+        keep emitting exactly one card, classified "monthly" as before."""
+        collector = ChatGPTCollector()
+
+        usage_resp = MagicMock(spec=httpx.Response)
+        usage_resp.status_code = 200
+        usage_resp.headers = {}
+        usage_resp.json.return_value = chatgpt_usage_response
+        mock_http_client.request.side_effect = [usage_resp]
+
+        with patch.dict("os.environ", {"CHATGPT_OAUTH_TOKEN": "token"}):
+            results = await collector.collect(mock_http_client)
+
+        assert len(results) == 1
+        assert results[0]["window_type"] == "monthly"
+
+    @pytest.mark.parametrize(
+        "seconds,expected",
+        [
+            (18000, "session"),
+            (604800, "weekly"),
+            (86400, "daily"),
+            (2592000, "monthly"),
+            (None, "monthly"),
+        ],
+    )
+    def test_classify_window_seconds(self, seconds, expected):
+        """Direct unit coverage of the limit_window_seconds -> window_type map."""
+        from app.services.collectors.chatgpt_web import _classify_window_seconds
+
+        assert _classify_window_seconds(seconds) == expected
+
+    @pytest.mark.asyncio
     @pytest.mark.skip(reason="local strategy moved to sidecar")
     async def test_local_enrichment_injects_tokens(self, mock_http_client):
         """Verify local enrichment injects token_usage into primary Codex card."""

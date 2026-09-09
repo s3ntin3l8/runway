@@ -8,7 +8,7 @@ ChatGPT Codex quota collector with an `api` (executed against the web endpoint w
 ## Overview
 
 - **Collection Strategy**: api (Web API / Cookie) → local (CLI RPC / Logs, via sidecar)
-- **Cards**: 1 card (primary window usage)
+- **Cards**: 1-2 cards per `rate_limit` window Codex reports — a `session` (5h) card from `primary_window`, plus a `weekly` card from `secondary_window` when the plan reports one (Plus/Pro). Free/Go plans that report only `primary_window` still get a single card.
 - **Authentication**: `CHATGPT_OAUTH_TOKEN` (api), `~/.codex/auth.json` (sidecar-discovered), or Chrome cookies (web).
 
 ## Setup Methods Quick Overview
@@ -47,27 +47,60 @@ The ChatGPT collector supports multiple authentication and data collection metho
 
 ## Output Format
 
+Codex's `wham/usage` payload carries up to two independent windows under
+`rate_limit`: `primary_window` (a rolling 5h session window) and
+`secondary_window` (a 7d weekly window, reported by Plus/Pro plans). Each
+present window becomes its own card, classified by its own
+`limit_window_seconds` rather than by `plan_type` — so a plan we haven't seen
+a payload for still classifies correctly. A window missing
+`limit_window_seconds` falls back to `window_type: "monthly"` (the legacy
+free/Go shape).
+
 ```python
-{
-    "service": "ChatGPT Codex",
-    "icon": "💬",
-    "remaining": "54.5%",
-    "unit": "remaining",
-    "reset": "Resets in 4h 30m",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "API: wham/usage",
-    "used_value": 45.5,
-    "limit_value": 100.0,
-    "is_unlimited": False,
-    "unit_type": "percent",
-    "reset_at": "2026-04-07T15:00:00+00:00",
-    "data_source": "api",
-    "input_source": "config",
-    "tier": "plus",
-    "usage_url": "https://chatgpt.com/codex/settings/usage/",
-    "updated_at": "2026-04-07T10:30:00+00:00",
-}
+[
+    {
+        "service_name": "ChatGPT",
+        "variant": "Codex",
+        "window_type": "session",
+        "icon": "💬",
+        "remaining": "97.0%",
+        "unit": "remaining",
+        "reset": "Resets in 3h 51m",
+        "health": "good",
+        "pace": "Stable",
+        "detail": "PLUS Account · user@example.com · 3.0% used (5h)",
+        "used_value": 3.0,
+        "limit_value": 100.0,
+        "pct_used": 3.0,
+        "unit_type": "percent",
+        "reset_at": "2026-01-08T02:19:35+00:00",
+        "data_source": "api",
+        "input_source": "config",
+        "tier": "plus",
+        "updated_at": "2026-01-07T22:26:04+00:00",
+    },
+    {
+        "service_name": "ChatGPT",
+        "variant": "Codex",
+        "window_type": "weekly",
+        "icon": "💬",
+        "remaining": "100.0%",
+        "unit": "remaining",
+        "reset": "Resets in 6d 22h",
+        "health": "good",
+        "pace": "Stable",
+        "detail": "PLUS Account · user@example.com · 0.0% used (weekly)",
+        "used_value": 0.0,
+        "limit_value": 100.0,
+        "pct_used": 0.0,
+        "unit_type": "percent",
+        "reset_at": "2026-01-14T22:19:35+00:00",
+        "data_source": "api",
+        "input_source": "config",
+        "tier": "plus",
+        "updated_at": "2026-01-07T22:26:04+00:00",
+    },
+]
 ```
 
 ## Configuration
@@ -119,4 +152,4 @@ If automatic browser extraction is not working (e.g., in Docker or headless envi
 - **Token Source**: Browser DevTools -> Application -> Cookies -> `https://chatgpt.com` -> `__Secure-next-auth.session-token`.
 - **Note**: This is a fallback method. Runway will attempt to exchange this for a Bearer token.
 
-*Last updated: 2026-05-21*
+*Last updated: 2026-09-09*
