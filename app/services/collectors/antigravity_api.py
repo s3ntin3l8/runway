@@ -275,7 +275,7 @@ class AntigravityApiMixin:
                     pool_id = f"antigravity:{pool_family}:{win}"
 
                     card = {
-                        "service_name": f"{group_name} – {display_name}",
+                        "service_name": pool_family.capitalize(),
                         "icon": "🛸",
                         "remaining": f"{pct_used:.1f}%",
                         "unit": "used",
