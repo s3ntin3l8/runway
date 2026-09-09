@@ -1,6 +1,10 @@
 """Parse OpenCode SQLite database into UsageEventPush records.
 
-OpenCode stores messages in a SQLite database (~/.local/share/opencode/opencode.db).
+OpenCode stores messages in a SQLite database. The default location is
+`~/.local/share/opencode/opencode.db`, but some installs use the flatter
+`~/.opencode/opencode.db` — the sidecar's `_discover_opencode_db_path` checks
+both.
+
 Each assistant message row in the `message` table has:
   - id: TEXT primary key (e.g. "msg_<hash>")
   - session_id: TEXT (direct column, not in JSON)
