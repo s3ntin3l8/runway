@@ -35,13 +35,14 @@ The OpenCode collector supports the following authentication methods:
 **Response:** JavaScript with regex-parsable usage data
 
 ### Secondary: Sidecar Events
-Per-message events extracted from `~/.local/share/opencode/opencode.db` on each host
-are pushed by the sidecar and ingested into `usage_events`. The dashboard derives
-per-model and per-sidecar splits from those events via `usage_period_rollup` and the
-`/api/v1/usage/fleet` `window_aggregations` field.
+Per-message events extracted from `~/.local/share/opencode/opencode.db` (or
+`~/.opencode/opencode.db` on installs that use the flatter location) on each
+host are pushed by the sidecar and ingested into `usage_events`. The dashboard
+derives per-model and per-sidecar splits from those events via
+`usage_period_rollup` and the `/api/v1/usage/fleet` `window_aggregations` field.
 
 ### Tier 2: local (SQLite DB)
-**Location:** `~/.local/share/opencode/opencode.db`
+**Location:** `~/.local/share/opencode/opencode.db` or `~/.opencode/opencode.db`
 **Mechanism:** Directly reads the message database for cost snapshots.
 **Windows:** 5h ($12), 7d ($30), 30d ($60) limits.
 
@@ -161,6 +162,8 @@ The `auth` cookie was sent to OpenCode but not recognised. Causes:
 
 ### Database not found
 **Fix:** Use OpenCode IDE at least once to create `~/.local/share/opencode/opencode.db`
+(or `~/.opencode/opencode.db`, depending on the install). Check both locations
+if events still aren't being ingested.
 
 ## Related Files
 

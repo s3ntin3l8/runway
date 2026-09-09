@@ -880,3 +880,36 @@ class TestAutoUpdatePrecedence:
     def test_unset_local_defers_to_server_false(self, monkeypatch):
         self._set(monkeypatch, None, False)
         assert sidecar._auto_update_enabled() is False
+
+
+class TestOpencodeDbPath:
+    """_discover_opencode_db_path: tries the XDG path first, then ~/.opencode."""
+
+    def _candidates(self, monkeypatch, *paths: str) -> None:
+        """Map sequential calls to os.path.expanduser to the given paths."""
+        iter_paths = iter(paths)
+        monkeypatch.setattr(sidecar.os.path, "expanduser", lambda _: next(iter_paths))
+
+    def test_returns_none_when_no_candidate_exists(self, tmp_path, monkeypatch):
+        missing_a = str(tmp_path / "xdg" / "opencode.db")
+        missing_b = str(tmp_path / "flat" / "opencode.db")
+        self._candidates(monkeypatch, missing_a, missing_b)
+        assert sidecar._discover_opencode_db_path() is None
+
+    def test_prefers_xdg_path_when_both_exist(self, tmp_path, monkeypatch):
+        xdg = tmp_path / "xdg" / "opencode.db"
+        xdg.parent.mkdir(parents=True)
+        xdg.touch()
+        flat = tmp_path / "flat" / "opencode.db"
+        flat.parent.mkdir(parents=True)
+        flat.touch()
+        self._candidates(monkeypatch, str(xdg), str(flat))
+        assert sidecar._discover_opencode_db_path() == xdg
+
+    def test_falls_back_to_flat_path_when_xdg_missing(self, tmp_path, monkeypatch):
+        missing_xdg = str(tmp_path / "xdg" / "opencode.db")
+        flat = tmp_path / "opencode" / "opencode.db"
+        flat.parent.mkdir(parents=True)
+        flat.touch()
+        self._candidates(monkeypatch, missing_xdg, str(flat))
+        assert sidecar._discover_opencode_db_path() == flat

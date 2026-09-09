@@ -2059,9 +2059,18 @@ def _discover_gemini_log_paths() -> list[Path]:
 
 
 def _discover_opencode_db_path() -> Path | None:
-    """Return the path to the OpenCode SQLite database, or None if not found."""
+    """Return the path to the OpenCode SQLite database, or None if not found.
+
+    The OpenCode CLI has shipped its SQLite database under two different
+    locations: the XDG-conformant ``~/.local/share/opencode/opencode.db``
+    (default) and the flatter ``~/.opencode/opencode.db`` (seen on some
+    Linux installs). Check both so token usage events get ingested
+    regardless of which the local install chose; the missing path is a
+    no-op on platforms that use neither.
+    """
     candidates = [
         os.path.expanduser("~/.local/share/opencode/opencode.db"),
+        os.path.expanduser("~/.opencode/opencode.db"),
     ]
     for p in candidates:
         path = Path(p)

@@ -299,6 +299,7 @@
           "type": "sqlite",
           "paths": [
             "~/.local/share/opencode/opencode.db",
+            "~/.opencode/opencode.db",
             "{{DATA_DIR:opencode}}/opencode.db"
           ],
           "queries": [
