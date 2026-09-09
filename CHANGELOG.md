@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.8...v2.11.9) (2026-09-09)
+
+
+### Bug Fixes
+
+* **chatgpt:** preserve full Codex model slugs, capture effort, fix pricing ([#253](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/253)) ([fd2a219](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fd2a21901dc8fa1397f3091f5f7e1976ef1aad6d))
+* **sidecar:** also look for opencode.db at ~/.opencode/opencode.db ([#258](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/258)) ([2f0d7c6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2f0d7c6a222afb9c393731caab59018446106a9f))
+* **ui:** always show window in badge labels, drop redundant provider prefix ([#255](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/255)) ([1724362](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1724362f3f4f94437c0115e4a927fdaec08a8808))
+* **webapp:** show empty-state for token-mix donut when bucket has no tokens ([#257](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/257)) ([f873032](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f8730320ed3b7efc4b46f2240f82661ce61c4d28))
+
 ## [2.11.8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.7...v2.11.8) (2026-09-09)
 
 
