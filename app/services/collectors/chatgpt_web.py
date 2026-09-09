@@ -24,9 +24,13 @@ _WINDOW_SECONDS_THRESHOLDS: tuple[tuple[int, str], tuple[int, str], tuple[int, s
 def _classify_window_seconds(seconds: float | None) -> str:
     """Map a window duration in seconds to the canonical window_type enum.
 
-    `limit_window_seconds` is absent from older/free-tier payloads (see
-    tests/fixtures/mock_data.py) — falls back to "monthly" there, preserving
-    today's behavior for the shapes we've actually observed without it.
+    Two distinct cases both fall through to "monthly": `limit_window_seconds`
+    absent (free/Go payloads never send it — see tests/fixtures/mock_data.py,
+    preserving today's behavior for that shape) and `limit_window_seconds`
+    present but > 10 days (a genuine month-or-longer window, should one ever
+    appear). Deliberate — both describe a month-or-longer cadence, and nothing
+    downstream (WINDOW_RANK, forecasting) distinguishes "explicit monthly"
+    from "unknown, but at least monthly-length".
     """
     if seconds is None:
         return "monthly"

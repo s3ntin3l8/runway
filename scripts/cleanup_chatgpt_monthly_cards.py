@@ -62,6 +62,9 @@ def _filters(account_id: str) -> list:
         LatestUsage.provider_id == _PROVIDER,
         LatestUsage.window_type == _WINDOW_TYPE,
         LatestUsage.account_id == account_id,
+        # ChatGPT cards are never model-scoped; pin this explicitly so the
+        # script can never touch a hypothetical per-model monthly row.
+        LatestUsage.model_id == "",
     ]
 
 

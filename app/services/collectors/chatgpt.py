@@ -55,18 +55,13 @@ class ChatGPTCollector(
         """
         Extract reset_at from primary cards so enrichment can align its window boundaries.
 
-        Primary can now carry both a session (5h) and a weekly card (Plus/Pro
-        report both windows) — prefer the session card's reset_at explicitly
-        rather than relying on emission order, falling back to the first card
-        with a reset_at for any shape we haven't seen.
+        Unused today — ChatGPT declares no enrichment strategies (local
+        enrichment moved to the sidecar), so _primary_reset_at has no reader.
+        Kept as a hook for if/when that changes.
         """
 
         self._primary_reset_at = None
-        session_card = next((c for c in primary if c.get("window_type") == "session"), None)
-        ordered = [session_card, *primary] if session_card else primary
-        for card in ordered:
-            if not card:
-                continue
+        for card in primary:
             reset_at_str = card.get("reset_at")
             if not reset_at_str:
                 continue

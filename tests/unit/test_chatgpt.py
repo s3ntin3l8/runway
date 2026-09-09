@@ -429,9 +429,7 @@ class TestChatGPTCollectorDetailed:
         assert session_card["tier"] == "plus"
         assert session_card["used_value"] == 3.0
         assert session_card["pct_used"] == 3.0
-        assert session_card["reset_at"] == datetime.fromtimestamp(
-            1788963175, tz=UTC
-        ).isoformat()
+        assert session_card["reset_at"] == datetime.fromtimestamp(1788963175, tz=UTC).isoformat()
 
         weekly_card = by_window["weekly"]
         assert weekly_card["variant"] == "Codex"
@@ -439,9 +437,7 @@ class TestChatGPTCollectorDetailed:
         # A fresh weekly allowance (0% used) must still render, not be hidden.
         assert weekly_card["used_value"] == 0.0
         assert weekly_card["pct_used"] == 0.0
-        assert weekly_card["reset_at"] == datetime.fromtimestamp(
-            1789549975, tz=UTC
-        ).isoformat()
+        assert weekly_card["reset_at"] == datetime.fromtimestamp(1789549975, tz=UTC).isoformat()
 
     @pytest.mark.asyncio
     async def test_codex_free_emits_single_monthly_window(
