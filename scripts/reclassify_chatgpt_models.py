@@ -129,6 +129,15 @@ def reclassify(session: Session, dry_run: bool) -> int:
     changed = 0
     missing = 0
     for row in rows:
+        # event_id is "<file_stem>|line_<n>" — this match is only correct
+        # under the append-only invariant real Codex rollout logs hold. A
+        # file recreated in place at the same path with the same stem but
+        # different content at a given line number would silently attribute
+        # that line's (model_id, effort) to the wrong original event, with
+        # no detection here — there's no stored hash/mtime of the original
+        # content to check against (raw_json is NULL on these rows). The
+        # printed per-row diff plus --dry-run is the only safety net; review
+        # it before applying against logs of uncertain provenance.
         push = pushes.get(row.event_id)
         if push is None:
             missing += 1

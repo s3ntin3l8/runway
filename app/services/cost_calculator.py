@@ -1,5 +1,6 @@
 """Compute cost_usd for a usage event using provider_pricing."""
 
+import logging
 import re
 from datetime import datetime
 from typing import NamedTuple
@@ -7,6 +8,8 @@ from typing import NamedTuple
 from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
+
+logger = logging.getLogger(__name__)
 
 # Trailing "-<major>(.<minor>...)" version suffix, e.g. "opus-4.8" -> "opus".
 _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
@@ -122,7 +125,20 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
         segments = model_id.split("-")
         while row is None and len(segments) > 1:
             segments.pop()
-            row = _price_row(session, provider_id, "-".join(segments), ts)
+            trimmed = "-".join(segments)
+            row = _price_row(session, provider_id, trimmed, ts)
+            if row is not None:
+                # This is the discoverability gap the fallback itself creates:
+                # once a family row exists, every unseeded sibling silently
+                # bills at its rate instead of $0.00 with no other signal.
+                # Surface it so a real seeding gap doesn't go unnoticed.
+                logger.warning(
+                    "cost_calculator: %s/%s has no pricing row — billing at "
+                    "the '%s' family rate via segment-trim fallback",
+                    provider_id,
+                    model_id,
+                    trimmed,
+                )
     if row is None:
         # Last resort: case-insensitive match on the exact id. One extra query,
         # only hit when all prior lookups miss.

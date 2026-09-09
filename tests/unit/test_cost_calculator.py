@@ -521,6 +521,42 @@ def test_unseeded_variant_falls_back_via_segment_trim():
     assert unrelated == 0.0
 
 
+def test_segment_trim_fallback_logs_a_warning(caplog):
+    """A fallback-driven match must be discoverable, not silent — this is the
+    exact failure mode (an unseeded slug quietly billing at a guessed rate)
+    the fallback exists to avoid reintroducing. No warning when the exact
+    lookup already succeeds."""
+    s = _seeded_session()
+    s.add(
+        ProviderPricing(
+            provider_id="zztest",
+            model_id="widget-9",
+            effective_from=date(2026, 1, 1),
+            input_per_mtok=1.00,
+            output_per_mtok=1.00,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    s.commit()
+    ts = datetime.now(UTC)
+    common = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        compute_event_cost(s, provider_id="zztest", model_id="widget-9-turbo", ts=ts, **common)
+    assert any("widget-9-turbo" in r.message and "widget-9" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        compute_event_cost(s, provider_id="zztest", model_id="widget-9", ts=ts, **common)
+    assert caplog.records == []
+
+
 def test_gemini_versioned_id_still_matches_exactly():
     """Provider that prices per version keeps exact match (no fallback drift)."""
     s = _seeded_session()
