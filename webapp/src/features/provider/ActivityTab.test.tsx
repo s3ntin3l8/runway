@@ -69,6 +69,37 @@ describe('ActivityTab', () => {
     expect(await screen.findByText(/no sessions recorded/i)).toBeInTheDocument();
   });
 
+  it('shows the empty-composition message when the bucket has no tokens', async () => {
+    // Bucket exists but every token component is 0 — without the hasTokenData
+    // gate this would mount an empty donut ring instead of the placeholder.
+    vi.mocked(api.fetchCumulative).mockResolvedValue(
+      cumulativeResponse({
+        cumulative: [
+          {
+            provider_id: 'anthropic',
+            account_id: 'me@example.com',
+            '2026-06': {
+              tokens_input: 0,
+              tokens_output: 0,
+              tokens_cache_read: 0,
+              tokens_cache_create: 0,
+              tokens_reasoning: 0,
+              msgs: 0,
+            },
+            lifetime: {},
+          },
+        ],
+      }),
+    );
+    vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(false));
+    vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+    );
+    expect(await screen.findByText(/no usage recorded in/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('token-donut')).not.toBeInTheDocument();
+  });
+
   it('renders the top-sessions table when sessions exist', async () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
     vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
