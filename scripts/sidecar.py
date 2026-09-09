@@ -2062,9 +2062,11 @@ def _discover_opencode_db_path() -> Path | None:
     """Return the path to the OpenCode SQLite database, or None if not found.
 
     The OpenCode CLI has shipped its SQLite database under two different
-    locations on Linux: the XDG-conformant ``~/.local/share/opencode/opencode.db``
-    and the flatter ``~/.opencode/opencode.db``. Check both so token usage
-    events get ingested regardless of which the local install chose.
+    locations: the XDG-conformant ``~/.local/share/opencode/opencode.db``
+    (default) and the flatter ``~/.opencode/opencode.db`` (seen on some
+    Linux installs). Check both so token usage events get ingested
+    regardless of which the local install chose; the missing path is a
+    no-op on platforms that use neither.
     """
     candidates = [
         os.path.expanduser("~/.local/share/opencode/opencode.db"),
