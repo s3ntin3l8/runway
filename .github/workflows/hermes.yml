@@ -34,13 +34,18 @@ jobs:
   # `auto-review` deliberately excludes `mullion/task-*` branches (see the
   # job's own `if:` below) -- Task Master's own review agent is the terminal
   # review for its tasks (s3ntin3l8/mullion-session-manager#1003, ported
-  # from that repo's #998). `on-demand-review` is NOT excluded -- a human
-  # can still explicitly ask for a second opinion via
-  # `@s3ntin3l8-hermes Review`.
+  # from that repo's #998). It also excludes dependabot and release-please
+  # PRs (both open as `dependabot[bot]` / `github-actions[bot]` respectively)
+  # -- a version-bump or changelog PR has nothing for a code review to say,
+  # ported from mullion-session-manager's hermes.yml. `on-demand-review` is
+  # NOT excluded from either -- a human can still explicitly ask for a
+  # second opinion via `@s3ntin3l8-hermes Review`.
   auto-review:
     if: >-
       github.event_name == 'pull_request' &&
       github.actor != 's3ntin3l8-hermes[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
       github.event.pull_request.draft == false &&
       !startsWith(github.event.pull_request.head.ref, 'mullion/task-')
     permissions:
