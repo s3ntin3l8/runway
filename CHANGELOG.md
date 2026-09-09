@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.7...v2.11.8) (2026-09-09)
+
+
+### Bug Fixes
+
+* **chatgpt:** emit both session and weekly Codex quota windows ([#248](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/248)) ([b90b8a5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b90b8a5555910652112cdb1084949a2aa1823087))
+
 ## [2.11.7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.11.6...v2.11.7) (2026-09-02)
 
 
