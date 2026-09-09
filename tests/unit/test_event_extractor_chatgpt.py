@@ -16,8 +16,8 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "chatgpt-sample.jsonl"
 # ---------------------------------------------------------------------------
 
 
-def test_normalizes_codex_model():
-    assert _normalize_chatgpt_model("gpt-5-codex") == "codex"
+def test_preserves_codex_model():
+    assert _normalize_chatgpt_model("gpt-5-codex") == "gpt-5-codex"
 
 
 def test_normalizes_gpt5_model():
@@ -60,8 +60,24 @@ def test_normalizes_gpt55_pro():
     assert _normalize_chatgpt_model("gpt-5.5-pro") == "gpt-5.5-pro"
 
 
-def test_normalizes_versioned_codex():
-    assert _normalize_chatgpt_model("gpt-5.3-codex") == "codex"
+def test_preserves_versioned_codex():
+    assert _normalize_chatgpt_model("gpt-5.3-codex") == "gpt-5.3-codex"
+
+
+def test_preserves_codex_max_variant():
+    assert _normalize_chatgpt_model("gpt-5.1-codex-max") == "gpt-5.1-codex-max"
+
+
+def test_preserves_codenamed_variant():
+    """Codenamed slugs (gpt-5.6-sol / -terra / -luna) must stay distinct —
+    this is the bug this change fixes: they used to collapse to "gpt-5.6"."""
+    assert _normalize_chatgpt_model("gpt-5.6-sol") == "gpt-5.6-sol"
+    assert _normalize_chatgpt_model("gpt-5.6-terra") == "gpt-5.6-terra"
+    assert _normalize_chatgpt_model("gpt-5.6-luna") == "gpt-5.6-luna"
+
+
+def test_lowercases_and_strips():
+    assert _normalize_chatgpt_model("  GPT-5.6-Sol  ") == "gpt-5.6-sol"
 
 
 # ---------------------------------------------------------------------------
@@ -70,19 +86,20 @@ def test_normalizes_versioned_codex():
 
 
 def test_extracts_response_messages_only():
-    """Non-token_count and null-info records are ignored."""
+    """Non-token_count records (turn_context, session_meta, user) are ignored;
+    only the three token_count records with real info become events."""
     evts = parse_chatgpt_events(
         [FIXTURE],
         account_id="u@codex.test",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
-    # Fixture has 2 token_count records with real info, 1 null-info record, 1 user record
-    assert len(evts) == 2
+    assert len(evts) == 3
     assert all(e.provider_id == "chatgpt" for e in evts)
 
 
-def test_normalizes_model_ids():
-    """The second token_count event follows a turn_context with gpt-5-codex."""
+def test_preserves_full_model_slugs():
+    """Full slugs are preserved end to end, not collapsed to a shared bucket
+    ("gpt-5-codex" != "gpt-5.6-sol") or a bare version ("codex")."""
     evts = parse_chatgpt_events(
         [FIXTURE],
         account_id="u@codex.test",
@@ -90,9 +107,26 @@ def test_normalizes_model_ids():
     )
     model_ids = {e.model_id for e in evts}
     # First event has no preceding turn_context → "unknown"
-    # Second event follows turn_context with gpt-5-codex → "codex"
-    assert "unknown" in model_ids
-    assert "codex" in model_ids
+    # Second event follows turn_context {model: gpt-5-codex}
+    # Third event follows turn_context {model: gpt-5.6-sol}
+    assert model_ids == {"unknown", "gpt-5-codex", "gpt-5.6-sol"}
+
+
+def test_effort_is_captured_and_not_sticky():
+    """Effort is read from the turn_context in effect for each event, and a
+    turn_context that omits effort resets it to None rather than inheriting
+    the previous turn's value (unlike model, which IS sticky)."""
+    evts = parse_chatgpt_events(
+        [FIXTURE],
+        account_id="u@codex.test",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    first = next(e for e in evts if e.model_id == "unknown")
+    codex = next(e for e in evts if e.model_id == "gpt-5-codex")
+    sol = next(e for e in evts if e.model_id == "gpt-5.6-sol")
+    assert first.effort is None  # no turn_context seen yet
+    assert codex.effort == "high"  # turn_context set effort: "high"
+    assert sol.effort is None  # next turn_context omitted effort — not inherited
 
 
 def test_session_id_from_filename():
@@ -107,15 +141,15 @@ def test_session_id_from_filename():
 
 def test_filters_by_since():
     """Events at or before since are excluded."""
-    # The second event is at 14:10:00; filter to exclude first (14:00:00)
+    # Second event is at 14:10:00, third at 14:13:00; filter to exclude the
+    # first (14:00:00).
     cutoff = datetime(2026, 5, 8, 14, 5, 0, tzinfo=UTC)
     evts = parse_chatgpt_events(
         [FIXTURE],
         account_id="u@codex.test",
         since=cutoff,
     )
-    assert len(evts) == 1
-    assert evts[0].model_id == "codex"
+    assert {e.model_id for e in evts} == {"gpt-5-codex", "gpt-5.6-sol"}
 
 
 def test_captures_token_dimensions():
@@ -134,12 +168,20 @@ def test_captures_token_dimensions():
     assert first.tokens_reasoning == 0
     assert first.tokens_cache_create == 0  # OpenAI doesn't bill cache creation
 
-    # Second event (codex): 900 input, 300 output, 0 cached, 200 reasoning
-    codex = next(e for e in evts if e.model_id == "codex")
+    # Second event (gpt-5-codex): 900 input, 300 output, 0 cached, 200 reasoning
+    codex = next(e for e in evts if e.model_id == "gpt-5-codex")
     assert codex.tokens_input == 900
     assert codex.tokens_output == 300
     assert codex.tokens_cache_read == 0
     assert codex.tokens_reasoning == 200
+
+    # Third event (gpt-5.6-sol): raw input 700 inclusive of 100 cached →
+    # tokens_input = 700 - 100 = 600. Output 150, reasoning 50.
+    sol = next(e for e in evts if e.model_id == "gpt-5.6-sol")
+    assert sol.tokens_input == 600
+    assert sol.tokens_output == 150
+    assert sol.tokens_cache_read == 100
+    assert sol.tokens_reasoning == 50
 
 
 def test_captures_cwd_and_branch_from_session_meta():
@@ -149,7 +191,7 @@ def test_captures_cwd_and_branch_from_session_meta():
         account_id="u@codex.test",
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
-    assert len(evts) == 2
+    assert len(evts) == 3
     assert all(e.cwd == "/home/user/codex-project" for e in evts)
     assert all(e.git_branch == "feat/widgets" for e in evts)
 

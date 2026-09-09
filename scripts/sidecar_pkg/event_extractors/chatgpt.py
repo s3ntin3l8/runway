@@ -1,7 +1,8 @@
 """Parse ChatGPT/Codex event_msg JSONL logs into UsageEventPush records.
 
 Codex session files use a custom JSONL format:
-- type: "turn_context" carries the model for subsequent messages
+- type: "turn_context" carries the model (sticky) and reasoning effort
+  (non-sticky — applies only to the current turn) for subsequent messages
 - type: "event_msg" with payload.type: "token_count" carries per-turn token counts
   in payload.info.last_token_usage
 
@@ -23,37 +24,28 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 
 
 def _normalize_chatgpt_model(model: str) -> str:
-    """Normalize raw model strings to canonical pricing-table ids.
+    """Normalize a raw Codex model slug to a Runway model_id.
+
+    Preserves the slug verbatim (lowercased/trimmed) so codenamed variants
+    (e.g. "gpt-5.6-sol" vs "gpt-5.6-terra") and codex variants (e.g.
+    "gpt-5-codex" vs "gpt-5.1-codex-max") stay distinct rather than
+    collapsing to a shared bucket. provider_pricing is keyed on the same
+    full slug (see app/services/pricing_seed.py); unseeded slugs fall back
+    through cost_calculator's family-trim chain rather than losing identity
+    here.
 
     Examples:
-        "gpt-5-codex"   → "codex"
-        "gpt-5.3-codex" → "codex"
-        "gpt-5.5"       → "gpt-5.5"
-        "gpt-5.4-mini"  → "gpt-5.4-mini"
-        "gpt-5.4-nano"  → "gpt-5.4-nano"
-        "gpt-5.4-pro"   → "gpt-5.4-pro"
-        "gpt-4o"        → "gpt-4o"
-        "gpt-4"         → "gpt-4"
-        ""              → "unknown"
+        "gpt-5-codex"      → "gpt-5-codex"
+        "gpt-5.3-codex"    → "gpt-5.3-codex"
+        "gpt-5.6-sol"      → "gpt-5.6-sol"
+        "gpt-5.5"          → "gpt-5.5"
+        "gpt-5.4-mini"     → "gpt-5.4-mini"
+        "gpt-4o"           → "gpt-4o"
+        ""                 → "unknown"
     """
     m = (model or "").lower().strip()
     if not m:
         return "unknown"
-    # Codex-specific model class
-    if "codex" in m:
-        return "codex"
-    # GPT family
-    if m.startswith("gpt-"):
-        parts = m.split("-")
-        if len(parts) >= 2:
-            version = parts[1]
-            # Append "o" suffix if present (e.g. "gpt-4o")
-            if len(parts) >= 3 and parts[2] == "o":
-                return f"gpt-{version}o"
-            # Preserve size/tier variants (mini/nano/pro)
-            if len(parts) >= 3 and parts[2] in ("mini", "nano", "pro"):
-                return f"gpt-{version}-{parts[2]}"
-            return f"gpt-{version}"
     return m
 
 
@@ -78,6 +70,13 @@ def parse_chatgpt_events(
         try:
             session_id = fp.stem
             current_model = "unknown"
+            # Reasoning effort ("low"/"medium"/"high"/"xhigh"/"max"/"ultra"),
+            # tracked per turn_context like the model — but NOT sticky: unlike
+            # model, a turn_context that omits effort means "no effort set for
+            # this turn" (seen for plain gpt-5.4 turns in the same session
+            # files as effort-bearing ones), not "reuse the previous turn's
+            # effort". Carrying it forward would silently mislabel those turns.
+            current_effort: str | None = None
             # cwd + git branch live in the first `session_meta` record and apply
             # to every message in the file.
             current_cwd: str | None = None
@@ -105,12 +104,16 @@ def parse_chatgpt_events(
                             current_branch = git.get("branch")
                         continue
 
-                    # Track current model from turn_context records
+                    # Track current model from turn_context records. Model is
+                    # sticky (a turn_context that omits it inherits the last
+                    # one); effort is assigned unconditionally per turn_context
+                    # — see the current_effort comment above for why.
                     if rec_type == "turn_context":
                         payload = record.get("payload", {})
                         m = payload.get("model") or payload.get("modelId")
                         if m:
                             current_model = m
+                        current_effort = payload.get("effort") or None
                         continue
 
                     # Only process token_count event_msg records
@@ -170,6 +173,7 @@ def parse_chatgpt_events(
                             tokens_reasoning=tokens_reasoning,
                             stop_reason=None,  # not surfaced in token_count events
                             tool_calls=0,
+                            effort=current_effort,
                         )
                     )
         except Exception:

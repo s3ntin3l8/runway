@@ -1,5 +1,6 @@
 """Compute cost_usd for a usage event using provider_pricing."""
 
+import logging
 import re
 from datetime import datetime
 from typing import NamedTuple
@@ -7,6 +8,8 @@ from typing import NamedTuple
 from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
+
+logger = logging.getLogger(__name__)
 
 # Trailing "-<major>(.<minor>...)" version suffix, e.g. "opus-4.8" -> "opus".
 _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
@@ -106,8 +109,39 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
         if family != model_id:
             row = _price_row(session, provider_id, family, ts)
     if row is None:
+        # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
+        # digit, so _VERSION_SUFFIX above never fires. Progressively
+        # right-trim "-"-separated segments and retry each ("gpt-5.7-nova" ->
+        # "gpt-5.7"; note this cannot cross the dot to reach "gpt-5" — "." is
+        # not a segment separator, so a dotted minor version stays intact),
+        # so a brand-new slug we haven't seeded yet has a chance to land on
+        # a seeded sibling/family row instead of silently billing $0.00 until
+        # someone edits pricing_seed.py. Only runs when the exact and
+        # version-stripped lookups above already missed, so it can never
+        # change the price of an event that already resolves correctly today.
+        # This is a fallback, not a substitute for seeding the real rate —
+        # an unseeded variant may land on a family rate that doesn't match
+        # its actual price.
+        segments = model_id.split("-")
+        while row is None and len(segments) > 1:
+            segments.pop()
+            trimmed = "-".join(segments)
+            row = _price_row(session, provider_id, trimmed, ts)
+            if row is not None:
+                # This is the discoverability gap the fallback itself creates:
+                # once a family row exists, every unseeded sibling silently
+                # bills at its rate instead of $0.00 with no other signal.
+                # Surface it so a real seeding gap doesn't go unnoticed.
+                logger.warning(
+                    "cost_calculator: %s/%s has no pricing row — billing at "
+                    "the '%s' family rate via segment-trim fallback",
+                    provider_id,
+                    model_id,
+                    trimmed,
+                )
+    if row is None:
         # Last resort: case-insensitive match on the exact id. One extra query,
-        # only hit when both prior lookups miss.
+        # only hit when all prior lookups miss.
         row = _price_row_ci(session, provider_id, model_id, ts)
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)

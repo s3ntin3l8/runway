@@ -61,11 +61,11 @@ PRICING_SEED: list[dict] = [
         "provider_id": "chatgpt",
         "model_id": "gpt-5",
         "effective_from": "2025-08-01",
-        "input_per_mtok": 5.00,
-        "output_per_mtok": 15.00,
-        "cache_read_per_mtok": 1.25,
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.125,
         "cache_create_per_mtok": 0.0,
-        "notes": "GPT-5 standard",
+        "notes": "GPT-5 standard (rates per developers.openai.com/api/docs/pricing)",
     },
     {
         "provider_id": "chatgpt",
@@ -147,6 +147,168 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.175,
         "cache_create_per_mtok": 0.0,
         "notes": "gpt-5.3-codex (Standard)",
+    },
+    # OpenAI ChatGPT — gpt-5.6 codenamed generation (rates per
+    # developers.openai.com/api/docs/pricing, checked 2026-09-09). Runway now
+    # preserves the full slug (see _normalize_chatgpt_model) instead of
+    # collapsing codenames to their bare version, so each needs its own row.
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-6-astra",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 10.00,
+        "output_per_mtok": 50.00,
+        "cache_read_per_mtok": 1.00,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-6 Astra",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.6-sol",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.40,
+        "cache_create_per_mtok": 0.0,
+        "notes": (
+            "GPT-5.6 Sol — promotional pricing, published as valid at least "
+            "through 2026-11-21; recheck and version a new effective_from row "
+            "after that date"
+        ),
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.6-terra",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 12.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.6 Terra",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.6-luna",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 0.20,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.02,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.6 Luna",
+    },
+    # OpenAI ChatGPT — gpt-5.4 / gpt-5.4-mini backdated to 2025-08-01. The
+    # 2026-05-01 rows above (same rates) postdate this generation's actual
+    # usage window (observed events run 2026-04-04 through 2026-04-28), so
+    # without this row every gpt-5.4/-mini event before May 1st priced at
+    # $0 — roughly half of all chatgpt events at the time this was found.
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.4",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 2.50,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.25,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.4 standard (backdated — see 2026-05-01 row's comment)",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.4-mini",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 0.75,
+        "output_per_mtok": 4.50,
+        "cache_read_per_mtok": 0.075,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.4 Mini (backdated — see 2026-05-01 row's comment)",
+    },
+    # OpenAI ChatGPT — legacy ids never previously seeded (fell through to the
+    # bare "gpt-5"/"codex" bucket before full-slug preservation). Backdated to
+    # 2025-08-01 so historical events under these exact ids price instead of
+    # falling to $0 — this applies current published rates retroactively,
+    # which is the best available option with no historical price series.
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.1",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.125,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.1 standard",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.2",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.75,
+        "output_per_mtok": 14.00,
+        "cache_read_per_mtok": 0.175,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5.2 standard",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5-mini",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 2.00,
+        "cache_read_per_mtok": 0.025,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5 Mini",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5-nano",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 0.05,
+        "output_per_mtok": 0.40,
+        "cache_read_per_mtok": 0.005,
+        "cache_create_per_mtok": 0.0,
+        "notes": "GPT-5 Nano",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.3-codex",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.75,
+        "output_per_mtok": 14.00,
+        "cache_read_per_mtok": 0.175,
+        "cache_create_per_mtok": 0.0,
+        "notes": "gpt-5.3-codex (Standard)",
+    },
+    # OpenAI ChatGPT — other codex slugs. Not separately published; the
+    # pricing page lists only gpt-5.3-codex, so these inherit its rate rather
+    # than falling through to $0 now that full slugs are preserved (previously
+    # they all normalized to the bare "codex" bucket above, which is priced).
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5-codex",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.75,
+        "output_per_mtok": 14.00,
+        "cache_read_per_mtok": 0.175,
+        "cache_create_per_mtok": 0.0,
+        "notes": "rate inherited from gpt-5.3-codex — not separately published",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.1-codex",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.75,
+        "output_per_mtok": 14.00,
+        "cache_read_per_mtok": 0.175,
+        "cache_create_per_mtok": 0.0,
+        "notes": "rate inherited from gpt-5.3-codex — not separately published",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-5.1-codex-max",
+        "effective_from": "2025-08-01",
+        "input_per_mtok": 1.75,
+        "output_per_mtok": 14.00,
+        "cache_read_per_mtok": 0.175,
+        "cache_create_per_mtok": 0.0,
+        "notes": "rate inherited from gpt-5.3-codex — not separately published",
     },
     # Google Gemini — coarse buckets kept for legacy events ingested before the
     # extractor split into versioned ids. New events go to *-2.5 / *-3.1-preview.

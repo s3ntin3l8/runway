@@ -70,6 +70,28 @@ def test_chatgpt_gpt54_mini_cost():
     assert cost == 5.25
 
 
+def test_chatgpt_gpt54_prices_before_may_2026():
+    """Regression: gpt-5.4 / gpt-5.4-mini's original rows were only
+    effective_from 2026-05-01, but real gpt-5.4 usage runs from 2026-04-04 —
+    before that row applied, so those events priced at $0. A backdated
+    2025-08-01 row at the same rate must now cover them."""
+    s = _seeded_session()
+    ts = datetime(2026, 4, 10, tzinfo=UTC)
+    common = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 1_000_000,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    gpt54 = compute_event_cost(s, provider_id="chatgpt", model_id="gpt-5.4", ts=ts, **common)
+    gpt54_mini = compute_event_cost(
+        s, provider_id="chatgpt", model_id="gpt-5.4-mini", ts=ts, **common
+    )
+    assert gpt54 == 2.50 + 15.00
+    assert gpt54_mini == 5.25
+
+
 def test_gemini_2_5_pro_cost_with_cache_and_thoughts():
     """1M input + 1M output + 1M cache_read + 1M reasoning on pro-2.5
     = $1.25 + $10.00 + $0.125 + $10.00 (reasoning billed at output rate) = $21.375."""
@@ -406,6 +428,133 @@ def test_anthropic_versioned_opus_falls_back_to_family_rate():
         tokens_reasoning=0,
     )
     assert versioned == family > 0.0
+
+
+def test_chatgpt_codex_variants_price_from_seeded_rows():
+    """gpt-5-codex / gpt-5.1-codex / gpt-5.1-codex-max must NOT cost $0.
+
+    Regression guard: before full Codex slug preservation, all of these
+    normalized to the bare "codex" bucket and priced via that seeded row.
+    None of them end in a bare digit, so _VERSION_SUFFIX never fires for
+    them — they only stay priced because pricing_seed.py now seeds each
+    slug explicitly (inheriting the published gpt-5.3-codex rate).
+    """
+    s = _seeded_session()
+    for model_id in ("gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.3-codex"):
+        cost = compute_event_cost(
+            s,
+            provider_id="chatgpt",
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=0,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+        assert cost > 0.0, f"expected non-zero cost for model_id={model_id!r}, got {cost}"
+
+
+def test_chatgpt_gpt56_codename_variants_price_distinctly():
+    """gpt-5.6-sol / -terra / -luna must each price from their own seeded row
+    (Sol is the priciest, Luna the cheapest) rather than collapsing to a
+    shared bucket or falling to $0."""
+    s = _seeded_session()
+    ts = datetime(2026, 9, 9, tzinfo=UTC)
+    common = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 1_000_000,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    sol = compute_event_cost(s, provider_id="chatgpt", model_id="gpt-5.6-sol", ts=ts, **common)
+    terra = compute_event_cost(s, provider_id="chatgpt", model_id="gpt-5.6-terra", ts=ts, **common)
+    luna = compute_event_cost(s, provider_id="chatgpt", model_id="gpt-5.6-luna", ts=ts, **common)
+    assert sol > terra > luna > 0.0
+
+
+def test_unseeded_variant_falls_back_via_segment_trim():
+    """A slug we haven't seeded yet must not silently cost $0 if a sibling
+    with one fewer "-"-segment is seeded — e.g. a hypothetical fourth
+    gpt-5.6 codename ("gpt-5.6-nova") should fall back toward "gpt-5.6" if
+    that ever becomes a seeded row. Verified against a synthetic provider so
+    the mechanism is isolated from real pricing_seed.py contents (which does
+    not seed a bare "gpt-5.6" row today).
+    """
+    s = _seeded_session()
+    s.add(
+        ProviderPricing(
+            provider_id="zztest",
+            model_id="widget-9",
+            effective_from=date(2026, 1, 1),
+            input_per_mtok=1.00,
+            output_per_mtok=1.00,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    s.commit()
+    ts = datetime.now(UTC)
+    common = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    # "widget-9-turbo" has no row of its own and doesn't end in a bare digit
+    # (_VERSION_SUFFIX doesn't fire), but trims in one hyphen-segment step to
+    # the seeded "widget-9".
+    trimmed = compute_event_cost(
+        s, provider_id="zztest", model_id="widget-9-turbo", ts=ts, **common
+    )
+    exact = compute_event_cost(s, provider_id="zztest", model_id="widget-9", ts=ts, **common)
+    assert trimmed == exact == 1.00
+
+    # Trimming cannot cross a dot to reach a different minor version: a
+    # dotted, unseeded sibling of a real seeded chatgpt row stays at $0
+    # rather than silently landing on an unrelated version's price.
+    unrelated = compute_event_cost(
+        s, provider_id="chatgpt", model_id="gpt-5.7-nova", ts=ts, **common
+    )
+    assert unrelated == 0.0
+
+
+def test_segment_trim_fallback_logs_a_warning(caplog):
+    """A fallback-driven match must be discoverable, not silent — this is the
+    exact failure mode (an unseeded slug quietly billing at a guessed rate)
+    the fallback exists to avoid reintroducing. No warning when the exact
+    lookup already succeeds."""
+    s = _seeded_session()
+    s.add(
+        ProviderPricing(
+            provider_id="zztest",
+            model_id="widget-9",
+            effective_from=date(2026, 1, 1),
+            input_per_mtok=1.00,
+            output_per_mtok=1.00,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    s.commit()
+    ts = datetime.now(UTC)
+    common = {
+        "tokens_input": 1_000_000,
+        "tokens_output": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+        "tokens_reasoning": 0,
+    }
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        compute_event_cost(s, provider_id="zztest", model_id="widget-9-turbo", ts=ts, **common)
+    assert any("widget-9-turbo" in r.message and "widget-9" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        compute_event_cost(s, provider_id="zztest", model_id="widget-9", ts=ts, **common)
+    assert caplog.records == []
 
 
 def test_gemini_versioned_id_still_matches_exactly():
