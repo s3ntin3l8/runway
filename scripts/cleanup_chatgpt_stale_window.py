@@ -110,6 +110,8 @@ def main() -> int:
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
 
+    window_types_label = "+".join(args.window_type)
+
     with Session(engine) as session:
         rows = session.exec(
             select(LatestUsage).where(*_filters(args.account_id, args.window_type))
@@ -117,7 +119,7 @@ def main() -> int:
         verb = "Would delete" if dry_run else "Deleting"
         print(
             f"{prefix}{verb} {len(rows)} latest_usage row(s) "
-            f"({_PROVIDER}/{args.window_type}/{args.account_id!r}):",
+            f"({_PROVIDER}/{window_types_label}/{args.account_id!r}):",
             flush=True,
         )
         for r in rows:
