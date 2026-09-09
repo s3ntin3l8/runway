@@ -33,6 +33,9 @@ class ChatGPTCollector(
     """
 
     PROVIDER_ID = "chatgpt"
+    # Dead in practice: base.py only injects this when a card omits window_type,
+    # and every card built in chatgpt_web.py sets it explicitly (session/daily/
+    # weekly/monthly, derived from limit_window_seconds).
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {
@@ -51,6 +54,10 @@ class ChatGPTCollector(
     def _capture_primary_metadata(self, primary: list[dict[str, Any]]) -> None:
         """
         Extract reset_at from primary cards so enrichment can align its window boundaries.
+
+        Unused today — ChatGPT declares no enrichment strategies (local
+        enrichment moved to the sidecar), so _primary_reset_at has no reader.
+        Kept as a hook for if/when that changes.
         """
 
         self._primary_reset_at = None
