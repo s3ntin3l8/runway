@@ -97,11 +97,31 @@ describe('chipLabel', () => {
     const session = card({ service_name: 'Claude', window_type: 'session' });
     expect(chipLabel(weekly, [weekly, session])).toBe('Weekly');
   });
-  it('uses the service name when it is unique, appending any variant', () => {
+  it('always prefers the window over the service name even when it is unique', () => {
     const a = card({ service_name: 'Opus', window_type: 'weekly' });
     const b = card({ service_name: 'Sonnet', window_type: 'weekly', variant: '1M' });
-    expect(chipLabel(a, [a, b])).toBe('Opus');
-    expect(chipLabel(b, [a, b])).toBe('Sonnet 1M');
+    expect(chipLabel(a, [a, b])).toBe('Weekly');
+    expect(chipLabel(b, [a, b])).toBe('Weekly · 1M');
+  });
+  it('appends the variant only when multiple siblings share the same window_type', () => {
+    const geminiSession = card({
+      service_name: 'Gemini',
+      window_type: 'session',
+      variant: 'gemini',
+    });
+    const frontierSession = card({
+      service_name: 'Frontier',
+      window_type: 'session',
+      variant: 'frontier',
+    });
+    expect(chipLabel(geminiSession, [geminiSession, frontierSession])).toBe('Session · Gemini');
+    expect(chipLabel(frontierSession, [geminiSession, frontierSession])).toBe(
+      'Session · Frontier',
+    );
+  });
+  it('omits the variant when only one sibling has that window_type', () => {
+    const solo = card({ service_name: 'ChatGPT', window_type: 'monthly', variant: 'Codex' });
+    expect(chipLabel(solo, [solo])).toBe('Monthly');
   });
   it('appends the model when two same-name windows collide (Claude weekly vs Sonnet weekly)', () => {
     const generic = card({ service_name: 'Claude', window_type: 'weekly', model_id: null });
@@ -111,7 +131,17 @@ describe('chipLabel', () => {
   });
   it('does not append a model that already is the label', () => {
     const c = card({ service_name: 'Sonnet', window_type: 'weekly', model_id: 'sonnet' });
-    expect(chipLabel(c, [c])).toBe('Sonnet');
+    expect(chipLabel(c, [c])).toBe('Weekly');
+  });
+  it('falls back to the service name when no window is set', () => {
+    const c = card({ service_name: 'Tokens', window_type: 'unknown' });
+    expect(chipLabel(c, [c])).toBe('Tokens');
+  });
+  it('appends service_name when same-window siblings differ only in name (footgun guard)', () => {
+    const a = card({ service_name: 'Pool A', window_type: 'daily' });
+    const b = card({ service_name: 'Pool B', window_type: 'daily' });
+    expect(chipLabel(a, [a, b])).toBe('Daily · Pool A');
+    expect(chipLabel(b, [a, b])).toBe('Daily · Pool B');
   });
 });
 
