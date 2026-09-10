@@ -96,3 +96,7 @@ docs/sidecar_implementation.md
 .worktrees
 artifacts/
 *.py,cover
+
+# Developer worktrees (per AGENTS.md make wt convention)
+.wt/
+
