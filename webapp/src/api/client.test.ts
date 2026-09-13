@@ -154,6 +154,19 @@ describe('api', () => {
     expect(err.message).toMatch(/authentication required/i);
   });
 
+  it('flags a 401 text/html response from an SSO gateway as an authRedirect ApiError', async () => {
+    mockFetch().mockResolvedValue(
+      new Response('<html>login required</html>', {
+        status: 401,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      }),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.authRedirect).toBe(true);
+    expect(err.message).toMatch(/authentication required/i);
+  });
+
   it('fast-fails when authRedirectInProgress is active', async () => {
     setAuthRedirectInProgress(true);
     try {

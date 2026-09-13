@@ -86,8 +86,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, 'Authentication required', true);
   }
 
-  // Same-origin variant: some gateways resolve an expired session with a 200 interstitial
-  // HTML page rather than a 3xx, which opaqueredirect cannot see.
+  // Same-origin variant: some gateways resolve an expired session with an interstitial
+  // HTML page (e.g. 200 OK or 401 Unauthorized with HTML body) rather than an opaque 3xx.
+  // Invariant this relies on: Runway's own backend API never returns HTML (always JSON or 204).
+  // If documentation/swagger endpoints are ever exposed under this client, this assumption
+  // would need to be scoped.
   const contentType = resp.headers.get('content-type') ?? '';
   if (contentType.includes('text/html')) {
     throw new ApiError(0, 'Authentication required', true);

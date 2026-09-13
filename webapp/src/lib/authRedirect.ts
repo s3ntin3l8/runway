@@ -19,6 +19,8 @@ export function createAuthRedirectGuard(onExpire: () => void): (error: unknown) 
   return (error: unknown) => {
     if (handled || !(error instanceof ApiError) || !error.authRedirect) return;
     handled = true;
+    // Set the flag regardless of reload budget so in-flight queries during the
+    // final reload attempt (or while BootGate displays the card) still fast-fail.
     setAuthRedirectInProgress(true);
     const count = Number(sessionStorage.getItem(AUTH_RELOAD_KEY)) || 0;
     if (count >= AUTH_RELOAD_MAX) {
