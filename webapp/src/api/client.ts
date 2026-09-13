@@ -38,7 +38,23 @@ export class ApiError extends Error {
   }
 }
 
+let authRedirectInProgress = false;
+
+export function setAuthRedirectInProgress(value: boolean): void {
+  authRedirectInProgress = value;
+}
+
+export function isAuthRedirectInProgress(): boolean {
+  return authRedirectInProgress;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Fast fail when an auth-redirect / reload is already in flight: do not dispatch
+  // any new HTTP requests that could race or clobber the gateway's forward-auth state cookie.
+  if (authRedirectInProgress) {
+    throw new ApiError(0, 'Authentication required', true);
+  }
+
   const headers = new Headers(init.headers);
   const key = getAdminKey();
   if (key) headers.set('X-Admin-Key', key);
@@ -67,6 +83,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   // 3xx. If that ever changes, this would misread a legitimate app redirect
   // as a lost SSO session.
   if (resp.type === 'opaqueredirect') {
+    throw new ApiError(0, 'Authentication required', true);
+  }
+
+  // Same-origin variant: some gateways resolve an expired session with an interstitial
+  // HTML page (e.g. 200 OK or 401 Unauthorized with HTML body) rather than an opaque 3xx.
+  // Invariant this relies on: Runway's own backend API never returns HTML (always JSON or 204).
+  // If documentation/swagger endpoints are ever exposed under this client, this assumption
+  // would need to be scoped.
+  const contentType = resp.headers.get('content-type') ?? '';
+  if (contentType.includes('text/html')) {
     throw new ApiError(0, 'Authentication required', true);
   }
 

@@ -36,13 +36,16 @@ import { clientsClaim } from 'workbox-core';
 
 declare let self: ServiceWorkerGlobalScope;
 
-precacheAndRoute(self.__WB_MANIFEST);
-cleanupOutdatedCaches();
-
+// Navigation route registered FIRST so it takes precedence over precached routes.
+// Every navigation must hit the network (redirect: 'manual' preserved) so forward-auth
+// redirects are received by the browser rather than serving cached HTML.
 registerRoute(
   ({ request, url }) => request.mode === 'navigate' && !url.pathname.startsWith('/api/'),
   new NetworkOnly(),
 );
+
+precacheAndRoute(self.__WB_MANIFEST, { directoryIndex: '', cleanURLs: false });
+cleanupOutdatedCaches();
 
 // Gated on navigate: setCatchHandler is global, and serving cached HTML for a
 // failed image/font/script request would be worse than just letting it fail.

@@ -38,7 +38,7 @@ afterEach(() => {
 describe('sw.ts', () => {
   it('precaches the manifest, cleans up outdated caches, and takes over immediately', async () => {
     await import('./sw');
-    expect(precacheAndRoute).toHaveBeenCalledWith([]);
+    expect(precacheAndRoute).toHaveBeenCalledWith([], { directoryIndex: '', cleanURLs: false });
     expect(cleanupOutdatedCaches).toHaveBeenCalledTimes(1);
     expect(skipWaiting).toHaveBeenCalledTimes(1);
     expect(clientsClaim).toHaveBeenCalledTimes(1);
