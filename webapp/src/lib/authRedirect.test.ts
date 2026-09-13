@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryCache, QueryClient } from '@tanstack/react-query';
-import { ApiError } from '@/api/client';
+import { ApiError, isAuthRedirectInProgress, setAuthRedirectInProgress } from '@/api/client';
 import {
   clearAuthReloadCount,
   createAuthRedirectGuard,
@@ -8,14 +8,19 @@ import {
   SKIP_AUTH_REDIRECT_GUARD_META,
 } from './authRedirect';
 
-beforeEach(() => sessionStorage.clear());
+beforeEach(() => {
+  sessionStorage.clear();
+  setAuthRedirectInProgress(false);
+});
 
 describe('createAuthRedirectGuard', () => {
-  it('fires once when an authRedirect ApiError is seen', () => {
+  it('fires once when an authRedirect ApiError is seen and sets authRedirectInProgress', () => {
     const onExpire = vi.fn();
     const guard = createAuthRedirectGuard(onExpire);
+    expect(isAuthRedirectInProgress()).toBe(false);
     guard(new ApiError(0, 'Authentication required', true));
     expect(onExpire).toHaveBeenCalledTimes(1);
+    expect(isAuthRedirectInProgress()).toBe(true);
   });
 
   it('does not fire again for later errors, authRedirect or not', () => {
@@ -124,7 +129,9 @@ describe('reload-loop circuit breaker', () => {
 
   it('resets after clearAuthReloadCount, allowing onExpire to fire again', () => {
     sessionStorage.setItem('runway_auth_reload_count', '2');
+    setAuthRedirectInProgress(true);
     clearAuthReloadCount();
+    expect(isAuthRedirectInProgress()).toBe(false);
 
     const onExpire = vi.fn();
     const guard = createAuthRedirectGuard(onExpire);

@@ -1,4 +1,4 @@
-import { ApiError } from '@/api/client';
+import { ApiError, setAuthRedirectInProgress } from '@/api/client';
 
 // After this many consecutive page loads where the global auth-redirect guard
 // fires (i.e. the reload didn't land on the SSO login page), stop
@@ -19,6 +19,7 @@ export function createAuthRedirectGuard(onExpire: () => void): (error: unknown) 
   return (error: unknown) => {
     if (handled || !(error instanceof ApiError) || !error.authRedirect) return;
     handled = true;
+    setAuthRedirectInProgress(true);
     const count = Number(sessionStorage.getItem(AUTH_RELOAD_KEY)) || 0;
     if (count >= AUTH_RELOAD_MAX) {
       // We've reloaded AUTH_RELOAD_MAX times without reaching the SSO login
@@ -37,6 +38,7 @@ export function createAuthRedirectGuard(onExpire: () => void): (error: unknown) 
 // when BootGate's "Session expired" card is shown, so the user's manual
 // "Sign in" click gets a fresh reload budget.
 export function clearAuthReloadCount(): void {
+  setAuthRedirectInProgress(false);
   sessionStorage.removeItem(AUTH_RELOAD_KEY);
 }
 
